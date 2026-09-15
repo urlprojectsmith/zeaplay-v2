@@ -475,6 +475,7 @@ async function resetDatabase() {
     prisma.processingJob.deleteMany(),
     prisma.asset.deleteMany(),
     prisma.project.deleteMany(),
+    prisma.department.deleteMany(),
     prisma.workspaceMembership.deleteMany(),
     prisma.agencyMembership.deleteMany(),
     prisma.workspace.deleteMany(),

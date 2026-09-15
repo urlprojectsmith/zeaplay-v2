@@ -36,6 +36,11 @@ enum WorkspaceStatus {
   ARCHIVED
 }
 
+enum DepartmentStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum RoleScope {
   LEGACY_ORGANIZATION
   AGENCY
@@ -150,6 +155,7 @@ model Workspace {
   agency       Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   createdBy    User   @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
   memberships  WorkspaceMembership[]
+  departments  Department[]
   projects     Project[]
   assets       Asset[]
   processingJobs ProcessingJob[]
@@ -161,6 +167,27 @@ model Workspace {
   @@index([agencyId])
   @@index([agencyId, status])
   @@map("workspaces")
+}
+
+model Department {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String           @map("workspace_id") @db.Uuid
+  name        String           @db.VarChar(160)
+  description String?          @db.VarChar(500)
+  status      DepartmentStatus @default(ACTIVE)
+  managerMembershipId String?  @map("manager_membership_id") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  managerMembership WorkspaceMembership? @relation("DepartmentManager", fields: [managerMembershipId], references: [id], onDelete: SetNull)
+  members WorkspaceMembership[] @relation("DepartmentMembers")
+
+  @@unique([workspaceId, name])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, managerMembershipId])
+  @@map("departments")
 }
 
 model Membership {
@@ -206,6 +233,7 @@ model WorkspaceMembership {
   userId      String           @map("user_id") @db.Uuid
   workspaceId String           @map("workspace_id") @db.Uuid
   roleId      String           @map("role_id") @db.Uuid
+  departmentId String?         @map("department_id") @db.Uuid
   status      MembershipStatus @default(ACTIVE)
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -213,9 +241,14 @@ model WorkspaceMembership {
   user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   role      Role      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  department Department? @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  managedDepartments Department[] @relation("DepartmentManager")
 
   @@unique([userId, workspaceId])
   @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, roleId])
+  @@index([workspaceId, departmentId])
   @@index([userId])
   @@map("workspace_memberships")
 }

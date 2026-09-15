@@ -189,8 +189,12 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
       {
         label: 'Workspace',
         items: [
-          disabled('navigation.users', Users),
-          disabled('navigation.departments', BriefcaseBusiness),
+          { labelKey: 'navigation.users', href: '/workspace/users', icon: Users },
+          {
+            labelKey: 'navigation.departments',
+            href: '/workspace/departments',
+            icon: BriefcaseBusiness,
+          },
           disabled('navigation.rolesPermissions', Shield),
           disabled('navigation.statusManagement', Gauge),
           disabled('navigation.automation', Rocket),

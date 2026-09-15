@@ -19,6 +19,7 @@ import { SecurityModule } from './common/security.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { AssetsModule } from './modules/assets/assets.module';
+import { DepartmentsModule } from './modules/departments/departments.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { AssetsModule } from './modules/assets/assets.module';
     AgenciesModule,
     WorkspacesModule,
     UsersModule,
+    DepartmentsModule,
     RolesModule,
     PermissionsModule,
     FeaturesModule,
