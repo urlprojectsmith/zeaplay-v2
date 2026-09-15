@@ -1,5 +1,5 @@
-import { RoleLayout } from '../../components/dashboards/role-layout';
+import { DashboardRouteChrome } from '../../components/layout/DashboardRouteChrome';
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
-  return <RoleLayout roleName="Workspace">{children}</RoleLayout>;
+  return <DashboardRouteChrome scope="workspace">{children}</DashboardRouteChrome>;
 }

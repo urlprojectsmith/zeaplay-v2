@@ -1,5 +1,5 @@
-import { RoleLayout } from '../../components/dashboards/role-layout';
+import { DashboardRouteChrome } from '../../components/layout/DashboardRouteChrome';
 
 export default function DeveloperLayout({ children }: { children: React.ReactNode }) {
-  return <RoleLayout roleName="Developer Console">{children}</RoleLayout>;
+  return <DashboardRouteChrome scope="developer">{children}</DashboardRouteChrome>;
 }

@@ -1,5 +1,5 @@
-import { DashboardPlaceholder } from '../../../components/dashboards/dashboard-placeholder';
+import { DashboardFoundation } from '../../../components/dashboards/DashboardFoundation';
 
 export default function DeveloperDashboardPage() {
-  return <DashboardPlaceholder title="Developer Dashboard" />;
+  return <DashboardFoundation scope="developer" />;
 }

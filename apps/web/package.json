@@ -17,10 +17,13 @@
     "@zea-play/types": "workspace:*",
     "@zea-play/ui": "workspace:*",
     "@zea-play/validation": "workspace:*",
+    "lucide-react": "^1.45.0",
     "next": "^15.1.2",
+    "next-intl": "^4.14.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.2",
+    "sonner": "^2.0.8",
     "zod": "^3.24.1",
     "zustand": "^5.0.2"
   },

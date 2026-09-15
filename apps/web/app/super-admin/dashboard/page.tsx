@@ -1,5 +1,5 @@
-import { DashboardPlaceholder } from '../../../components/dashboards/dashboard-placeholder';
+import { DashboardFoundation } from '../../../components/dashboards/DashboardFoundation';
 
 export default function SuperAdminDashboardPage() {
-  return <DashboardPlaceholder title="Super Admin Dashboard" />;
+  return <DashboardFoundation scope="super-admin" />;
 }

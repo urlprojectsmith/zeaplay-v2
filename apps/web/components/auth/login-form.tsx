@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Button, Input } from '@zea-play/ui';
 import { useSessionStore } from '../../stores/session';
 
 export function LoginForm() {
@@ -32,31 +33,27 @@ export function LoginForm() {
         <p className="eyebrow">Zea Play</p>
         <h1>Sign in</h1>
       </div>
-      <label>
-        Email
-        <input
-          autoComplete="email"
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          required
-        />
-      </label>
-      <label>
-        Password
-        <input
-          autoComplete="current-password"
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          minLength={12}
-          required
-        />
-      </label>
+      <Input
+        autoComplete="email"
+        label="Email"
+        type="email"
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+        required
+      />
+      <Input
+        autoComplete="current-password"
+        label="Password"
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        minLength={12}
+        required
+      />
       {error ? <p className="form-error">{error}</p> : null}
-      <button type="submit" disabled={isSubmitting}>
+      <Button type="submit" disabled={isSubmitting} loading={isSubmitting}>
         {isSubmitting ? 'Signing in...' : 'Sign in'}
-      </button>
+      </Button>
     </form>
   );
 }

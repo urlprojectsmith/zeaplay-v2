@@ -9,8 +9,11 @@ export default defineConfig({
   },
   webServer: {
     command: 'pnpm --filter @zea-play/web dev',
+    env: {
+      NEXT_PUBLIC_API_URL: 'http://127.0.0.1:3000/api/v1',
+    },
     url: 'http://127.0.0.1:3000',
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [

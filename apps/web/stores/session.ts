@@ -90,7 +90,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (get().hydrated) return;
     const stored = safeParse(localStorage.getItem(storageKey));
     setTenant(stored.selectedAgencyId, stored.selectedWorkspaceId);
-    set({ ...stored, hydrated: true });
+    set(stored);
     await get()
       .refresh()
       .catch(() => clearSession(set));

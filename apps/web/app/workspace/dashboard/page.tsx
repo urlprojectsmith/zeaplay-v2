@@ -1,5 +1,5 @@
-import { DashboardPlaceholder } from '../../../components/dashboards/dashboard-placeholder';
+import { DashboardFoundation } from '../../../components/dashboards/DashboardFoundation';
 
 export default function WorkspaceDashboardPage() {
-  return <DashboardPlaceholder title="Workspace Dashboard" />;
+  return <DashboardFoundation scope="workspace" />;
 }

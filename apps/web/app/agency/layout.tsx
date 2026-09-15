@@ -1,5 +1,5 @@
-import { RoleLayout } from '../../components/dashboards/role-layout';
+import { DashboardRouteChrome } from '../../components/layout/DashboardRouteChrome';
 
 export default function AgencyLayout({ children }: { children: React.ReactNode }) {
-  return <RoleLayout roleName="Agency">{children}</RoleLayout>;
+  return <DashboardRouteChrome scope="agency">{children}</DashboardRouteChrome>;
 }

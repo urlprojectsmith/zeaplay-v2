@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme='light'] {
+  --background: 210 33% 98%;
+  --foreground: 221 36% 14%;
+  --surface: 0 0% 100%;
+  --surface-elevated: 0 0% 100%;
+  --surface-muted: 210 31% 94%;
+  --primary: 176 72% 28%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 32% 91%;
+  --secondary-foreground: 221 36% 18%;
+  --accent: 262 80% 58%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 210 31% 94%;
+  --muted-foreground: 215 16% 43%;
+  --border: 214 25% 87%;
+  --input: 214 25% 82%;
+  --ring: 176 72% 34%;
+  --success: 158 64% 36%;
+  --warning: 38 92% 45%;
+  --danger: 0 72% 45%;
+  --info: 207 90% 47%;
+  --card-background: 0 0% 100%;
+  --card-border: 214 25% 87%;
+}
+
+[data-theme='dark'] {
+  --background: 222 40% 8%;
+  --foreground: 210 35% 96%;
+  --surface: 222 34% 12%;
+  --surface-elevated: 221 32% 15%;
+  --surface-muted: 221 28% 19%;
+  --primary: 176 66% 42%;
+  --primary-foreground: 222 40% 8%;
+  --secondary: 221 28% 20%;
+  --secondary-foreground: 210 35% 96%;
+  --accent: 263 85% 68%;
+  --accent-foreground: 222 40% 8%;
+  --muted: 221 28% 19%;
+  --muted-foreground: 215 18% 72%;
+  --border: 221 24% 23%;
+  --input: 221 24% 28%;
+  --ring: 176 66% 48%;
+  --card-background: 222 34% 12%;
+  --card-border: 221 24% 23%;
+}
+
+[data-theme='colorful'] {
+  --background: 210 45% 98%;
+  --foreground: 222 42% 13%;
+  --surface: 0 0% 100%;
+  --surface-elevated: 0 0% 100%;
+  --surface-muted: 190 42% 94%;
+  --primary: 176 76% 32%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 251 82% 96%;
+  --secondary-foreground: 251 44% 28%;
+  --accent: 327 80% 54%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 190 42% 94%;
+  --muted-foreground: 218 18% 42%;
+  --border: 191 28% 84%;
+  --input: 191 28% 80%;
+  --ring: 327 80% 54%;
+  --card-background: 0 0% 100%;
+  --card-border: 191 28% 84%;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.sb-themes {
+  display: grid;
+  gap: 20px;
+}
+
+.sb-themes section {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  display: grid;
+  gap: 16px;
+  min-height: 160px;
+  padding: 24px;
+}
+
+.sb-label {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
+  text-transform: uppercase;
+}

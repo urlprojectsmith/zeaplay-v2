@@ -1,5 +1,5 @@
-import { RoleLayout } from '../../components/dashboards/role-layout';
+import { DashboardRouteChrome } from '../../components/layout/DashboardRouteChrome';
 
 export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
-  return <RoleLayout roleName="Super Admin">{children}</RoleLayout>;
+  return <DashboardRouteChrome scope="super-admin">{children}</DashboardRouteChrome>;
 }

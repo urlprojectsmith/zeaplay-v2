@@ -4,12 +4,114 @@
 
 :root {
   color-scheme: light;
+  --background: 210 33% 98%;
+  --foreground: 221 36% 14%;
+  --surface: 0 0% 100%;
+  --surface-elevated: 0 0% 100%;
+  --surface-muted: 210 31% 94%;
+  --primary: 176 72% 28%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 32% 91%;
+  --secondary-foreground: 221 36% 18%;
+  --accent: 262 80% 58%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 210 31% 94%;
+  --muted-foreground: 215 16% 43%;
+  --border: 214 25% 87%;
+  --input: 214 25% 82%;
+  --ring: 176 72% 34%;
+  --success: 158 64% 36%;
+  --warning: 38 92% 45%;
+  --danger: 0 72% 45%;
+  --info: 207 90% 47%;
+  --sidebar-background: 221 39% 12%;
+  --sidebar-foreground: 210 30% 92%;
+  --sidebar-active: 176 72% 36%;
+  --sidebar-border: 221 28% 20%;
+  --header-background: 0 0% 100%;
+  --card-background: 0 0% 100%;
+  --card-border: 214 25% 87%;
+  --chart-1: 176 72% 38%;
+  --chart-2: 262 80% 58%;
+  --chart-3: 38 92% 55%;
+  --chart-4: 207 90% 55%;
+  --chart-5: 339 82% 62%;
+  --xp: 176 72% 38%;
+  --gold: 42 95% 53%;
+  --silver: 220 12% 72%;
+  --bronze: 28 64% 48%;
+  --streak: 14 90% 58%;
+  --achievement: 262 80% 58%;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --background: 222 40% 8%;
+  --foreground: 210 35% 96%;
+  --surface: 222 34% 12%;
+  --surface-elevated: 221 32% 15%;
+  --surface-muted: 221 28% 19%;
+  --primary: 176 66% 42%;
+  --primary-foreground: 222 40% 8%;
+  --secondary: 221 28% 20%;
+  --secondary-foreground: 210 35% 96%;
+  --accent: 263 85% 68%;
+  --accent-foreground: 222 40% 8%;
+  --muted: 221 28% 19%;
+  --muted-foreground: 215 18% 72%;
+  --border: 221 24% 23%;
+  --input: 221 24% 28%;
+  --ring: 176 66% 48%;
+  --sidebar-background: 222 42% 7%;
+  --sidebar-foreground: 210 35% 96%;
+  --sidebar-active: 176 66% 38%;
+  --sidebar-border: 221 28% 18%;
+  --header-background: 222 34% 12%;
+  --card-background: 222 34% 12%;
+  --card-border: 221 24% 23%;
+}
+
+:root[data-theme='colorful'] {
+  color-scheme: light;
+  --background: 210 45% 98%;
+  --foreground: 222 42% 13%;
+  --surface: 0 0% 100%;
+  --surface-elevated: 0 0% 100%;
+  --surface-muted: 190 42% 94%;
+  --primary: 176 76% 32%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 251 82% 96%;
+  --secondary-foreground: 251 44% 28%;
+  --accent: 327 80% 54%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 190 42% 94%;
+  --muted-foreground: 218 18% 42%;
+  --border: 191 28% 84%;
+  --input: 191 28% 80%;
+  --ring: 327 80% 54%;
+  --sidebar-background: 222 44% 12%;
+  --sidebar-foreground: 210 35% 96%;
+  --sidebar-active: 327 80% 54%;
+  --sidebar-border: 222 30% 20%;
+  --header-background: 0 0% 100%;
+  --card-background: 0 0% 100%;
+  --card-border: 191 28% 84%;
+  --xp: 176 76% 36%;
+  --gold: 42 95% 52%;
+  --silver: 220 12% 72%;
+  --bronze: 28 64% 48%;
+  --streak: 14 90% 58%;
+  --achievement: 327 80% 54%;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  background: #f8fafc;
-  color: #172033;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-family:
     Inter,
     ui-sans-serif,
@@ -23,58 +125,40 @@ body {
 button,
 input,
 select,
+textarea,
 a {
   font: inherit;
 }
 
-button {
-  border: 0;
-  border-radius: 6px;
-  background: #0f766e;
-  color: white;
-  cursor: pointer;
-  font-weight: 700;
-  min-height: 44px;
-  padding: 0 18px;
+a {
+  color: inherit;
 }
 
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+::selection {
+  background: hsl(var(--primary) / 0.22);
 }
 
-input,
-select {
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: white;
-  color: #172033;
-  min-height: 44px;
-  padding: 0 12px;
-}
-
-label {
-  display: grid;
-  gap: 6px;
-  font-size: 0.92rem;
-  font-weight: 700;
-}
-
-.page-shell {
-  margin: 0 auto;
-  max-width: 1120px;
-  padding: 48px 24px;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .auth-page {
   display: grid;
   min-height: 100vh;
   place-items: center;
+  padding: 24px;
 }
 
 .auth-panel {
-  background: white;
-  border: 1px solid #e2e8f0;
+  background: hsl(var(--surface-elevated));
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   box-shadow: 0 18px 40px rgb(15 23 42 / 8%);
   display: grid;
@@ -84,15 +168,14 @@ label {
   width: min(100%, 420px);
 }
 
-.auth-panel h1,
-.dashboard-header h1 {
+.auth-panel h1 {
   font-size: 2rem;
   line-height: 1.1;
   margin: 0;
 }
 
 .eyebrow {
-  color: #0f766e;
+  color: hsl(var(--primary));
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0;
@@ -101,32 +184,21 @@ label {
 }
 
 .form-error {
-  color: #b91c1c;
+  color: hsl(var(--danger));
   font-weight: 700;
   margin: 0;
 }
 
-.dashboard-header {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.dashboard-header p {
-  color: #64748b;
-  margin: 8px 0 0;
-}
-
-.dashboard-section {
-  margin-top: 32px;
-  max-width: 460px;
-}
-
 .text-link {
-  color: #0f766e;
+  color: hsl(var(--primary));
   font-weight: 800;
   text-decoration: none;
+}
+
+.page-shell {
+  margin: 0 auto;
+  max-width: 1120px;
+  padding: 48px 24px;
 }
 
 .project-grid {
@@ -139,8 +211,8 @@ label {
 .project-card,
 .asset-row,
 .upload-zone {
-  background: white;
-  border: 1px solid #e2e8f0;
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
 }
 
@@ -155,7 +227,7 @@ label {
 .project-card span,
 .asset-row span,
 .upload-zone span {
-  color: #64748b;
+  color: hsl(var(--muted-foreground));
   font-size: 0.9rem;
 }
 
@@ -164,15 +236,6 @@ label {
   gap: 12px;
   margin-top: 28px;
   padding: 20px;
-}
-
-.upload-zone input {
-  border-style: dashed;
-}
-
-.upload-zone progress {
-  height: 12px;
-  width: 100%;
 }
 
 .asset-list {
@@ -189,34 +252,7 @@ label {
   padding: 16px;
 }
 
-.asset-row div:first-child {
-  display: grid;
-  gap: 6px;
-}
-
 .row-actions {
   display: flex;
   gap: 10px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-  }
-
-  body {
-    background: #111827;
-    color: #f8fafc;
-  }
-
-  input,
-  select,
-  .auth-panel,
-  .project-card,
-  .asset-row,
-  .upload-zone {
-    background: #172033;
-    border-color: #334155;
-    color: #f8fafc;
-  }
 }
