@@ -8,7 +8,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest",
-    "test:integration": "jest --config jest.integration.config.js",
+    "test:integration": "jest --config jest.integration.config.js --runInBand",
     "prisma:generate": "dotenv -e ../../.env.example -- prisma generate",
     "prisma:validate": "dotenv -e ../../.env.example -- prisma validate",
     "prisma:seed": "dotenv -e ../../.env.example -- ts-node prisma/seed.ts"

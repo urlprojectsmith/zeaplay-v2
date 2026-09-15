@@ -18,8 +18,10 @@ import {
   Skeleton,
 } from '@zea-play/ui';
 import { RefreshCw, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageContainer } from '../layout/PageContainer';
 import { PageHeader } from '../layout/PageHeader';
+import { useLanguage } from '../../contexts/language-provider';
 import { useSessionStore } from '../../stores/session';
 import {
   listDepartments,
@@ -31,6 +33,7 @@ import type { Department, WorkspaceUser } from '../../services/workspace-managem
 const pageSize = 10;
 
 export function WorkspaceUsersPage() {
+  const { locale, t } = useLanguage();
   const workspaceId = useSessionStore((state) => state.selectedWorkspaceId);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('ALL');
@@ -88,16 +91,23 @@ export function WorkspaceUsersPage() {
 
   async function mutateUser(user: WorkspaceUser, body: Parameters<typeof updateWorkspaceUser>[2]) {
     if (!workspaceId) return;
-    const updated = await updateWorkspaceUser(workspaceId, user.id, body);
-    setUsers((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-    setSelected(updated);
+    try {
+      const updated = await updateWorkspaceUser(workspaceId, user.id, body);
+      setUsers((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setSelected(updated);
+      toast.success(t(locale, 'workspaceUsers.updated'));
+    } catch (nextError) {
+      toast.error(
+        nextError instanceof Error ? nextError.message : t(locale, 'workspaceUsers.updateFailed'),
+      );
+    }
   }
 
   return (
     <PageContainer>
       <PageHeader
-        title="Users"
-        description="Workspace membership, roles, and department assignment."
+        title={t(locale, 'workspaceUsers.title')}
+        description={t(locale, 'workspaceUsers.description')}
       />
       <Card>
         <CardContent className="grid gap-3 pt-6 md:grid-cols-[1fr_160px_160px_180px]">
@@ -106,7 +116,7 @@ export function WorkspaceUsersPage() {
             <Input
               aria-label="Search users"
               className="pl-9"
-              placeholder="Search name, email, or id"
+              placeholder={t(locale, 'workspaceUsers.searchPlaceholder')}
               value={search}
               onChange={(event) => {
                 setSearch(event.target.value);
@@ -115,16 +125,18 @@ export function WorkspaceUsersPage() {
             />
           </div>
           <FilterSelect
-            label="Status"
+            label={t(locale, 'workspaceUsers.status')}
             value={status}
             onChange={setStatus}
             values={['ALL', 'ACTIVE', 'INVITED', 'SUSPENDED']}
+            allLabel={t(locale, 'workspaceUsers.allStatus')}
           />
           <FilterSelect
-            label="Role"
+            label={t(locale, 'workspaceUsers.role')}
             value={role}
             onChange={setRole}
             values={['ALL', 'ADMIN', 'MANAGER', 'MEMBER']}
+            allLabel={t(locale, 'workspaceUsers.allRoles')}
           />
           <Select
             value={departmentId}
@@ -133,11 +145,11 @@ export function WorkspaceUsersPage() {
               setPage(1);
             }}
           >
-            <SelectTrigger label="Department">
+            <SelectTrigger label={t(locale, 'workspaceUsers.department')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ALL">All departments</SelectItem>
+              <SelectItem value="ALL">{t(locale, 'workspaceUsers.allDepartments')}</SelectItem>
               {departments.map((department) => (
                 <SelectItem key={department.id} value={department.id}>
                   {department.name}
@@ -150,11 +162,15 @@ export function WorkspaceUsersPage() {
       {loading ? (
         <UserSkeleton />
       ) : error ? (
-        <EmptyState title="Could not load users" description={error} />
+        <EmptyState title={t(locale, 'workspaceUsers.loadError')} description={error} />
       ) : users.length === 0 ? (
         <EmptyState
-          title={hasFilters ? 'No matching users' : 'No users'}
-          description="Adjust filters or add members to this workspace."
+          title={
+            hasFilters
+              ? t(locale, 'workspaceUsers.noMatchingUsers')
+              : t(locale, 'workspaceUsers.noUsers')
+          }
+          description={t(locale, 'workspaceUsers.emptyDescription')}
         />
       ) : (
         <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
@@ -176,7 +192,9 @@ export function WorkspaceUsersPage() {
                     <Badge variant={user.membershipStatus === 'ACTIVE' ? 'success' : 'warning'}>
                       {user.membershipStatus}
                     </Badge>
-                    <Badge variant="neutral">{user.department?.name ?? 'No department'}</Badge>
+                    <Badge variant="neutral">
+                      {user.department?.name ?? t(locale, 'workspaceUsers.noDepartment')}
+                    </Badge>
                   </div>
                 </div>
               </button>
@@ -187,17 +205,18 @@ export function WorkspaceUsersPage() {
                 disabled={page <= 1}
                 onClick={() => setPage((value) => value - 1)}
               >
-                Previous
+                {t(locale, 'workspaceUsers.previous')}
               </Button>
               <span className="text-sm text-[hsl(var(--muted-foreground))]">
-                Page {page} of {totalPages}
+                {t(locale, 'workspaceUsers.page')} {page} {t(locale, 'workspaceUsers.of')}{' '}
+                {totalPages}
               </span>
               <Button
                 variant="secondary"
                 disabled={page >= totalPages}
                 onClick={() => setPage((value) => value + 1)}
               >
-                Next
+                {t(locale, 'workspaceUsers.next')}
               </Button>
             </div>
           </div>
@@ -205,6 +224,16 @@ export function WorkspaceUsersPage() {
             user={(selected ?? users[0]) as WorkspaceUser}
             departments={departments}
             onChange={mutateUser}
+            labels={{
+              membership: t(locale, 'workspaceUsers.membership'),
+              role: t(locale, 'workspaceUsers.role'),
+              department: t(locale, 'workspaceUsers.department'),
+              noDepartment: t(locale, 'workspaceUsers.noDepartment'),
+              joined: t(locale, 'workspaceUsers.joined'),
+              suspend: t(locale, 'workspaceUsers.suspend'),
+              reactivate: t(locale, 'workspaceUsers.reactivate'),
+              ownerProtected: t(locale, 'workspaceUsers.ownerProtected'),
+            }}
           />
         </div>
       )}
@@ -217,11 +246,13 @@ function FilterSelect({
   value,
   values,
   onChange,
+  allLabel,
 }: {
   label: string;
   value: string;
   values: string[];
   onChange: (value: string) => void;
+  allLabel: string;
 }) {
   return (
     <Select
@@ -236,7 +267,7 @@ function FilterSelect({
       <SelectContent>
         {values.map((item) => (
           <SelectItem key={item} value={item}>
-            {item === 'ALL' ? `All ${label.toLowerCase()}` : item}
+            {item === 'ALL' ? allLabel : item}
           </SelectItem>
         ))}
       </SelectContent>
@@ -248,10 +279,21 @@ function UserDetail({
   user,
   departments,
   onChange,
+  labels,
 }: {
   user: WorkspaceUser;
   departments: Department[];
   onChange: (user: WorkspaceUser, body: Parameters<typeof updateWorkspaceUser>[2]) => Promise<void>;
+  labels: {
+    membership: string;
+    role: string;
+    department: string;
+    noDepartment: string;
+    joined: string;
+    suspend: string;
+    reactivate: string;
+    ownerProtected: string;
+  };
 }) {
   return (
     <Card>
@@ -260,14 +302,14 @@ function UserDetail({
       </CardHeader>
       <CardContent className="grid gap-4">
         <Detail label="Email" value={user.email} />
-        <Detail label="Membership" value={user.membershipStatus} />
-        <Detail label="Role" value={user.role.name} />
-        <Detail label="Department" value={user.department?.name ?? 'None'} />
-        <Detail label="Joined" value={new Date(user.joinedAt).toLocaleDateString()} />
+        <Detail label={labels.membership} value={user.membershipStatus} />
+        <Detail label={labels.role} value={user.role.name} />
+        <Detail label={labels.department} value={user.department?.name ?? labels.noDepartment} />
+        <Detail label={labels.joined} value={new Date(user.joinedAt).toLocaleDateString()} />
         {user.role.key !== 'OWNER' ? (
           <div className="grid gap-3">
             <Select value={user.role.key} onValueChange={(role) => void onChange(user, { role })}>
-              <SelectTrigger label="Role">
+              <SelectTrigger label={labels.role}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -284,11 +326,11 @@ function UserDetail({
                 void onChange(user, { departmentId: value === 'NONE' ? null : value })
               }
             >
-              <SelectTrigger label="Department">
+              <SelectTrigger label={labels.department}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="NONE">No department</SelectItem>
+                <SelectItem value="NONE">{labels.noDepartment}</SelectItem>
                 {departments.map((department) => (
                   <SelectItem key={department.id} value={department.id}>
                     {department.name}
@@ -305,11 +347,11 @@ function UserDetail({
               }
             >
               <RefreshCw className="h-4 w-4" />{' '}
-              {user.membershipStatus === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
+              {user.membershipStatus === 'ACTIVE' ? labels.suspend : labels.reactivate}
             </Button>
           </div>
         ) : (
-          <Badge variant="neutral">OWNER protected</Badge>
+          <Badge variant="neutral">{labels.ownerProtected}</Badge>
         )}
       </CardContent>
     </Card>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LanguageProvider, useLanguage } from '../contexts/language-provider';
 import { ThemeProvider } from '../contexts/theme-provider';
 import { WorkspaceDepartmentsPage } from '../components/workspace/WorkspaceDepartmentsPage';
 import { WorkspaceUsersPage } from '../components/workspace/WorkspaceUsersPage';
@@ -46,6 +47,7 @@ const emptyPage = { items: [], page: 1, pageSize: 10, total: 0 };
 describe('phase 6.1 workspace pages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     useSessionStore.setState({
       selectedAgencyId: 'agency-1',
       selectedWorkspaceId: 'workspace-1',
@@ -58,7 +60,7 @@ describe('phase 6.1 workspace pages', () => {
   it('shows users loading and then empty state', async () => {
     listWorkspaceUsers.mockResolvedValue(emptyPage);
     listDepartments.mockResolvedValue(emptyPage);
-    render(<WorkspaceUsersPage />);
+    renderWithLanguage(<WorkspaceUsersPage />);
     expect(screen.getAllByText('', { selector: '.animate-pulse' }).length).toBeGreaterThan(0);
     expect(await screen.findByText('No users')).toBeInTheDocument();
   });
@@ -66,7 +68,7 @@ describe('phase 6.1 workspace pages', () => {
   it('shows user API errors and uses the selected workspace in requests', async () => {
     listWorkspaceUsers.mockRejectedValue(new Error('Denied'));
     listDepartments.mockResolvedValue(emptyPage);
-    render(<WorkspaceUsersPage />);
+    renderWithLanguage(<WorkspaceUsersPage />);
     expect(await screen.findByText('Could not load users')).toBeInTheDocument();
     expect(listWorkspaceUsers).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: 'workspace-1' }),
@@ -76,7 +78,7 @@ describe('phase 6.1 workspace pages', () => {
   it('validates department create form with React Hook Form and Zod', async () => {
     listDepartments.mockResolvedValue(emptyPage);
     listWorkspaceUsers.mockResolvedValue(userPage);
-    render(<WorkspaceDepartmentsPage />);
+    renderWithLanguage(<WorkspaceDepartmentsPage />);
     fireEvent.click(await screen.findByRole('button', { name: /new department/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect(await screen.findByText('Name is required.')).toBeInTheDocument();
@@ -99,7 +101,9 @@ describe('phase 6.1 workspace pages', () => {
     });
     render(
       <ThemeProvider>
-        <WorkspaceDepartmentsPage />
+        <LanguageProvider>
+          <WorkspaceDepartmentsPage />
+        </LanguageProvider>
       </ThemeProvider>,
     );
     fireEvent.click(await screen.findByRole('button', { name: /new department/i }));
@@ -113,4 +117,30 @@ describe('phase 6.1 workspace pages', () => {
     );
     expect(await screen.findByText('Design')).toBeInTheDocument();
   });
+
+  it('renders Phase 6.1 department labels through the Tamil language provider', async () => {
+    listDepartments.mockResolvedValue(emptyPage);
+    listWorkspaceUsers.mockResolvedValue(userPage);
+    render(
+      <LanguageProvider>
+        <TamilSwitch />
+        <WorkspaceDepartmentsPage />
+      </LanguageProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'ta' }));
+    expect(await screen.findByText('துறைகள்')).toBeInTheDocument();
+  });
 });
+
+function renderWithLanguage(ui: React.ReactElement) {
+  return render(<LanguageProvider>{ui}</LanguageProvider>);
+}
+
+function TamilSwitch() {
+  const { setLocale } = useLanguage();
+  return (
+    <button type="button" onClick={() => setLocale('ta')}>
+      ta
+    </button>
+  );
+}

@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Building2, Plus } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { toast } from 'sonner';
 import {
   Badge,
   Button,
@@ -30,6 +31,7 @@ import {
 } from '@zea-play/ui';
 import { PageContainer } from '../layout/PageContainer';
 import { PageHeader } from '../layout/PageHeader';
+import { useLanguage } from '../../contexts/language-provider';
 import { useSessionStore } from '../../stores/session';
 import {
   createDepartment,
@@ -49,6 +51,7 @@ const formSchema = z.object({
 type DepartmentFormValues = z.infer<typeof formSchema>;
 
 export function WorkspaceDepartmentsPage() {
+  const { locale, t } = useLanguage();
   const workspaceId = useSessionStore((state) => state.selectedWorkspaceId);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('ALL');
@@ -118,16 +121,25 @@ export function WorkspaceDepartmentsPage() {
       description: values.description?.trim() || undefined,
       managerUserId: values.managerUserId === 'NONE' ? undefined : values.managerUserId,
     };
-    const saved = editing
-      ? await updateDepartment(workspaceId, editing.id, {
-          ...body,
-          managerUserId: values.managerUserId === 'NONE' ? null : values.managerUserId,
-        })
-      : await createDepartment(workspaceId, body);
-    setDepartments((items) =>
-      editing ? items.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...items],
-    );
-    setOpen(false);
+    try {
+      const saved = editing
+        ? await updateDepartment(workspaceId, editing.id, {
+            ...body,
+            managerUserId: values.managerUserId === 'NONE' ? null : values.managerUserId,
+          })
+        : await createDepartment(workspaceId, body);
+      setDepartments((items) =>
+        editing ? items.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...items],
+      );
+      setOpen(false);
+      toast.success(t(locale, 'workspaceDepartments.saved'));
+    } catch (nextError) {
+      toast.error(
+        nextError instanceof Error
+          ? nextError.message
+          : t(locale, 'workspaceDepartments.saveFailed'),
+      );
+    }
   }
 
   const hasFilters = Boolean(search || status !== 'ALL');
@@ -135,11 +147,11 @@ export function WorkspaceDepartmentsPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Departments"
-        description="Workspace-scoped departments, managers, and member visibility."
+        title={t(locale, 'workspaceDepartments.title')}
+        description={t(locale, 'workspaceDepartments.description')}
         actions={
           <Button onClick={startCreate}>
-            <Plus className="h-4 w-4" /> New department
+            <Plus className="h-4 w-4" /> {t(locale, 'workspaceDepartments.newDepartment')}
           </Button>
         }
       />
@@ -147,16 +159,16 @@ export function WorkspaceDepartmentsPage() {
         <CardContent className="grid gap-3 pt-6 md:grid-cols-[1fr_180px]">
           <Input
             aria-label="Search departments"
-            placeholder="Search departments"
+            placeholder={t(locale, 'workspaceDepartments.searchPlaceholder')}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
           <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger label="Status">
+            <SelectTrigger label={t(locale, 'workspaceDepartments.status')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ALL">All status</SelectItem>
+              <SelectItem value="ALL">{t(locale, 'workspaceDepartments.allStatus')}</SelectItem>
               <SelectItem value="ACTIVE">ACTIVE</SelectItem>
               <SelectItem value="INACTIVE">INACTIVE</SelectItem>
             </SelectContent>
@@ -170,11 +182,15 @@ export function WorkspaceDepartmentsPage() {
           ))}
         </div>
       ) : error ? (
-        <EmptyState title="Could not load departments" description={error} />
+        <EmptyState title={t(locale, 'workspaceDepartments.loadError')} description={error} />
       ) : departments.length === 0 ? (
         <EmptyState
-          title={hasFilters ? 'No matching departments' : 'No departments'}
-          description="Create a workspace department to organize members."
+          title={
+            hasFilters
+              ? t(locale, 'workspaceDepartments.noMatchingDepartments')
+              : t(locale, 'workspaceDepartments.noDepartments')
+          }
+          description={t(locale, 'workspaceDepartments.emptyDescription')}
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -186,7 +202,9 @@ export function WorkspaceDepartmentsPage() {
                     <CardTitle className="flex items-center gap-2">
                       <Building2 className="h-4 w-4" /> {department.name}
                     </CardTitle>
-                    <CardDescription>{department.description ?? 'No description'}</CardDescription>
+                    <CardDescription>
+                      {department.description ?? t(locale, 'workspaceDepartments.noDescription')}
+                    </CardDescription>
                   </div>
                   <Badge variant={department.status === 'ACTIVE' ? 'success' : 'neutral'}>
                     {department.status}
@@ -195,13 +213,16 @@ export function WorkspaceDepartmentsPage() {
               </CardHeader>
               <CardContent className="grid gap-3">
                 <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                  Manager: {department.manager?.name ?? department.manager?.email ?? 'Unassigned'}
+                  {t(locale, 'workspaceDepartments.manager')}:{' '}
+                  {department.manager?.name ??
+                    department.manager?.email ??
+                    t(locale, 'workspaceDepartments.unassigned')}
                 </p>
                 <p className="text-sm text-[hsl(var(--muted-foreground))]">
-                  Members: {department.memberCount}
+                  {t(locale, 'workspaceDepartments.members')}: {department.memberCount}
                 </p>
                 <Button variant="secondary" onClick={() => startEdit(department)}>
-                  Edit
+                  {t(locale, 'workspaceDepartments.edit')}
                 </Button>
               </CardContent>
             </Card>
@@ -211,16 +232,24 @@ export function WorkspaceDepartmentsPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit department' : 'Create department'}</DialogTitle>
+            <DialogTitle>
+              {editing
+                ? t(locale, 'workspaceDepartments.editDepartment')
+                : t(locale, 'workspaceDepartments.createDepartment')}
+            </DialogTitle>
           </DialogHeader>
           <form className="grid gap-4" onSubmit={(event) => void form.handleSubmit(submit)(event)}>
             <Input
-              label="Name"
-              error={form.formState.errors.name?.message}
+              label={t(locale, 'workspaceDepartments.name')}
+              error={
+                form.formState.errors.name
+                  ? t(locale, 'workspaceDepartments.nameRequired')
+                  : undefined
+              }
               {...form.register('name')}
             />
             <Textarea
-              label="Description"
+              label={t(locale, 'workspaceDepartments.descriptionField')}
               error={form.formState.errors.description?.message}
               {...form.register('description')}
             />
@@ -228,11 +257,11 @@ export function WorkspaceDepartmentsPage() {
               value={form.watch('managerUserId')}
               onValueChange={(value) => form.setValue('managerUserId', value)}
             >
-              <SelectTrigger label="Manager">
+              <SelectTrigger label={t(locale, 'workspaceDepartments.manager')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="NONE">No manager</SelectItem>
+                <SelectItem value="NONE">{t(locale, 'workspaceDepartments.noManager')}</SelectItem>
                 {users.map((user) => (
                   <SelectItem key={user.id} value={user.id}>
                     {user.name ?? user.email}
@@ -246,7 +275,7 @@ export function WorkspaceDepartmentsPage() {
                 form.setValue('status', value as DepartmentFormValues['status'])
               }
             >
-              <SelectTrigger label="Status">
+              <SelectTrigger label={t(locale, 'workspaceDepartments.status')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -256,9 +285,13 @@ export function WorkspaceDepartmentsPage() {
             </Select>
             <DialogFooter>
               <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
-                Cancel
+                {t(locale, 'workspaceDepartments.cancel')}
               </Button>
-              <Button type="submit">{editing ? 'Save changes' : 'Create'}</Button>
+              <Button type="submit">
+                {editing
+                  ? t(locale, 'workspaceDepartments.saveChanges')
+                  : t(locale, 'workspaceDepartments.create')}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

@@ -98,6 +98,7 @@ describe('Phase 4 multi-tenant security integration', () => {
   afterAll(async () => {
     await app?.close();
     await prisma.$disconnect();
+    await drainTeardown();
   });
 
   it('rejects cross-workspace project access without leaking existence', async () => {
@@ -475,8 +476,8 @@ async function resetDatabase() {
     prisma.processingJob.deleteMany(),
     prisma.asset.deleteMany(),
     prisma.project.deleteMany(),
-    prisma.department.deleteMany(),
     prisma.workspaceMembership.deleteMany(),
+    prisma.department.deleteMany(),
     prisma.agencyMembership.deleteMany(),
     prisma.workspace.deleteMany(),
     prisma.agency.deleteMany(),
@@ -550,4 +551,8 @@ function ctx(agencyId: string, workspaceId: string) {
 function setCookies(value: string | string[] | undefined) {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
+}
+
+function drainTeardown() {
+  return new Promise((resolve) => setTimeout(resolve, 100));
 }

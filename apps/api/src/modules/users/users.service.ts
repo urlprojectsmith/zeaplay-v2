@@ -61,6 +61,7 @@ export class UsersService {
         workspaceId: true,
         status: true,
         role: { select: { key: true } },
+        managedDepartments: { select: { id: true } },
       },
     });
     if (!existing) throw new NotFoundException('Workspace user not found.');
@@ -75,33 +76,38 @@ export class UsersService {
       dto.departmentId ? this.department(tenant.workspaceId, dto.departmentId) : null,
     ]);
 
-    const data: Prisma.WorkspaceMembershipUpdateInput = {
-      role: role ? { connect: { id: role.id } } : undefined,
+    const data: Prisma.WorkspaceMembershipUncheckedUpdateInput = {
+      roleId: role?.id,
       status: dto.status,
-      department:
-        dto.departmentId === null
-          ? { disconnect: true }
-          : department
-            ? {
-                connect: { id_workspaceId: { id: department.id, workspaceId: tenant.workspaceId } },
-              }
-            : undefined,
+      departmentId: dto.departmentId === null ? null : department?.id,
     };
-    const membership = await this.prisma.workspaceMembership.update({
-      where: { id: existing.id },
-      data,
-      select: workspaceUserSelect,
+    const membership = await this.prisma.$transaction(async (tx) => {
+      if (dto.status === MembershipStatus.SUSPENDED && existing.managedDepartments.length > 0) {
+        await tx.department.updateMany({
+          where: { workspaceId: tenant.workspaceId, managerMembershipId: existing.id },
+          data: { managerMembershipId: null },
+        });
+      }
+      return tx.workspaceMembership.update({
+        where: { id: existing.id },
+        data,
+        select: workspaceUserSelect,
+      });
     });
 
-    await this.audit.record({
-      agencyId: tenant.agencyId,
-      workspaceId: tenant.workspaceId,
-      userId: tenant.userId,
-      action: auditActionForUserUpdate(dto),
-      entityType: 'WorkspaceMembership',
-      entityId: membership.id,
-      metadata: { targetUserId: userId, changed: Object.keys(dto) },
-    });
+    await Promise.all(
+      auditActionsForUserUpdate(dto).map((action) =>
+        this.audit.record({
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action,
+          entityType: 'WorkspaceMembership',
+          entityId: membership.id,
+          metadata: { targetUserId: userId, changed: Object.keys(dto) },
+        }),
+      ),
+    );
     return serializeWorkspaceUser(membership);
   }
 
@@ -138,9 +144,10 @@ export class UsersService {
   private async department(workspaceId: string, departmentId: string) {
     const department = await this.prisma.department.findFirst({
       where: { id: departmentId, workspaceId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!department) throw new NotFoundException('Department not found.');
+    if (department.status !== 'ACTIVE') throw new BadRequestException('Department is not active.');
     return department;
   }
 }
@@ -183,13 +190,14 @@ function userOrderBy(sortBy: string, sortDirection: Prisma.SortOrder) {
   return { createdAt: sortDirection };
 }
 
-function auditActionForUserUpdate(dto: UpdateWorkspaceUserMembershipDto) {
-  if (dto.status === MembershipStatus.ACTIVE) return 'workspace.user.activated';
-  if (dto.status === MembershipStatus.SUSPENDED) return 'workspace.user.suspended';
-  if (dto.role) return 'workspace.user.role_changed';
-  if (dto.departmentId === null) return 'workspace.user.department_removed';
-  if (dto.departmentId) return 'workspace.user.department_assigned';
-  return 'workspace.user.updated';
+function auditActionsForUserUpdate(dto: UpdateWorkspaceUserMembershipDto) {
+  const actions: string[] = [];
+  if (dto.status === MembershipStatus.ACTIVE) actions.push('workspace.user.activated');
+  if (dto.status === MembershipStatus.SUSPENDED) actions.push('workspace.user.suspended');
+  if (dto.role) actions.push('workspace.user.role_changed');
+  if (dto.departmentId === null) actions.push('workspace.user.department_removed');
+  if (dto.departmentId) actions.push('workspace.user.department_assigned');
+  return actions.length > 0 ? actions : ['workspace.user.updated'];
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

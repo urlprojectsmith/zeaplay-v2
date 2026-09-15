@@ -1,5 +1,10 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { DepartmentStatus, MembershipStatus, Prisma } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -52,13 +57,18 @@ export class DepartmentsService {
     const manager = dto.managerUserId
       ? await this.managerMembership(tenant.workspaceId, dto.managerUserId)
       : null;
+    const status = dto.status ?? DepartmentStatus.ACTIVE;
+    if (status !== DepartmentStatus.ACTIVE && manager) {
+      throw new BadRequestException('Inactive departments cannot have a manager.');
+    }
+    await this.assertUniqueName(tenant.workspaceId, dto.name);
     const department = await this.prisma.department
       .create({
         data: {
           workspaceId: tenant.workspaceId,
           name: dto.name.trim(),
           description: dto.description?.trim(),
-          status: dto.status,
+          status,
           managerMembershipId: manager?.id,
         },
         select: departmentSelect,
@@ -81,6 +91,20 @@ export class DepartmentsService {
 
   async update(tenant: WorkspaceTenantContext, departmentId: string, dto: UpdateDepartmentDto) {
     await this.assertDepartment(tenant.workspaceId, departmentId);
+    if (dto.name) await this.assertUniqueName(tenant.workspaceId, dto.name, departmentId);
+    const nextStatus = dto.status;
+    if (nextStatus === DepartmentStatus.INACTIVE && dto.managerUserId) {
+      throw new BadRequestException('Inactive departments cannot have a manager.');
+    }
+    if (dto.managerUserId && nextStatus !== DepartmentStatus.ACTIVE) {
+      const existing = await this.prisma.department.findFirst({
+        where: { id: departmentId, workspaceId: tenant.workspaceId },
+        select: { status: true },
+      });
+      if (existing?.status !== DepartmentStatus.ACTIVE) {
+        throw new BadRequestException('Inactive departments cannot have a manager.');
+      }
+    }
     const manager =
       dto.managerUserId === undefined || dto.managerUserId === null
         ? null
@@ -93,11 +117,13 @@ export class DepartmentsService {
           description: dto.description?.trim(),
           status: dto.status,
           managerMembershipId:
-            dto.managerUserId === undefined
-              ? undefined
-              : dto.managerUserId === null
-                ? null
-                : manager?.id,
+            dto.status === DepartmentStatus.INACTIVE
+              ? null
+              : dto.managerUserId === undefined
+                ? undefined
+                : dto.managerUserId === null
+                  ? null
+                  : manager?.id,
         },
         select: departmentSelect,
       })
@@ -106,15 +132,19 @@ export class DepartmentsService {
           throw new ConflictException('Department name already exists in this workspace.');
         throw error;
       });
-    await this.audit.record({
-      agencyId: tenant.agencyId,
-      workspaceId: tenant.workspaceId,
-      userId: tenant.userId,
-      action: auditActionForDepartmentUpdate(dto),
-      entityType: 'Department',
-      entityId: departmentId,
-      metadata: { changed: Object.keys(dto) },
-    });
+    await Promise.all(
+      auditActionsForDepartmentUpdate(dto).map((action) =>
+        this.audit.record({
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action,
+          entityType: 'Department',
+          entityId: departmentId,
+          metadata: { changed: Object.keys(dto) },
+        }),
+      ),
+    );
     return serializeDepartment(department);
   }
 
@@ -167,7 +197,23 @@ export class DepartmentsService {
       select: { id: true, status: true },
     });
     if (!membership) throw new NotFoundException('Manager must belong to this workspace.');
+    if (membership.status !== MembershipStatus.ACTIVE) {
+      throw new BadRequestException('Manager membership is not active.');
+    }
     return membership;
+  }
+
+  private async assertUniqueName(workspaceId: string, name: string, exceptId?: string) {
+    const normalized = name.trim();
+    const existing = await this.prisma.department.findFirst({
+      where: {
+        workspaceId,
+        name: { equals: normalized, mode: Prisma.QueryMode.insensitive },
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException('Department name already exists in this workspace.');
   }
 }
 
@@ -212,10 +258,12 @@ function serializeDepartment(department: DepartmentRecord) {
   };
 }
 
-function auditActionForDepartmentUpdate(dto: UpdateDepartmentDto) {
-  if (dto.status) return 'department.status_changed';
-  if ('managerUserId' in dto) return 'department.manager_changed';
-  return 'department.updated';
+function auditActionsForDepartmentUpdate(dto: UpdateDepartmentDto) {
+  const actions: string[] = [];
+  if (dto.name !== undefined || dto.description !== undefined) actions.push('department.updated');
+  if (dto.status) actions.push('department.status_changed');
+  if ('managerUserId' in dto) actions.push('department.manager_changed');
+  return actions.length > 0 ? actions : ['department.updated'];
 }
 
 function isUniqueConflict(error: unknown) {

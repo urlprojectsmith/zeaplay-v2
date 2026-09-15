@@ -1,6 +1,6 @@
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { MembershipStatus, PrismaClient, RoleScope } from '@prisma/client';
+import { DepartmentStatus, MembershipStatus, PrismaClient, RoleScope } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { PasswordService } from '../src/common/auth/password.service';
@@ -43,13 +43,21 @@ jest.setTimeout(30_000);
 describe('Phase 6.1 users and departments integration', () => {
   let app: INestApplication;
   let agencyA: string;
-  let workspaceA: string;
+  let agencyB: string;
+  let workspaceA1: string;
+  let workspaceA2: string;
+  let workspaceB1: string;
   let ownerA: string;
   let memberA: string;
+  let memberA2: string;
+  let ownerB: string;
   let adminToken: string;
+  let memberToken: string;
   let memberMembershipId: string;
-  let departmentA: string;
-  let departmentB: string;
+  let managerMembershipId: string;
+  let departmentA1: string;
+  let inactiveDepartmentA1: string;
+  let departmentB1: string;
 
   beforeAll(async () => {
     await resetDatabase();
@@ -70,54 +78,91 @@ describe('Phase 6.1 users and departments integration', () => {
     app.useGlobalInterceptors(new ResponseInterceptor());
     await app.init();
     adminToken = await accessTokenFor('admin-a@zeaplay.test');
+    memberToken = await accessTokenFor('member-a@zeaplay.test');
   });
 
   afterAll(async () => {
     await app?.close();
     await prisma.$disconnect();
+    await drainTeardown();
   });
 
   it('paginates, searches, and filters workspace users server-side', async () => {
     const page = await request(app.getHttpServer())
-      .get(`/api/v1/workspaces/${workspaceA}/users?page=1&pageSize=2&search=member&role=MEMBER`)
+      .get(`/api/v1/workspaces/${workspaceA1}/users?page=1&pageSize=2&search=member&role=MEMBER`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .expect(200);
     expect(page.body.data.total).toBe(1);
     expect(page.body.data.items[0].email).toBe('member-a@zeaplay.test');
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/users?page=1&pageSize=101`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(422);
   });
 
   it('rejects foreign role and foreign department membership mutation', async () => {
     await request(app.getHttpServer())
-      .patch(`/api/v1/workspaces/${workspaceA}/users/${memberA}/membership`)
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .send({ role: 'FOREIGN' })
       .expect(422);
     await request(app.getHttpServer())
-      .patch(`/api/v1/workspaces/${workspaceA}/users/${memberA}/membership`)
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
-      .send({ departmentId: departmentB })
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: departmentB1 })
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: inactiveDepartmentA1 })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${ownerB}/membership`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ role: 'MEMBER' })
       .expect(404);
   });
 
   it('preserves owner safety and blocks suspended membership tenant resolution', async () => {
     await request(app.getHttpServer())
-      .patch(`/api/v1/workspaces/${workspaceA}/users/${ownerA}/membership`)
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${ownerA}/membership`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .send({ role: 'MEMBER' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${ownerA}/membership`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ status: 'SUSPENDED' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ role: 'ADMIN' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ status: 'SUSPENDED' })
       .expect(403);
     await prisma.workspaceMembership.update({
       where: { id: memberMembershipId },
       data: { status: MembershipStatus.SUSPENDED },
     });
-    const memberToken = await accessTokenFor('member-a@zeaplay.test');
     await request(app.getHttpServer())
-      .get(`/api/v1/workspaces/${workspaceA}/users`)
+      .get(`/api/v1/workspaces/${workspaceA1}/users`)
       .set(auth(memberToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .expect(403);
     await prisma.workspaceMembership.update({
       where: { id: memberMembershipId },
@@ -127,57 +172,193 @@ describe('Phase 6.1 users and departments integration', () => {
 
   it('creates departments and validates manager workspace scope', async () => {
     const created = await request(app.getHttpServer())
-      .post(`/api/v1/workspaces/${workspaceA}/departments`)
+      .post(`/api/v1/workspaces/${workspaceA1}/departments`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .send({ name: 'Support', managerUserId: memberA })
       .expect(201);
     expect(created.body.data.manager.email).toBe('member-a@zeaplay.test');
     await request(app.getHttpServer())
-      .post(`/api/v1/workspaces/${workspaceA}/departments`)
+      .post(`/api/v1/workspaces/${workspaceA1}/departments`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .send({ name: 'Invalid', managerUserId: ownerA, status: 'ACTIVE' })
       .expect(201);
-    const otherUser = await prisma.user.findUniqueOrThrow({
-      where: { email: 'owner-b@zeaplay.test' },
-    });
     await request(app.getHttpServer())
-      .post(`/api/v1/workspaces/${workspaceA}/departments`)
+      .post(`/api/v1/workspaces/${workspaceA1}/departments`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
-      .send({ name: 'Bad manager', managerUserId: otherUser.id })
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Bad manager', managerUserId: ownerB })
       .expect(404);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/departments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Inactive Managed', managerUserId: memberA, status: 'INACTIVE' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/departments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: ' design ' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA2}/departments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ name: 'Design' })
+      .expect(201);
   });
 
   it('hides departments across workspaces and filters by status', async () => {
     await request(app.getHttpServer())
-      .get(`/api/v1/workspaces/${workspaceA}/departments/${departmentB}`)
+      .get(`/api/v1/workspaces/${workspaceA1}/departments/${departmentB1}`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .expect(404);
     const filtered = await request(app.getHttpServer())
-      .get(`/api/v1/workspaces/${workspaceA}/departments?status=ACTIVE&pageSize=1`)
+      .get(`/api/v1/workspaces/${workspaceA1}/departments?status=ACTIVE&pageSize=1`)
       .set(auth(adminToken))
-      .set(ctx(agencyA, workspaceA))
+      .set(ctx(agencyA, workspaceA1))
       .expect(200);
     expect(filtered.body.data.items.length).toBeLessThanOrEqual(1);
   });
 
+  it('blocks cross-agency and cross-workspace user access plus forged route/header combinations', async () => {
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceB1}/users`)
+      .set(auth(memberToken))
+      .set(ctx(agencyB, workspaceB1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceB1}/users/${ownerB}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyB, workspaceB1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceB1}/users/${ownerB}/membership`)
+      .set(auth(memberToken))
+      .set(ctx(agencyB, workspaceB1))
+      .send({ role: 'MEMBER' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA2}/users/${memberA2}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA2))
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA2}/users`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA2}/departments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+  });
+
+  it('clears suspended department managers and records audit events', async () => {
+    const managed = await prisma.department.create({
+      data: {
+        workspaceId: workspaceA1,
+        name: 'Managed',
+        managerMembershipId,
+      },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ status: 'SUSPENDED' })
+      .expect(200);
+    const cleared = await prisma.department.findUniqueOrThrow({ where: { id: managed.id } });
+    expect(cleared.managerMembershipId).toBeNull();
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/departments/${departmentA1}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ managerUserId: memberA })
+      .expect(400);
+    await prisma.workspaceMembership.update({
+      where: { id: memberMembershipId },
+      data: { status: MembershipStatus.ACTIVE },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ role: 'MANAGER', departmentId: departmentA1, status: 'ACTIVE' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/users/${memberA}/membership`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: null })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/departments/${departmentA1}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ description: 'Updated', status: 'INACTIVE', managerUserId: null })
+      .expect(200);
+    const actions = await prisma.auditLog.findMany({
+      where: {
+        workspaceId: workspaceA1,
+        action: {
+          in: [
+            'workspace.user.suspended',
+            'workspace.user.activated',
+            'workspace.user.role_changed',
+            'workspace.user.department_assigned',
+            'workspace.user.department_removed',
+            'department.updated',
+            'department.status_changed',
+            'department.manager_changed',
+          ],
+        },
+      },
+      select: { action: true, agencyId: true, workspaceId: true, userId: true, entityId: true },
+    });
+    for (const action of [
+      'workspace.user.suspended',
+      'workspace.user.activated',
+      'workspace.user.role_changed',
+      'workspace.user.department_assigned',
+      'workspace.user.department_removed',
+      'department.updated',
+      'department.status_changed',
+      'department.manager_changed',
+    ]) {
+      expect(actions.some((item) => item.action === action)).toBe(true);
+    }
+    expect(
+      actions.every((item) => item.agencyId === agencyA && item.workspaceId === workspaceA1),
+    ).toBe(true);
+    expect(actions.every((item) => item.userId && item.entityId)).toBe(true);
+  });
+
   async function seedFixtures() {
     const roles = await seedRoles();
-    const [owner, admin, member, ownerB] = await Promise.all([
+    const [owner, admin, member, secondMember, betaOwner] = await Promise.all([
       user('owner-a@zeaplay.test', 'Owner A'),
       user('admin-a@zeaplay.test', 'Admin A'),
       user('member-a@zeaplay.test', 'Member A'),
+      user('member-a2@zeaplay.test', 'Member A2'),
       user('owner-b@zeaplay.test', 'Owner B'),
     ]);
     ownerA = owner.id;
     memberA = member.id;
+    memberA2 = secondMember.id;
+    ownerB = betaOwner.id;
     const agency = await prisma.agency.create({
       data: { name: 'Agency A', slug: 'agency-a', createdById: owner.id },
     });
+    const beta = await prisma.agency.create({
+      data: { name: 'Agency B', slug: 'agency-b', createdById: betaOwner.id },
+    });
     agencyA = agency.id;
+    agencyB = beta.id;
     const wa = await prisma.workspace.create({
       data: {
         agencyId: agency.id,
@@ -194,22 +375,46 @@ describe('Phase 6.1 users and departments integration', () => {
         createdById: owner.id,
       },
     });
-    workspaceA = wa.id;
+    const wb1 = await prisma.workspace.create({
+      data: {
+        agencyId: beta.id,
+        name: 'Workspace B1',
+        slug: 'workspace-b1',
+        createdById: betaOwner.id,
+      },
+    });
+    workspaceA1 = wa.id;
+    workspaceA2 = wb.id;
+    workspaceB1 = wb1.id;
     await agencyMember(owner.id, agency.id, roles.AGENCY_OWNER.id);
     await agencyMember(admin.id, agency.id, roles.AGENCY_ADMIN.id);
     await agencyMember(member.id, agency.id, roles.AGENCY_USER.id);
-    await agencyMember(ownerB.id, agency.id, roles.AGENCY_USER.id);
+    await agencyMember(secondMember.id, agency.id, roles.AGENCY_USER.id);
+    await agencyMember(betaOwner.id, beta.id, roles.AGENCY_OWNER.id);
     await workspaceMember(owner.id, wa.id, roles.OWNER.id);
     await workspaceMember(admin.id, wa.id, roles.ADMIN.id);
-    memberMembershipId = (await workspaceMember(member.id, wa.id, roles.MEMBER.id)).id;
-    await workspaceMember(ownerB.id, wb.id, roles.OWNER.id);
-    departmentA = (await prisma.department.create({ data: { workspaceId: wa.id, name: 'Design' } }))
-      .id;
-    departmentB = (await prisma.department.create({ data: { workspaceId: wb.id, name: 'Sales' } }))
-      .id;
+    const memberMembership = await workspaceMember(member.id, wa.id, roles.MEMBER.id);
+    memberMembershipId = memberMembership.id;
+    managerMembershipId = memberMembership.id;
+    await workspaceMember(owner.id, wb.id, roles.OWNER.id);
+    await workspaceMember(admin.id, wb.id, roles.ADMIN.id);
+    await workspaceMember(secondMember.id, wb.id, roles.MEMBER.id);
+    await workspaceMember(betaOwner.id, wb1.id, roles.OWNER.id);
+    departmentA1 = (
+      await prisma.department.create({ data: { workspaceId: wa.id, name: 'Design' } })
+    ).id;
+    inactiveDepartmentA1 = (
+      await prisma.department.create({
+        data: { workspaceId: wa.id, name: 'Paused', status: DepartmentStatus.INACTIVE },
+      })
+    ).id;
+    await prisma.department.create({ data: { workspaceId: wb.id, name: 'Sales' } });
+    departmentB1 = (
+      await prisma.department.create({ data: { workspaceId: wb1.id, name: 'Sales' } })
+    ).id;
     await prisma.workspaceMembership.update({
       where: { id: memberMembershipId },
-      data: { departmentId: departmentA },
+      data: { departmentId: departmentA1 },
     });
   }
 });
@@ -233,6 +438,7 @@ async function seedRoles() {
     ['AGENCY_USER', RoleScope.AGENCY, ['agency.read', 'workspace.read']],
     ['OWNER', RoleScope.WORKSPACE, permissions],
     ['ADMIN', RoleScope.WORKSPACE, permissions],
+    ['MANAGER', RoleScope.WORKSPACE, ['workspace.read', 'users.view', 'departments.view']],
     ['MEMBER', RoleScope.WORKSPACE, ['workspace.read', 'users.view', 'departments.view']],
   ] as const) {
     const role = await prisma.role.create({ data: { key, name: key, scope } });
@@ -247,7 +453,7 @@ async function seedRoles() {
     }
   }
   return roles as Record<
-    'AGENCY_OWNER' | 'AGENCY_ADMIN' | 'AGENCY_USER' | 'OWNER' | 'ADMIN' | 'MEMBER',
+    'AGENCY_OWNER' | 'AGENCY_ADMIN' | 'AGENCY_USER' | 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER',
     { id: string }
   >;
 }
@@ -259,8 +465,8 @@ async function resetDatabase() {
     prisma.processingJob.deleteMany(),
     prisma.asset.deleteMany(),
     prisma.project.deleteMany(),
-    prisma.department.deleteMany(),
     prisma.workspaceMembership.deleteMany(),
+    prisma.department.deleteMany(),
     prisma.agencyMembership.deleteMany(),
     prisma.workspace.deleteMany(),
     prisma.agency.deleteMany(),
@@ -298,4 +504,8 @@ function auth(token: string) {
 
 function ctx(agencyId: string, workspaceId: string) {
   return { 'x-agency-id': agencyId, 'x-workspace-id': workspaceId };
+}
+
+function drainTeardown() {
+  return new Promise((resolve) => setTimeout(resolve, 100));
 }

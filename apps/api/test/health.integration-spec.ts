@@ -51,6 +51,7 @@ describe('HealthController', () => {
 
   afterAll(async () => {
     await app?.close();
+    await drainTeardown();
   });
 
   it('returns health status', async () => {
@@ -69,3 +70,7 @@ describe('HealthController', () => {
       .expect('x-correlation-id', 'corr-test');
   });
 });
+
+function drainTeardown() {
+  return new Promise((resolve) => setTimeout(resolve, 100));
+}

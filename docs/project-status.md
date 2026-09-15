@@ -48,6 +48,8 @@ Security invariants:
 - Foreign department assignment and foreign manager assignment are rejected.
 - Workspace OWNER membership cannot be changed through Phase 6.1 user actions.
 - Suspended memberships remain blocked by tenant resolution.
+- Department managers must have an active membership in the same Workspace.
+- Inactive Departments may retain existing members, but cannot receive new member assignments or managers.
 
 Known limitations:
 
@@ -125,5 +127,6 @@ Confirmed current warnings:
 
 - Phase 5 acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, high-threshold audit, and Storybook build.
 - Phase 6.1 acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, and high-threshold audit.
+- Phase 6.1 refinement added integration coverage for cross-Agency/cross-Workspace isolation, inactive Department rules, suspended manager cleanup, audit events, and clean integration-test teardown.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.
