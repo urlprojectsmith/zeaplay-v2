@@ -24,6 +24,24 @@ enum MembershipStatus {
   SUSPENDED
 }
 
+enum AgencyStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum WorkspaceStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum RoleScope {
+  LEGACY_ORGANIZATION
+  AGENCY
+  WORKSPACE
+}
+
 enum ProjectStatus {
   DRAFT
   ACTIVE
@@ -69,10 +87,14 @@ model User {
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships   Membership[]
+  agencyMemberships AgencyMembership[]
+  workspaceMemberships WorkspaceMembership[]
   refreshTokens RefreshToken[]
   projects      Project[]      @relation("ProjectCreator")
   assets        Asset[]
   auditLogs     AuditLog[]
+  agenciesCreated Agency[] @relation("AgencyCreator")
+  workspacesCreated Workspace[] @relation("WorkspaceCreator")
 
   @@map("users")
 }
@@ -88,12 +110,57 @@ model Organization {
   updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships Membership[]
-  projects    Project[]
-  assets      Asset[]
-  processingJobs ProcessingJob[]
   auditLogs   AuditLog[]
 
   @@map("organizations")
+}
+
+model Agency {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String       @db.VarChar(160)
+  slug        String       @unique @db.VarChar(120)
+  status      AgencyStatus @default(ACTIVE)
+  createdById String       @map("created_by_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  createdBy User @relation("AgencyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships AgencyMembership[]
+  workspaces  Workspace[]
+  featureEntitlements FeatureEntitlement[]
+  auditLogs   AuditLog[]
+
+  @@index([status])
+  @@index([createdById])
+  @@map("agencies")
+}
+
+model Workspace {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String          @map("agency_id") @db.Uuid
+  name              String          @db.VarChar(160)
+  slug              String          @db.VarChar(120)
+  status            WorkspaceStatus @default(ACTIVE)
+  storageUsedBytes  BigInt          @default(0) @map("storage_used_bytes")
+  storageLimitBytes BigInt          @default(1073741824) @map("storage_limit_bytes")
+  createdById       String          @map("created_by_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  agency       Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy    User   @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships  WorkspaceMembership[]
+  projects     Project[]
+  assets       Asset[]
+  processingJobs ProcessingJob[]
+  featureEntitlements FeatureEntitlement[]
+  auditLogs    AuditLog[]
+
+  @@unique([agencyId, slug])
+  @@unique([id, agencyId])
+  @@index([agencyId])
+  @@index([agencyId, status])
+  @@map("workspaces")
 }
 
 model Membership {
@@ -115,16 +182,62 @@ model Membership {
   @@map("memberships")
 }
 
+model AgencyMembership {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  agencyId  String           @map("agency_id") @db.Uuid
+  roleId    String           @map("role_id") @db.Uuid
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  agency Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, agencyId])
+  @@index([agencyId])
+  @@index([userId])
+  @@map("agency_memberships")
+}
+
+model WorkspaceMembership {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  workspaceId String           @map("workspace_id") @db.Uuid
+  roleId      String           @map("role_id") @db.Uuid
+  status      MembershipStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  role      Role      @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_memberships")
+}
+
 model Role {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String   @unique @db.VarChar(80)
+  key         String   @unique @db.VarChar(120)
+  name        String   @db.VarChar(80)
+  scope       RoleScope @default(WORKSPACE)
+  isSystem    Boolean  @default(true) @map("is_system")
+  workspaceId String?  @map("workspace_id") @db.Uuid
   description String?  @db.VarChar(240)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships     Membership[]
+  agencyMemberships AgencyMembership[]
+  workspaceMemberships WorkspaceMembership[]
   rolePermissions RolePermission[]
 
+  @@index([scope])
+  @@index([workspaceId])
   @@map("roles")
 }
 
@@ -170,7 +283,7 @@ model RefreshToken {
 
 model Project {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String        @map("organization_id") @db.Uuid
+  workspaceId    String        @map("workspace_id") @db.Uuid
   name           String        @db.VarChar(160)
   description    String?       @db.VarChar(1000)
   status         ProjectStatus @default(DRAFT)
@@ -179,21 +292,21 @@ model Project {
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   createdBy    User         @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
   assets       Asset[]
   processingJobs ProcessingJob[]
 
-  @@index([organizationId])
-  @@index([organizationId, status])
-  @@index([organizationId, createdAt])
-  @@unique([id, organizationId])
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+  @@unique([id, workspaceId])
   @@map("projects")
 }
 
 model Asset {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId   String      @map("organization_id") @db.Uuid
+  workspaceId      String      @map("workspace_id") @db.Uuid
   projectId        String      @map("project_id") @db.Uuid
   createdById      String      @map("created_by_id") @db.Uuid
   originalFilename String      @map("original_filename") @db.VarChar(255)
@@ -211,23 +324,23 @@ model Asset {
   createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  project        Project         @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project        Project         @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   createdBy      User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
   processingJobs ProcessingJob[]
 
-  @@unique([id, organizationId])
-  @@unique([id, projectId, organizationId])
-  @@unique([id, projectId, organizationId, storageKey])
-  @@index([organizationId, projectId])
-  @@index([organizationId, projectId, status])
-  @@index([organizationId, projectId, createdAt])
+  @@unique([id, workspaceId])
+  @@unique([id, projectId, workspaceId])
+  @@unique([id, projectId, workspaceId, storageKey])
+  @@index([workspaceId, projectId])
+  @@index([workspaceId, projectId, status])
+  @@index([workspaceId, projectId, createdAt])
   @@map("assets")
 }
 
 model ProcessingJob {
   id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String              @map("organization_id") @db.Uuid
+  workspaceId    String              @map("workspace_id") @db.Uuid
   projectId      String              @map("project_id") @db.Uuid
   assetId        String              @map("asset_id") @db.Uuid
   type           String              @db.VarChar(80)
@@ -242,20 +355,54 @@ model ProcessingJob {
   createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  project      Project      @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  asset        Asset        @relation(fields: [assetId, projectId, organizationId], references: [id, projectId, organizationId], onDelete: Restrict)
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project      Project      @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  asset        Asset        @relation(fields: [assetId, projectId, workspaceId], references: [id, projectId, workspaceId], onDelete: Restrict)
 
   @@unique([assetId, type])
-  @@index([organizationId, projectId])
+  @@index([workspaceId, projectId])
   @@index([assetId, status])
   @@index([status, createdAt])
   @@map("processing_jobs")
 }
 
+model FeatureDefinition {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique @db.VarChar(120)
+  name        String   @db.VarChar(160)
+  description String?  @db.VarChar(240)
+  enabledByDefault Boolean @default(false) @map("enabled_by_default")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entitlements FeatureEntitlement[]
+
+  @@map("feature_definitions")
+}
+
+model FeatureEntitlement {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  featureId   String   @map("feature_id") @db.Uuid
+  agencyId    String?  @map("agency_id") @db.Uuid
+  workspaceId String?  @map("workspace_id") @db.Uuid
+  enabled     Boolean
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  feature   FeatureDefinition @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  agency    Agency?           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  workspace Workspace?        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@index([workspaceId])
+  @@map("feature_entitlements")
+}
+
 model AuditLog {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String?  @map("organization_id") @db.Uuid
+  agencyId       String?  @map("agency_id") @db.Uuid
+  workspaceId    String?  @map("workspace_id") @db.Uuid
   userId         String?  @map("user_id") @db.Uuid
   action         String   @db.VarChar(120)
   entityType     String   @map("entity_type") @db.VarChar(80)
@@ -266,8 +413,12 @@ model AuditLog {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  agency       Agency?       @relation(fields: [agencyId], references: [id], onDelete: SetNull)
+  workspace    Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([agencyId, createdAt])
+  @@index([workspaceId, createdAt])
   @@index([organizationId, createdAt])
   @@index([userId, createdAt])
   @@index([entityType, entityId])

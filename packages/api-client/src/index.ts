@@ -13,8 +13,17 @@ export interface ApiClientOptions {
   baseUrl: string;
   getAccessToken?: () => Promise<string | null> | string | null;
   getCorrelationId?: () => string;
+  getTenantContext?: () => TenantHeaders | null;
   credentials?: RequestCredentials;
 }
+
+export interface TenantHeaders {
+  agencyId?: string | null;
+  workspaceId?: string | null;
+}
+
+export const AGENCY_HEADER = 'x-agency-id';
+export const WORKSPACE_HEADER = 'x-workspace-id';
 
 export class ApiClient {
   constructor(private readonly options: ApiClientOptions) {}
@@ -27,6 +36,12 @@ export class ApiClient {
     const token = await this.options.getAccessToken?.();
     if (token) {
       headers.set('authorization', `Bearer ${token}`);
+    }
+    const tenant = this.options.getTenantContext?.();
+    if (tenant?.agencyId && !headers.has(AGENCY_HEADER))
+      headers.set(AGENCY_HEADER, tenant.agencyId);
+    if (tenant?.workspaceId && !headers.has(WORKSPACE_HEADER)) {
+      headers.set(WORKSPACE_HEADER, tenant.workspaceId);
     }
 
     const response = await fetch(resolveApiUrl(path, this.options.baseUrl), {

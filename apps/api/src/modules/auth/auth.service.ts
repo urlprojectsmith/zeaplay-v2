@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
-import { MembershipStatus, OrganizationStatus, UserStatus } from '@prisma/client';
+import { AgencyStatus, MembershipStatus, UserStatus, WorkspaceStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
@@ -37,17 +37,6 @@ export class AuthService {
         name: true,
         passwordHash: true,
         status: true,
-        memberships: {
-          where: {
-            status: MembershipStatus.ACTIVE,
-            organization: { status: OrganizationStatus.ACTIVE },
-          },
-          select: {
-            organization: { select: { id: true, name: true, slug: true, status: true } },
-            role: { select: { name: true } },
-          },
-          orderBy: { createdAt: 'asc' },
-        },
       },
     });
 
@@ -73,15 +62,13 @@ export class AuthService {
       userAgent: meta.userAgent,
     });
 
+    const profile = await this.me(user.id);
     return {
       accessToken: tokenPair.accessToken,
       refreshToken: tokenPair.refreshToken,
       csrfToken: tokenPair.csrfToken,
       user: { id: user.id, email: user.email, name: user.name },
-      organizations: user.memberships.map((membership) => ({
-        ...membership.organization,
-        role: membership.role.name,
-      })),
+      agencies: profile.agencies,
     };
   }
 
@@ -218,15 +205,37 @@ export class AuthService {
         email: true,
         name: true,
         status: true,
-        memberships: {
+        agencyMemberships: {
           where: {
             status: MembershipStatus.ACTIVE,
-            organization: { status: OrganizationStatus.ACTIVE },
+            agency: { status: AgencyStatus.ACTIVE },
           },
           select: {
             id: true,
-            organization: { select: { id: true, name: true, slug: true, status: true } },
-            role: { select: { name: true } },
+            agency: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                status: true,
+                workspaces: {
+                  where: { status: WorkspaceStatus.ACTIVE },
+                  select: {
+                    id: true,
+                    agencyId: true,
+                    name: true,
+                    slug: true,
+                    status: true,
+                    memberships: {
+                      where: { userId, status: MembershipStatus.ACTIVE },
+                      select: { id: true, role: { select: { key: true } } },
+                    },
+                  },
+                  orderBy: { createdAt: 'asc' },
+                },
+              },
+            },
+            role: { select: { key: true } },
           },
           orderBy: { createdAt: 'asc' },
         },
@@ -237,11 +246,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       status: user.status,
-      organizations: user.memberships.map((membership) => ({
-        membershipId: membership.id,
-        role: membership.role.name,
-        ...membership.organization,
-      })),
+      agencies: mapAgencyMemberships(user.agencyMemberships),
     };
   }
 
@@ -293,4 +298,43 @@ export class AuthService {
   private loginFailureKey(email: string, ipAddress = 'unknown') {
     return `auth:login:${ipAddress}:${email}`;
   }
+}
+
+function mapAgencyMemberships(
+  memberships: {
+    id: string;
+    role: { key: string };
+    agency: {
+      id: string;
+      name: string;
+      slug: string;
+      status: AgencyStatus;
+      workspaces: {
+        id: string;
+        agencyId: string;
+        name: string;
+        slug: string;
+        status: WorkspaceStatus;
+        memberships: { id: string; role: { key: string } }[];
+      }[];
+    };
+  }[],
+) {
+  return memberships.map((membership) => ({
+    membershipId: membership.id,
+    role: membership.role.key,
+    id: membership.agency.id,
+    name: membership.agency.name,
+    slug: membership.agency.slug,
+    status: membership.agency.status,
+    workspaces: membership.agency.workspaces.map((workspace) => ({
+      id: workspace.id,
+      agencyId: workspace.agencyId,
+      name: workspace.name,
+      slug: workspace.slug,
+      status: workspace.status,
+      membershipId: workspace.memberships[0]?.id ?? null,
+      role: workspace.memberships[0]?.role.key ?? null,
+    })),
+  }));
 }

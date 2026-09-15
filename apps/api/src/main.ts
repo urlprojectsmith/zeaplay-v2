@@ -33,10 +33,11 @@ async function bootstrap() {
 
   const documentConfig = new DocumentBuilder()
     .setTitle('Zea Play API')
-    .setDescription('Phase 1 API foundation')
+    .setDescription('Phase 4 multi-tenant API foundation')
     .setVersion('1.0')
     .addBearerAuth()
-    .addApiKey({ type: 'apiKey', in: 'header', name: 'x-organization-id' }, 'organization')
+    .addApiKey({ type: 'apiKey', in: 'header', name: 'x-agency-id' }, 'agency')
+    .addApiKey({ type: 'apiKey', in: 'header', name: 'x-workspace-id' }, 'workspace')
     .build();
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, documentConfig), {
     useGlobalPrefix: true,

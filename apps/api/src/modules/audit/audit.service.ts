@@ -4,6 +4,8 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 
 interface AuditEvent {
   organizationId?: string | null;
+  agencyId?: string | null;
+  workspaceId?: string | null;
   userId?: string | null;
   action: string;
   entityType: string;
@@ -21,6 +23,8 @@ export class AuditService {
     await this.prisma.auditLog.create({
       data: {
         organizationId: event.organizationId,
+        agencyId: event.agencyId,
+        workspaceId: event.workspaceId,
         userId: event.userId,
         action: event.action,
         entityType: event.entityType,

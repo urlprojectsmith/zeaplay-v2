@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { RequestWithAuth } from '../auth/auth.types';
-import { OWNER_ROLE } from './permissions';
+import { AGENCY_OWNER_ROLE, OWNER_ROLE } from './permissions';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permissions.decorator';
 
 @Injectable()
@@ -16,9 +16,9 @@ export class PermissionGuard implements CanActivate {
     if (!required?.length) return true;
 
     const request = context.switchToHttp().getRequest<RequestWithAuth>();
-    const tenant = request.tenant;
+    const tenant = request.tenant ?? request.agencyTenant;
     if (!tenant) throw new ForbiddenException('Tenant context is required.');
-    if (tenant.roleName === OWNER_ROLE) return true;
+    if (tenant.roleName === OWNER_ROLE || tenant.roleName === AGENCY_OWNER_ROLE) return true;
     if (required.every((permission) => tenant.permissions.includes(permission))) return true;
     throw new ForbiddenException('Insufficient permissions.');
   }

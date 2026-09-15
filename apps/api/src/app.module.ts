@@ -17,8 +17,6 @@ import { StorageModule } from './infrastructure/storage/storage.module';
 import { MonitoringModule } from './infrastructure/monitoring/monitoring.module';
 import { SecurityModule } from './common/security.module';
 import { AuditModule } from './modules/audit/audit.module';
-import { OrganizationsModule } from './modules/organizations/organizations.module';
-import { MembershipsModule } from './modules/memberships/memberships.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { AssetsModule } from './modules/assets/assets.module';
 
@@ -34,8 +32,6 @@ import { AssetsModule } from './modules/assets/assets.module';
     AuditModule,
     HealthModule,
     AuthModule,
-    OrganizationsModule,
-    MembershipsModule,
     ProjectsModule,
     AssetsModule,
     AgenciesModule,

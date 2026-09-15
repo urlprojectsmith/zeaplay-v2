@@ -11,12 +11,14 @@ export function ProtectedDashboard() {
   const {
     accessToken,
     user,
-    organizations,
-    organizationId,
+    agencies,
+    selectedAgencyId,
+    selectedWorkspaceId,
     hydrated,
     hydrate,
     logout,
-    setOrganization,
+    setAgency,
+    setWorkspace,
   } = useSessionStore();
 
   useEffect(() => {
@@ -31,14 +33,17 @@ export function ProtectedDashboard() {
     return <main className="page-shell">Loading...</main>;
   }
 
-  const selected = organizations.find((organization) => organization.id === organizationId);
+  const selectedAgency = agencies.find((agency) => agency.id === selectedAgencyId);
+  const selectedWorkspace = selectedAgency?.workspaces.find(
+    (workspace) => workspace.id === selectedWorkspaceId,
+  );
 
   return (
     <main className="page-shell">
       <section className="dashboard-header">
         <div>
           <p className="eyebrow">Dashboard</p>
-          <h1>{selected?.name ?? 'Zea Play'}</h1>
+          <h1>{selectedWorkspace?.name ?? selectedAgency?.name ?? 'Zea Play'}</h1>
           <p>{user.email}</p>
         </div>
         <button type="button" onClick={() => void logout()}>
@@ -48,14 +53,27 @@ export function ProtectedDashboard() {
 
       <section className="dashboard-section">
         <label>
-          Organization
+          Agency
           <select
-            value={organizationId ?? ''}
-            onChange={(event) => setOrganization(event.target.value)}
+            value={selectedAgencyId ?? ''}
+            onChange={(event) => setAgency(event.target.value)}
           >
-            {organizations.map((organization) => (
-              <option key={organization.id} value={organization.id}>
-                {organization.name} ({organization.role})
+            {agencies.map((agency) => (
+              <option key={agency.id} value={agency.id}>
+                {agency.name} ({agency.role})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Workspace
+          <select
+            value={selectedWorkspaceId ?? ''}
+            onChange={(event) => setWorkspace(event.target.value)}
+          >
+            {(selectedAgency?.workspaces ?? []).map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name} ({workspace.role ?? selectedAgency?.role})
               </option>
             ))}
           </select>

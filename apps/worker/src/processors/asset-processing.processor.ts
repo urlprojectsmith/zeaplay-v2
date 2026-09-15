@@ -13,7 +13,7 @@ interface AssetJobEnvelope {
   version: 1;
   jobId: string;
   correlationId: string;
-  organizationId: string;
+  workspaceId: string;
   projectId: string;
   assetId: string;
   type: typeof ASSET_PROCESSING_JOB_TYPE;
@@ -48,12 +48,12 @@ export class AssetProcessingProcessor extends WorkerHost {
       where: {
         id: envelope.assetId,
         projectId: envelope.projectId,
-        organizationId: envelope.organizationId,
+        workspaceId: envelope.workspaceId,
       },
       select: {
         id: true,
         projectId: true,
-        organizationId: true,
+        workspaceId: true,
         storageKey: true,
         sizeBytes: true,
         status: true,
@@ -81,10 +81,10 @@ export class AssetProcessingProcessor extends WorkerHost {
       await this.prisma.$transaction([
         this.prisma.asset.update({
           where: {
-            id_projectId_organizationId: {
+            id_projectId_workspaceId: {
               id: asset.id,
               projectId: asset.projectId,
-              organizationId: asset.organizationId,
+              workspaceId: asset.workspaceId,
             },
           },
           data: {
@@ -153,7 +153,7 @@ export class AssetProcessingProcessor extends WorkerHost {
         where: {
           id: envelope.assetId,
           projectId: envelope.projectId,
-          organizationId: envelope.organizationId,
+          workspaceId: envelope.workspaceId,
         },
         data: { status: AssetStatus.FAILED },
       }),
@@ -192,7 +192,7 @@ function assertEnvelope(value: unknown): AssetJobEnvelope {
   for (const key of [
     'jobId',
     'correlationId',
-    'organizationId',
+    'workspaceId',
     'projectId',
     'assetId',
     'createdAt',
@@ -227,7 +227,7 @@ function logContext(envelope: AssetJobEnvelope) {
   return {
     correlationId: envelope.correlationId,
     jobId: envelope.jobId,
-    organizationId: envelope.organizationId,
+    workspaceId: envelope.workspaceId,
     projectId: envelope.projectId,
     assetId: envelope.assetId,
   };

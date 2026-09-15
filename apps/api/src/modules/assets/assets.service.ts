@@ -14,7 +14,7 @@ import { AssetStatus, Prisma, ProcessingJobStatus, ProjectStatus } from '@prisma
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
-import type { TenantContext } from '../../common/auth/auth.types';
+import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import type { StorageAdapter } from '../../infrastructure/storage/storage-adapter';
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
@@ -46,12 +46,12 @@ export class AssetsService {
   ) {}
 
   async initUpload(
-    tenant: TenantContext,
+    tenant: WorkspaceTenantContext,
     projectId: string,
     dto: UploadInitDto,
     correlationId: string,
   ) {
-    await this.assertProject(tenant.organizationId, projectId);
+    await this.assertProject(tenant.workspaceId, projectId);
     const filename = sanitizeFilename(dto.filename);
     const displayName = sanitizeFilename(dto.displayName ?? filename);
     const mimeType = sanitizeMimeType(dto.mimeType);
@@ -64,25 +64,25 @@ export class AssetsService {
 
     const assetId = randomUUID();
     const extension = extractExtension(filename);
-    const storageKey = buildStorageKey(tenant.organizationId, projectId, assetId, extension);
+    const storageKey = buildStorageKey(tenant.workspaceId, projectId, assetId, extension);
     const uploadExpiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
     const sizeBytes = BigInt(dto.sizeBytes);
     const asset = await this.prisma.$transaction(async (tx) => {
-      const org = await tx.organization.findUniqueOrThrow({
-        where: { id: tenant.organizationId },
+      const workspace = await tx.workspace.findUniqueOrThrow({
+        where: { id: tenant.workspaceId },
         select: { storageUsedBytes: true, storageLimitBytes: true },
       });
-      if (org.storageUsedBytes + sizeBytes > org.storageLimitBytes) {
-        throw new PayloadTooLargeException('Organization storage limit would be exceeded.');
+      if (workspace.storageUsedBytes + sizeBytes > workspace.storageLimitBytes) {
+        throw new PayloadTooLargeException('Workspace storage limit would be exceeded.');
       }
-      await tx.organization.update({
-        where: { id: tenant.organizationId },
+      await tx.workspace.update({
+        where: { id: tenant.workspaceId },
         data: { storageUsedBytes: { increment: sizeBytes } },
       });
       return tx.asset.create({
         data: {
           id: assetId,
-          organizationId: tenant.organizationId,
+          workspaceId: tenant.workspaceId,
           projectId,
           createdById: tenant.userId,
           originalFilename: filename,
@@ -105,7 +105,8 @@ export class AssetsService {
       this.env.UPLOAD_URL_TTL_SECONDS,
     );
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'asset.upload_init',
       entityType: 'Asset',
@@ -116,14 +117,14 @@ export class AssetsService {
   }
 
   async completeUpload(
-    tenant: TenantContext,
+    tenant: WorkspaceTenantContext,
     projectId: string,
     assetId: string,
     dto: UploadCompleteDto,
     correlationId: string,
   ) {
-    await this.assertProject(tenant.organizationId, projectId);
-    const asset = await this.findAsset(tenant.organizationId, projectId, assetId);
+    await this.assertProject(tenant.workspaceId, projectId);
+    const asset = await this.findAsset(tenant.workspaceId, projectId, assetId);
     if (asset.status === AssetStatus.DELETED) throw new NotFoundException('Asset not found.');
     if (asset.status === AssetStatus.PROCESSING || asset.status === AssetStatus.READY) {
       await this.ensureProcessingJob(asset, correlationId);
@@ -145,10 +146,10 @@ export class AssetsService {
 
     const updated = await this.prisma.asset.update({
       where: {
-        id_projectId_organizationId: {
+        id_projectId_workspaceId: {
           id: assetId,
           projectId,
-          organizationId: tenant.organizationId,
+          workspaceId: tenant.workspaceId,
         },
       },
       data: {
@@ -165,7 +166,8 @@ export class AssetsService {
     });
     await this.ensureProcessingJob(updated, correlationId);
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'asset.upload_complete',
       entityType: 'Asset',
@@ -175,10 +177,10 @@ export class AssetsService {
     return serializeAsset(updated);
   }
 
-  async list(tenant: TenantContext, projectId: string, query: AssetQueryDto) {
-    await this.assertProject(tenant.organizationId, projectId);
+  async list(tenant: WorkspaceTenantContext, projectId: string, query: AssetQueryDto) {
+    await this.assertProject(tenant.workspaceId, projectId);
     const where: Prisma.AssetWhereInput = {
-      organizationId: tenant.organizationId,
+      workspaceId: tenant.workspaceId,
       projectId,
       deletedAt: null,
       ...(query.status ? { status: query.status } : {}),
@@ -199,14 +201,14 @@ export class AssetsService {
     return { items: items.map(serializeAsset), page: query.page, pageSize: query.pageSize, total };
   }
 
-  async get(tenant: TenantContext, projectId: string, assetId: string) {
-    await this.assertProject(tenant.organizationId, projectId);
-    return serializeAsset(await this.findAsset(tenant.organizationId, projectId, assetId));
+  async get(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
+    await this.assertProject(tenant.workspaceId, projectId);
+    return serializeAsset(await this.findAsset(tenant.workspaceId, projectId, assetId));
   }
 
-  async download(tenant: TenantContext, projectId: string, assetId: string) {
-    await this.assertProject(tenant.organizationId, projectId);
-    const asset = await this.findAsset(tenant.organizationId, projectId, assetId);
+  async download(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
+    await this.assertProject(tenant.workspaceId, projectId);
+    const asset = await this.findAsset(tenant.workspaceId, projectId, assetId);
     if (asset.status !== AssetStatus.READY) {
       throw new ConflictException('Asset is not ready for download.');
     }
@@ -215,7 +217,8 @@ export class AssetsService {
       this.env.DOWNLOAD_URL_TTL_SECONDS,
     );
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'asset.download_authorized',
       entityType: 'Asset',
@@ -225,35 +228,36 @@ export class AssetsService {
     return { downloadUrl, expiresInSeconds: this.env.DOWNLOAD_URL_TTL_SECONDS };
   }
 
-  async remove(tenant: TenantContext, projectId: string, assetId: string) {
-    await this.assertProject(tenant.organizationId, projectId);
-    const asset = await this.findAsset(tenant.organizationId, projectId, assetId);
+  async remove(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
+    await this.assertProject(tenant.workspaceId, projectId);
+    const asset = await this.findAsset(tenant.workspaceId, projectId, assetId);
     if (asset.status === AssetStatus.DELETED) return serializeAsset(asset);
     const now = new Date();
     const updated = await this.prisma.$transaction(async (tx) => {
       const changed = await tx.asset.updateMany({
-        where: { id: assetId, projectId, organizationId: tenant.organizationId, deletedAt: null },
+        where: { id: assetId, projectId, workspaceId: tenant.workspaceId, deletedAt: null },
         data: { status: AssetStatus.DELETED, deletedAt: now },
       });
       if (changed.count === 1) {
-        await tx.organization.update({
-          where: { id: tenant.organizationId },
+        await tx.workspace.update({
+          where: { id: tenant.workspaceId },
           data: { storageUsedBytes: { decrement: asset.sizeBytes } },
         });
       }
       return tx.asset.findUniqueOrThrow({
         where: {
-          id_projectId_organizationId: {
+          id_projectId_workspaceId: {
             id: assetId,
             projectId,
-            organizationId: tenant.organizationId,
+            workspaceId: tenant.workspaceId,
           },
         },
         select: assetSelect,
       });
     });
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'asset.delete',
       entityType: 'Asset',
@@ -263,17 +267,17 @@ export class AssetsService {
     return serializeAsset(updated);
   }
 
-  private async assertProject(organizationId: string, projectId: string) {
+  private async assertProject(workspaceId: string, projectId: string) {
     const project = await this.prisma.project.findFirst({
-      where: { id: projectId, organizationId, status: { not: ProjectStatus.ARCHIVED } },
+      where: { id: projectId, workspaceId, status: { not: ProjectStatus.ARCHIVED } },
       select: { id: true },
     });
     if (!project) throw new NotFoundException('Project not found.');
   }
 
-  private async findAsset(organizationId: string, projectId: string, assetId: string) {
+  private async findAsset(workspaceId: string, projectId: string, assetId: string) {
     const asset = await this.prisma.asset.findFirst({
-      where: { id: assetId, organizationId, projectId },
+      where: { id: assetId, workspaceId, projectId },
       select: assetSelect,
     });
     if (!asset || asset.status === AssetStatus.DELETED)
@@ -294,7 +298,7 @@ export class AssetsService {
       where: { assetId_type: { assetId: asset.id, type: ASSET_PROCESSING_JOB_TYPE } },
       update: {},
       create: {
-        organizationId: asset.organizationId,
+        workspaceId: asset.workspaceId,
         projectId: asset.projectId,
         assetId: asset.id,
         type: ASSET_PROCESSING_JOB_TYPE,
@@ -310,7 +314,7 @@ export class AssetsService {
           version: ASSET_JOB_VERSION,
           jobId: job.id,
           correlationId,
-          organizationId: asset.organizationId,
+          workspaceId: asset.workspaceId,
           projectId: asset.projectId,
           assetId: asset.id,
           type: ASSET_PROCESSING_JOB_TYPE,
@@ -325,7 +329,7 @@ export class AssetsService {
 
 const assetSelect = {
   id: true,
-  organizationId: true,
+  workspaceId: true,
   projectId: true,
   createdById: true,
   originalFilename: true,
@@ -386,13 +390,13 @@ function extractExtension(filename: string) {
 }
 
 function buildStorageKey(
-  organizationId: string,
+  workspaceId: string,
   projectId: string,
   assetId: string,
   extension: string | null,
 ) {
   const suffix = extension ? `asset.${extension}` : 'asset.bin';
-  return `organizations/${organizationId}/projects/${projectId}/assets/${assetId}/${suffix}`;
+  return `workspace/${workspaceId}/projects/${projectId}/assets/${assetId}/${suffix}`;
 }
 
 function isRecord(value: Prisma.JsonValue): value is Prisma.JsonObject {

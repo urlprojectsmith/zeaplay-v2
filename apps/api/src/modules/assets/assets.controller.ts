@@ -1,14 +1,18 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
-import type { TenantContext } from '../../common/auth/auth.types';
+import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionGuard } from '../../common/authorization/permission.guard';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
 import { ReqContext } from '../../common/decorators/request-context.decorator';
 import type { RequestContext } from '@zea-play/types';
-import { CurrentTenant, ORGANIZATION_HEADER } from '../../common/tenant/tenant-context.decorator';
-import { TenantContextGuard } from '../../common/tenant/tenant-context.guard';
+import {
+  AGENCY_HEADER,
+  CurrentWorkspaceTenant,
+  WORKSPACE_HEADER,
+} from '../../common/tenant/tenant-context.decorator';
+import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
 import { AssetsService } from './assets.service';
 import { AssetQueryDto } from './dto/asset-query.dto';
 import { ProjectAssetParamsDto } from './dto/project-asset-params.dto';
@@ -18,8 +22,9 @@ import { UploadInitDto } from './dto/upload-init.dto';
 
 @ApiTags('assets')
 @ApiBearerAuth()
-@ApiHeader({ name: ORGANIZATION_HEADER, required: true })
-@UseGuards(JwtAuthGuard, TenantContextGuard, PermissionGuard)
+@ApiHeader({ name: AGENCY_HEADER, required: true })
+@ApiHeader({ name: WORKSPACE_HEADER, required: true })
+@UseGuards(JwtAuthGuard, WorkspaceTenantGuard, PermissionGuard)
 @Controller('projects/:projectId/assets')
 export class AssetsController {
   constructor(private readonly assets: AssetsService) {}
@@ -27,7 +32,7 @@ export class AssetsController {
   @Post('upload-init')
   @RequirePermissions(PermissionKeys.assetCreate)
   initUpload(
-    @CurrentTenant() tenant: TenantContext,
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Param() params: ProjectParamDto,
     @Body() dto: UploadInitDto,
     @ReqContext() context: RequestContext,
@@ -38,7 +43,7 @@ export class AssetsController {
   @Post(':assetId/upload-complete')
   @RequirePermissions(PermissionKeys.assetCreate)
   completeUpload(
-    @CurrentTenant() tenant: TenantContext,
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Param() params: ProjectAssetParamsDto,
     @Body() dto: UploadCompleteDto,
     @ReqContext() context: RequestContext,
@@ -55,7 +60,7 @@ export class AssetsController {
   @Get()
   @RequirePermissions(PermissionKeys.assetRead)
   list(
-    @CurrentTenant() tenant: TenantContext,
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Param() params: ProjectParamDto,
     @Query() query: AssetQueryDto,
   ) {
@@ -64,19 +69,28 @@ export class AssetsController {
 
   @Get(':assetId')
   @RequirePermissions(PermissionKeys.assetRead)
-  get(@CurrentTenant() tenant: TenantContext, @Param() params: ProjectAssetParamsDto) {
+  get(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: ProjectAssetParamsDto,
+  ) {
     return this.assets.get(tenant, params.projectId, params.assetId);
   }
 
   @Get(':assetId/download')
   @RequirePermissions(PermissionKeys.assetDownload)
-  download(@CurrentTenant() tenant: TenantContext, @Param() params: ProjectAssetParamsDto) {
+  download(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: ProjectAssetParamsDto,
+  ) {
     return this.assets.download(tenant, params.projectId, params.assetId);
   }
 
   @Delete(':assetId')
   @RequirePermissions(PermissionKeys.assetDelete)
-  remove(@CurrentTenant() tenant: TenantContext, @Param() params: ProjectAssetParamsDto) {
+  remove(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: ProjectAssetParamsDto,
+  ) {
     return this.assets.remove(tenant, params.projectId, params.assetId);
   }
 }

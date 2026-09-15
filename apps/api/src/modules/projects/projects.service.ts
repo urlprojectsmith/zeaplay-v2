@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, ProjectStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
-import type { TenantContext } from '../../common/auth/auth.types';
+import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import type { PaginationDto } from '../../common/dto/pagination.dto';
 import { AuditService } from '../audit/audit.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -14,10 +14,10 @@ export class ProjectsService {
     private readonly audit: AuditService,
   ) {}
 
-  async create(tenant: TenantContext, dto: CreateProjectDto) {
+  async create(tenant: WorkspaceTenantContext, dto: CreateProjectDto) {
     const project = await this.prisma.project.create({
       data: {
-        organizationId: tenant.organizationId,
+        workspaceId: tenant.workspaceId,
         createdById: tenant.userId,
         name: dto.name.trim(),
         description: dto.description?.trim(),
@@ -25,7 +25,8 @@ export class ProjectsService {
       select: projectSelect,
     });
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'project.create',
       entityType: 'Project',
@@ -34,9 +35,9 @@ export class ProjectsService {
     return project;
   }
 
-  async list(tenant: TenantContext, query: PaginationDto) {
+  async list(tenant: WorkspaceTenantContext, query: PaginationDto) {
     const where: Prisma.ProjectWhereInput = {
-      organizationId: tenant.organizationId,
+      workspaceId: tenant.workspaceId,
       ...(query.search
         ? { name: { contains: query.search.trim(), mode: Prisma.QueryMode.insensitive } }
         : {}),
@@ -54,18 +55,18 @@ export class ProjectsService {
     return { items, page: query.page, pageSize: query.pageSize, total };
   }
 
-  async get(tenant: TenantContext, id: string) {
+  async get(tenant: WorkspaceTenantContext, id: string) {
     const project = await this.prisma.project.findFirst({
-      where: { id, organizationId: tenant.organizationId },
+      where: { id, workspaceId: tenant.workspaceId },
       select: projectSelect,
     });
     if (!project) throw new NotFoundException('Project not found.');
     return project;
   }
 
-  async update(tenant: TenantContext, id: string, dto: UpdateProjectDto) {
+  async update(tenant: WorkspaceTenantContext, id: string, dto: UpdateProjectDto) {
     const update = await this.prisma.project.updateMany({
-      where: { id, organizationId: tenant.organizationId },
+      where: { id, workspaceId: tenant.workspaceId },
       data: {
         name: dto.name?.trim(),
         description: dto.description?.trim(),
@@ -75,7 +76,8 @@ export class ProjectsService {
     if (update.count !== 1) throw new NotFoundException('Project not found.');
     const project = await this.get(tenant, id);
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'project.update',
       entityType: 'Project',
@@ -85,15 +87,16 @@ export class ProjectsService {
     return project;
   }
 
-  async archive(tenant: TenantContext, id: string) {
+  async archive(tenant: WorkspaceTenantContext, id: string) {
     const update = await this.prisma.project.updateMany({
-      where: { id, organizationId: tenant.organizationId },
+      where: { id, workspaceId: tenant.workspaceId },
       data: { status: ProjectStatus.ARCHIVED, archivedAt: new Date() },
     });
     if (update.count !== 1) throw new NotFoundException('Project not found.');
     const project = await this.get(tenant, id);
     await this.audit.record({
-      organizationId: tenant.organizationId,
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
       userId: tenant.userId,
       action: 'project.delete',
       entityType: 'Project',
@@ -105,7 +108,7 @@ export class ProjectsService {
 
 const projectSelect = {
   id: true,
-  organizationId: true,
+  workspaceId: true,
   name: true,
   description: true,
   status: true,

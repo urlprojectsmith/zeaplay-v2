@@ -3,15 +3,18 @@ import { ProjectsService } from './projects.service';
 
 const tenant = {
   userId: '00000000-0000-4000-8000-000000000001',
-  organizationId: '00000000-0000-4000-8000-000000000002',
-  membershipId: '00000000-0000-4000-8000-000000000003',
+  agencyId: '00000000-0000-4000-8000-000000000002',
+  workspaceId: '00000000-0000-4000-8000-000000000003',
+  workspaceMembershipId: '00000000-0000-4000-8000-000000000006',
+  agencyMembershipId: null,
   roleId: '00000000-0000-4000-8000-000000000004',
   roleName: 'OWNER',
   permissions: ['*'],
+  accessSource: 'WORKSPACE_MEMBERSHIP' as const,
 };
 
 describe('ProjectsService', () => {
-  it('uses organizationId with resource ID lookups', async () => {
+  it('uses workspaceId with resource ID lookups', async () => {
     const findFirst = jest.fn().mockResolvedValue(null);
     const service = new ProjectsService(
       { project: { findFirst } } as never,
@@ -25,7 +28,7 @@ describe('ProjectsService', () => {
       expect.objectContaining({
         where: {
           id: '00000000-0000-4000-8000-000000000005',
-          organizationId: tenant.organizationId,
+          workspaceId: tenant.workspaceId,
         },
       }),
     );

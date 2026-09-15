@@ -5,7 +5,7 @@ const envelope = {
   version: 1,
   jobId: '00000000-0000-4000-8000-000000000001',
   correlationId: 'correlation-id',
-  organizationId: '00000000-0000-4000-8000-000000000002',
+  workspaceId: '00000000-0000-4000-8000-000000000002',
   projectId: '00000000-0000-4000-8000-000000000003',
   assetId: '00000000-0000-4000-8000-000000000004',
   type: 'asset.metadata',
@@ -18,7 +18,7 @@ describe('AssetProcessingProcessor', () => {
       asset: {
         id: envelope.assetId,
         projectId: envelope.projectId,
-        organizationId: envelope.organizationId,
+        workspaceId: envelope.workspaceId,
         storageKey: 'asset-key',
         sizeBytes: BigInt(5),
         status: 'PROCESSING',
@@ -72,7 +72,7 @@ describe('AssetProcessingProcessor', () => {
       asset: {
         id: envelope.assetId,
         projectId: envelope.projectId,
-        organizationId: envelope.organizationId,
+        workspaceId: envelope.workspaceId,
         storageKey: 'asset-key',
         sizeBytes: BigInt(5),
         status: 'READY',
@@ -94,7 +94,7 @@ describe('AssetProcessingProcessor', () => {
       asset: {
         id: envelope.assetId,
         projectId: envelope.projectId,
-        organizationId: envelope.organizationId,
+        workspaceId: envelope.workspaceId,
         storageKey: 'asset-key',
         sizeBytes: BigInt(5),
         status: 'PROCESSING',
@@ -126,7 +126,7 @@ describe('AssetProcessingProcessor', () => {
       asset: {
         id: envelope.assetId,
         projectId: envelope.projectId,
-        organizationId: envelope.organizationId,
+        workspaceId: envelope.workspaceId,
         storageKey: 'asset-key',
         sizeBytes: BigInt(5),
         status: 'PROCESSING',

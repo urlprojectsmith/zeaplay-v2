@@ -1,8 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { OrganizationStatus } from '@prisma/client';
+import { AgencyStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
-export class UpdateOrganizationDto {
+export class UpdateAgencyDto {
   @ApiPropertyOptional({ minLength: 2, maxLength: 160 })
   @IsOptional()
   @IsString()
@@ -10,8 +10,8 @@ export class UpdateOrganizationDto {
   @MaxLength(160)
   name?: string;
 
-  @ApiPropertyOptional({ enum: OrganizationStatus })
+  @ApiPropertyOptional({ enum: AgencyStatus })
   @IsOptional()
-  @IsEnum(OrganizationStatus)
-  status?: OrganizationStatus;
+  @IsEnum(AgencyStatus)
+  status?: AgencyStatus;
 }

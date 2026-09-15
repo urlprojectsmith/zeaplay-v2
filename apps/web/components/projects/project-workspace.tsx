@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, DragEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
 import { apiClient } from '../../services/api';
@@ -30,7 +30,7 @@ interface UploadInit {
 }
 
 export function ProjectList() {
-  const { accessToken, organizationId, hydrated, hydrate } = useSessionStore();
+  const { accessToken, selectedWorkspaceId, hydrated, hydrate } = useSessionStore();
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,14 +39,12 @@ export function ProjectList() {
   }, [hydrate]);
 
   useEffect(() => {
-    if (!hydrated || !accessToken || !organizationId) return;
+    if (!hydrated || !accessToken || !selectedWorkspaceId) return;
     apiClient
-      .request<{ items: Project[] }>('/projects', {
-        headers: { 'x-organization-id': organizationId },
-      })
+      .request<{ items: Project[] }>('/projects')
       .then((response) => setProjects(response.data.items))
       .catch(() => setError('Projects could not be loaded.'));
-  }, [accessToken, hydrated, organizationId]);
+  }, [accessToken, hydrated, selectedWorkspaceId]);
 
   if (!hydrated) return <main className="page-shell">Loading...</main>;
   if (!accessToken) return <main className="page-shell">Redirecting...</main>;
@@ -81,39 +79,34 @@ export function ProjectList() {
 }
 
 export function ProjectDetail({ projectId }: { projectId: string }) {
-  const { accessToken, organizationId, hydrated, hydrate } = useSessionStore();
+  const { accessToken, selectedWorkspaceId, hydrated, hydrate } = useSessionStore();
   const [project, setProject] = useState<Project | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadState, setUploadState] = useState<string>('Idle');
   const [progress, setProgress] = useState(0);
 
-  const headers = useMemo(
-    () => (organizationId ? { 'x-organization-id': organizationId } : undefined),
-    [organizationId],
-  );
-
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
   useEffect(() => {
-    if (!hydrated || !accessToken || !headers) return;
+    if (!hydrated || !accessToken || !selectedWorkspaceId) return;
     void load();
-  }, [accessToken, headers, hydrated]);
+  }, [accessToken, hydrated, selectedWorkspaceId]);
 
   async function load() {
-    if (!headers) return;
+    if (!selectedWorkspaceId) return;
     const [projectResponse, assetResponse] = await Promise.all([
-      apiClient.request<Project>(`/projects/${projectId}`, { headers }),
-      apiClient.request<{ items: Asset[] }>(`/projects/${projectId}/assets`, { headers }),
+      apiClient.request<Project>(`/projects/${projectId}`),
+      apiClient.request<{ items: Asset[] }>(`/projects/${projectId}/assets`),
     ]);
     setProject(projectResponse.data);
     setAssets(assetResponse.data.items);
   }
 
   async function upload(file: File) {
-    if (!headers) return;
+    if (!selectedWorkspaceId) return;
     setError(null);
     setProgress(0);
     try {
@@ -122,7 +115,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         `/projects/${projectId}/assets/upload-init`,
         {
           method: 'POST',
-          headers,
           body: JSON.stringify({ filename: file.name, mimeType: file.type, sizeBytes: file.size }),
         },
       );
@@ -133,7 +125,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         `/projects/${projectId}/assets/${init.data.asset.id}/upload-complete`,
         {
           method: 'POST',
-          headers,
           body: JSON.stringify({ sizeBytes: file.size }),
         },
       );
@@ -146,19 +137,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   }
 
   async function download(assetId: string) {
-    if (!headers) return;
+    if (!selectedWorkspaceId) return;
     const response = await apiClient.request<{ downloadUrl: string }>(
       `/projects/${projectId}/assets/${assetId}/download`,
-      { headers },
     );
     window.location.assign(response.data.downloadUrl);
   }
 
   async function remove(assetId: string) {
-    if (!headers) return;
+    if (!selectedWorkspaceId) return;
     await apiClient.request(`/projects/${projectId}/assets/${assetId}`, {
       method: 'DELETE',
-      headers,
     });
     await load();
   }

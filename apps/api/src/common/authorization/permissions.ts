@@ -1,4 +1,17 @@
 export const PermissionKeys = {
+  agencyRead: 'agency.read',
+  agencyUpdate: 'agency.update',
+  agencyMemberRead: 'agency.member.read',
+  agencyMemberCreate: 'agency.member.create',
+  agencyMemberUpdate: 'agency.member.update',
+  workspaceRead: 'workspace.read',
+  workspaceCreate: 'workspace.create',
+  workspaceUpdate: 'workspace.update',
+  workspaceMemberRead: 'workspace.member.read',
+  workspaceMemberCreate: 'workspace.member.create',
+  workspaceMemberUpdate: 'workspace.member.update',
+  featureRead: 'feature.read',
+  featureUpdate: 'feature.update',
   organizationRead: 'organization.read',
   organizationUpdate: 'organization.update',
   memberRead: 'member.read',
@@ -16,3 +29,5 @@ export const PermissionKeys = {
 } as const;
 
 export const OWNER_ROLE = 'OWNER';
+export const AGENCY_OWNER_ROLE = 'AGENCY_OWNER';
+export const AGENCY_ADMIN_ROLES = ['AGENCY_OWNER', 'AGENCY_ADMIN'];

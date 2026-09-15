@@ -1,14 +1,26 @@
 'use client';
 
 import { create } from 'zustand';
-import { apiClient, setApiAccessToken } from '../services/api';
+import { apiClient, setApiAccessToken, setApiTenantContext } from '../services/api';
 
-export interface SessionOrganization {
+export interface SessionWorkspace {
+  id: string;
+  agencyId: string;
+  name: string;
+  slug: string;
+  status: string;
+  role: string | null;
+  membershipId: string | null;
+}
+
+export interface SessionAgency {
   id: string;
   name: string;
   slug: string;
   status: string;
   role: string;
+  membershipId: string;
+  workspaces: SessionWorkspace[];
 }
 
 interface SessionUser {
@@ -21,25 +33,27 @@ interface LoginResponse {
   accessToken: string;
   csrfToken: string;
   user: SessionUser;
-  organizations: SessionOrganization[];
+  agencies: SessionAgency[];
 }
 
 interface MeResponse extends SessionUser {
-  organizations: SessionOrganization[];
+  agencies: SessionAgency[];
 }
 
 interface SessionState {
   accessToken: string | null;
   csrfToken: string | null;
   user: SessionUser | null;
-  organizations: SessionOrganization[];
-  organizationId: string | null;
+  agencies: SessionAgency[];
+  selectedAgencyId: string | null;
+  selectedWorkspaceId: string | null;
   hydrated: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   hydrate: () => Promise<void>;
   refresh: () => Promise<void>;
-  setOrganization: (organizationId: string) => void;
+  setAgency: (agencyId: string) => void;
+  setWorkspace: (workspaceId: string) => void;
 }
 
 const storageKey = 'zea-play-session-ui';
@@ -49,8 +63,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   accessToken: null,
   csrfToken: null,
   user: null,
-  organizations: [],
-  organizationId: null,
+  agencies: [],
+  selectedAgencyId: null,
+  selectedWorkspaceId: null,
   hydrated: false,
   async login(email, password) {
     const response = await apiClient.request<LoginResponse>('/auth/login', {
@@ -73,9 +88,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   async hydrate() {
     if (get().hydrated) return;
-    const raw = localStorage.getItem(storageKey);
-    const organizationId = raw ? safeParse(raw).organizationId : null;
-    set({ organizationId, hydrated: true });
+    const stored = safeParse(localStorage.getItem(storageKey));
+    setTenant(stored.selectedAgencyId, stored.selectedWorkspaceId);
+    set({ ...stored, hydrated: true });
     await get()
       .refresh()
       .catch(() => clearSession(set));
@@ -92,52 +107,94 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     );
     setApiAccessToken(response.data.accessToken);
     const me = await apiClient.request<MeResponse>('/auth/me');
-    const selected = get().organizationId;
+    const selected = normalizeSelection(
+      me.data.agencies,
+      get().selectedAgencyId,
+      get().selectedWorkspaceId,
+    );
+    setTenant(selected.selectedAgencyId, selected.selectedWorkspaceId);
+    persistSelection(selected);
     set({
       accessToken: response.data.accessToken,
       csrfToken: response.data.csrfToken,
       user: { id: me.data.id, email: me.data.email, name: me.data.name },
-      organizations: me.data.organizations,
-      organizationId:
-        selected && me.data.organizations.some((organization) => organization.id === selected)
-          ? selected
-          : (me.data.organizations[0]?.id ?? null),
+      agencies: me.data.agencies,
+      ...selected,
       hydrated: true,
     });
   },
-  setOrganization(organizationId) {
+  setAgency(agencyId) {
+    const agency = get().agencies.find((item) => item.id === agencyId);
+    if (!agency) return;
+    const next = {
+      selectedAgencyId: agency.id,
+      selectedWorkspaceId: agency.workspaces[0]?.id ?? null,
+    };
+    setTenant(next.selectedAgencyId, next.selectedWorkspaceId);
+    persistSelection(next);
+    set(next);
+  },
+  setWorkspace(workspaceId) {
     const current = get();
-    if (!current.organizations.some((organization) => organization.id === organizationId)) return;
-    localStorage.setItem(storageKey, JSON.stringify({ organizationId }));
-    set({ organizationId });
+    const agency = current.agencies.find((item) => item.id === current.selectedAgencyId);
+    if (!agency?.workspaces.some((workspace) => workspace.id === workspaceId)) return;
+    const next = { selectedAgencyId: agency.id, selectedWorkspaceId: workspaceId };
+    setTenant(next.selectedAgencyId, next.selectedWorkspaceId);
+    persistSelection(next);
+    set(next);
   },
 }));
 
 function applySession(data: LoginResponse, set: (state: Partial<SessionState>) => void) {
   setApiAccessToken(data.accessToken);
-  const organizationId = data.organizations[0]?.id ?? null;
-  localStorage.setItem(storageKey, JSON.stringify({ organizationId }));
+  const selected = normalizeSelection(data.agencies, null, null);
+  setTenant(selected.selectedAgencyId, selected.selectedWorkspaceId);
+  persistSelection(selected);
   set({
     accessToken: data.accessToken,
     csrfToken: data.csrfToken,
     user: data.user,
-    organizations: data.organizations,
-    organizationId,
+    agencies: data.agencies,
+    ...selected,
     hydrated: true,
   });
 }
 
 function clearSession(set: (state: Partial<SessionState>) => void) {
   setApiAccessToken(null);
+  setTenant(null, null);
   localStorage.removeItem(storageKey);
   set({
     accessToken: null,
     csrfToken: null,
     user: null,
-    organizations: [],
-    organizationId: null,
+    agencies: [],
+    selectedAgencyId: null,
+    selectedWorkspaceId: null,
     hydrated: true,
   });
+}
+
+function normalizeSelection(
+  agencies: SessionAgency[],
+  agencyId: string | null,
+  workspaceId: string | null,
+) {
+  const agency = agencies.find((item) => item.id === agencyId) ?? agencies[0] ?? null;
+  const workspace =
+    agency?.workspaces.find((item) => item.id === workspaceId) ?? agency?.workspaces[0] ?? null;
+  return { selectedAgencyId: agency?.id ?? null, selectedWorkspaceId: workspace?.id ?? null };
+}
+
+function persistSelection(selection: {
+  selectedAgencyId: string | null;
+  selectedWorkspaceId: string | null;
+}) {
+  localStorage.setItem(storageKey, JSON.stringify(selection));
+}
+
+function setTenant(agencyId: string | null, workspaceId: string | null) {
+  setApiTenantContext(agencyId, workspaceId);
 }
 
 function readCookie(name: string) {
@@ -150,13 +207,28 @@ function readCookie(name: string) {
     .join('=');
 }
 
-function safeParse(raw: string): { organizationId: string | null } {
+function safeParse(raw: string | null): {
+  selectedAgencyId: string | null;
+  selectedWorkspaceId: string | null;
+} {
+  if (!raw) return { selectedAgencyId: null, selectedWorkspaceId: null };
   try {
-    const parsed = JSON.parse(raw) as { organizationId?: unknown };
+    const parsed = JSON.parse(raw) as {
+      selectedAgencyId?: unknown;
+      selectedWorkspaceId?: unknown;
+      organizationId?: unknown;
+    };
     return {
-      organizationId: typeof parsed.organizationId === 'string' ? parsed.organizationId : null,
+      selectedAgencyId:
+        typeof parsed.selectedAgencyId === 'string'
+          ? parsed.selectedAgencyId
+          : typeof parsed.organizationId === 'string'
+            ? parsed.organizationId
+            : null,
+      selectedWorkspaceId:
+        typeof parsed.selectedWorkspaceId === 'string' ? parsed.selectedWorkspaceId : null,
     };
   } catch {
-    return { organizationId: null };
+    return { selectedAgencyId: null, selectedWorkspaceId: null };
   }
 }
