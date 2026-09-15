@@ -151,7 +151,7 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           disabled('navigation.subAccounts', Blocks),
           disabled('navigation.users', Users),
           disabled('navigation.departments', BriefcaseBusiness),
-          disabled('navigation.rolesPermissions', Shield),
+          { labelKey: 'navigation.rolesPermissions', href: '/workspace/roles', icon: Shield },
           disabled('navigation.plansUsage', Receipt),
           disabled('navigation.featureControls', Flag),
           disabled('navigation.agencyLeaderboard', Trophy),

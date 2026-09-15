@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -29,6 +30,8 @@ import {
   updateWorkspaceUser,
 } from '../../services/workspace-management';
 import type { Department, WorkspaceUser } from '../../services/workspace-management';
+import { listWorkspaceRoles, rolesKeys } from '../../services/workspace-roles';
+import type { WorkspaceRole } from '../../services/workspace-roles';
 
 const pageSize = 10;
 
@@ -46,6 +49,11 @@ export function WorkspaceUsersPage() {
   const [selected, setSelected] = useState<WorkspaceUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const rolesQuery = useQuery({
+    queryKey: rolesKeys.all(workspaceId),
+    queryFn: () => listWorkspaceRoles(workspaceId as string),
+    enabled: Boolean(workspaceId),
+  });
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -234,6 +242,7 @@ export function WorkspaceUsersPage() {
               reactivate: t(locale, 'workspaceUsers.reactivate'),
               ownerProtected: t(locale, 'workspaceUsers.ownerProtected'),
             }}
+            roles={(rolesQuery.data ?? []).filter((item) => item.isActive && item.key !== 'OWNER')}
           />
         </div>
       )}
@@ -280,10 +289,12 @@ function UserDetail({
   departments,
   onChange,
   labels,
+  roles,
 }: {
   user: WorkspaceUser;
   departments: Department[];
   onChange: (user: WorkspaceUser, body: Parameters<typeof updateWorkspaceUser>[2]) => Promise<void>;
+  roles: WorkspaceRole[];
   labels: {
     membership: string;
     role: string;
@@ -308,14 +319,17 @@ function UserDetail({
         <Detail label={labels.joined} value={new Date(user.joinedAt).toLocaleDateString()} />
         {user.role.key !== 'OWNER' ? (
           <div className="grid gap-3">
-            <Select value={user.role.key} onValueChange={(role) => void onChange(user, { role })}>
+            <Select
+              value={user.role.id}
+              onValueChange={(roleId) => void onChange(user, { roleId })}
+            >
               <SelectTrigger label={labels.role}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {['ADMIN', 'MANAGER', 'MEMBER'].map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
+                {roles.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
                   </SelectItem>
                 ))}
               </SelectContent>

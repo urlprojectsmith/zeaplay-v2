@@ -16,6 +16,11 @@ const workspacePermissions = [
   'departments.create',
   'departments.update',
   'departments.manage_members',
+  'roles.view',
+  'roles.create',
+  'roles.update',
+  'roles.manage_permissions',
+  'roles.assign',
   'project.read',
   'project.create',
   'project.update',
@@ -214,8 +219,10 @@ async function seedRoles() {
       create: {
         key: definition.key,
         name: definition.name,
+        nameNormalized: null,
         scope: definition.scope,
         isSystem: true,
+        isActive: true,
       },
     });
     roles[definition.key] = role;

@@ -61,7 +61,7 @@ export async function listWorkspaceUsers(params: ListUsersParams) {
 export async function updateWorkspaceUser(
   workspaceId: string,
   userId: string,
-  body: { role?: string; status?: string; departmentId?: string | null },
+  body: { role?: string; roleId?: string; status?: string; departmentId?: string | null },
 ) {
   const response = await apiClient.request<WorkspaceUser>(
     `/workspaces/${workspaceId}/users/${userId}/membership`,

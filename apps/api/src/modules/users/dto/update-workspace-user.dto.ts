@@ -8,6 +8,11 @@ export class UpdateWorkspaceUserMembershipDto {
   @IsIn(['ADMIN', 'MANAGER', 'MEMBER'])
   role?: 'ADMIN' | 'MANAGER' | 'MEMBER';
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  roleId?: string;
+
   @ApiPropertyOptional({ enum: MembershipStatus })
   @IsOptional()
   @IsEnum(MembershipStatus)

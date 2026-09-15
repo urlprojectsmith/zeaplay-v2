@@ -257,8 +257,10 @@ model Role {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key         String   @unique @db.VarChar(120)
   name        String   @db.VarChar(80)
+  nameNormalized String? @map("name_normalized") @db.VarChar(80)
   scope       RoleScope @default(WORKSPACE)
   isSystem    Boolean  @default(true) @map("is_system")
+  isActive    Boolean  @default(true) @map("is_active")
   workspaceId String?  @map("workspace_id") @db.Uuid
   description String?  @db.VarChar(240)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -271,6 +273,8 @@ model Role {
 
   @@index([scope])
   @@index([workspaceId])
+  @@index([workspaceId, isActive])
+  @@unique([workspaceId, nameNormalized])
   @@map("roles")
 }
 

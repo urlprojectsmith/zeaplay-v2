@@ -128,12 +128,18 @@ export class WorkspacesService {
   ) {
     const existing = await this.prisma.workspaceMembership.findFirst({
       where: { id: membershipId, workspaceId: tenant.workspaceId },
-      select: { id: true, role: { select: { key: true } } },
+      select: { id: true, userId: true, role: { select: { key: true } } },
     });
     if (!existing) throw new NotFoundException('Membership not found.');
     if (existing.role.key === 'OWNER')
       throw new ForbiddenException('Workspace owner membership cannot be changed.');
-    const role = dto.role ? await this.role(dto.role, RoleScope.WORKSPACE) : null;
+    if (existing.userId === tenant.userId && (dto.role || dto.roleId)) {
+      throw new ForbiddenException('You cannot change your own workspace role.');
+    }
+    const role =
+      dto.role || dto.roleId
+        ? await this.workspaceRoleForAssignment(tenant.workspaceId, dto.role, dto.roleId)
+        : null;
     const membership = await this.prisma.workspaceMembership.update({
       where: { id: membershipId },
       data: { roleId: role?.id, status: dto.status },
@@ -143,10 +149,16 @@ export class WorkspacesService {
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
       userId: tenant.userId,
-      action: 'workspace.membership.update',
+      action:
+        dto.role || dto.roleId
+          ? 'workspace.membership.role_changed'
+          : 'workspace.membership.update',
       entityType: 'WorkspaceMembership',
       entityId: membershipId,
-      metadata: { changed: Object.keys(dto) },
+      metadata: {
+        targetUserId: existing.userId,
+        changed: Object.keys(dto),
+      },
     });
     return membership;
   }
@@ -154,6 +166,19 @@ export class WorkspacesService {
   private async role(key: string, scope: RoleScope) {
     const role = await this.prisma.role.findFirst({ where: { key, scope }, select: { id: true } });
     if (!role) throw new NotFoundException('Role not found.');
+    return role;
+  }
+
+  private async workspaceRoleForAssignment(workspaceId: string, key?: string, roleId?: string) {
+    if (key && roleId) throw new ForbiddenException('Provide either role or roleId.');
+    const role = await this.prisma.role.findFirst({
+      where: roleId
+        ? { id: roleId, scope: RoleScope.WORKSPACE, workspaceId }
+        : { key, scope: RoleScope.WORKSPACE, workspaceId: null },
+      select: { id: true, isActive: true },
+    });
+    if (!role) throw new NotFoundException('Role not found.');
+    if (!role.isActive) throw new ForbiddenException('Role is not active.');
     return role;
   }
 }

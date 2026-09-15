@@ -44,7 +44,7 @@ export class UsersController {
   }
 
   @Patch(':userId/membership')
-  @RequirePermissions(PermissionKeys.usersManage)
+  @RequirePermissions(PermissionKeys.usersManage, PermissionKeys.rolesAssign)
   updateMembership(
     @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Param() params: WorkspaceUserParamsDto,

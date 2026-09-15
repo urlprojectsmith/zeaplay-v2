@@ -432,6 +432,7 @@ async function seedRoles() {
     'workspace.member.read',
     'workspace.member.create',
     'workspace.member.update',
+    'roles.assign',
     'project.read',
     'project.create',
     'project.update',

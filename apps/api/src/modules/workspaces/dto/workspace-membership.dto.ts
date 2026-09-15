@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { MembershipStatus } from '@prisma/client';
-import { IsEmail, IsEnum, IsIn, IsOptional } from 'class-validator';
+import { IsEmail, IsEnum, IsIn, IsOptional, IsUUID } from 'class-validator';
 
 export class CreateWorkspaceMembershipDto {
   @ApiProperty({ example: 'member@zeaplay.test' })
@@ -17,6 +17,11 @@ export class UpdateWorkspaceMembershipDto {
   @IsOptional()
   @IsIn(['ADMIN', 'MANAGER', 'MEMBER'])
   role?: 'ADMIN' | 'MANAGER' | 'MEMBER';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  roleId?: string;
 
   @ApiPropertyOptional({ enum: MembershipStatus })
   @IsOptional()

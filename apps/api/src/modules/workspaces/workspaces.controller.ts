@@ -78,7 +78,7 @@ export class WorkspacesController {
   @ApiHeader({ name: AGENCY_HEADER, required: true })
   @ApiHeader({ name: WORKSPACE_HEADER, required: true })
   @UseGuards(WorkspaceTenantGuard, PermissionGuard)
-  @RequirePermissions(PermissionKeys.workspaceMemberCreate)
+  @RequirePermissions(PermissionKeys.workspaceMemberCreate, PermissionKeys.rolesAssign)
   addMembership(
     @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Body() dto: CreateWorkspaceMembershipDto,
@@ -90,7 +90,7 @@ export class WorkspacesController {
   @ApiHeader({ name: AGENCY_HEADER, required: true })
   @ApiHeader({ name: WORKSPACE_HEADER, required: true })
   @UseGuards(WorkspaceTenantGuard, PermissionGuard)
-  @RequirePermissions(PermissionKeys.workspaceMemberUpdate)
+  @RequirePermissions(PermissionKeys.workspaceMemberUpdate, PermissionKeys.rolesAssign)
   updateMembership(
     @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Param() params: WorkspaceMembershipParamsDto,

@@ -67,12 +67,15 @@ export class UsersService {
     if (!existing) throw new NotFoundException('Workspace user not found.');
     if (existing.role.key === 'OWNER')
       throw new ForbiddenException('Workspace owner membership cannot be changed.');
+    if (existing.userId === tenant.userId && (dto.role || dto.roleId)) {
+      throw new ForbiddenException('You cannot change your own workspace role.');
+    }
     if (existing.userId === tenant.userId && dto.status === MembershipStatus.SUSPENDED) {
       throw new ForbiddenException('You cannot suspend your own active workspace membership.');
     }
 
     const [role, department] = await Promise.all([
-      dto.role ? this.role(dto.role) : null,
+      dto.role || dto.roleId ? this.role(tenant.workspaceId, dto.role, dto.roleId) : null,
       dto.departmentId ? this.department(tenant.workspaceId, dto.departmentId) : null,
     ]);
 
@@ -132,12 +135,16 @@ export class UsersService {
     return where;
   }
 
-  private async role(key: string) {
+  private async role(workspaceId: string, key?: string, roleId?: string) {
+    if (key && roleId) throw new BadRequestException('Provide either role or roleId.');
     const role = await this.prisma.role.findFirst({
-      where: { key, scope: RoleScope.WORKSPACE, workspaceId: null },
-      select: { id: true },
+      where: roleId
+        ? { id: roleId, scope: RoleScope.WORKSPACE, workspaceId }
+        : { key, scope: RoleScope.WORKSPACE, workspaceId: null },
+      select: { id: true, isActive: true },
     });
     if (!role) throw new NotFoundException('Role not found.');
+    if (!role.isActive) throw new BadRequestException('Role is not active.');
     return role;
   }
 
@@ -194,7 +201,7 @@ function auditActionsForUserUpdate(dto: UpdateWorkspaceUserMembershipDto) {
   const actions: string[] = [];
   if (dto.status === MembershipStatus.ACTIVE) actions.push('workspace.user.activated');
   if (dto.status === MembershipStatus.SUSPENDED) actions.push('workspace.user.suspended');
-  if (dto.role) actions.push('workspace.user.role_changed');
+  if (dto.role || dto.roleId) actions.push('workspace.user.role_changed');
   if (dto.departmentId === null) actions.push('workspace.user.department_removed');
   if (dto.departmentId) actions.push('workspace.user.department_assigned');
   return actions.length > 0 ? actions : ['workspace.user.updated'];
