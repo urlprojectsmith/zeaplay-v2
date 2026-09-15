@@ -1,0 +1,1 @@
+export const WORKER_STORAGE = 'WORKER_STORAGE';

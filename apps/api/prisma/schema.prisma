@@ -1,0 +1,275 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum AssetStatus {
+  PENDING
+  UPLOADING
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+  DELETED
+}
+
+enum ProcessingJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model SystemHealth {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  component String   @db.VarChar(120)
+  status    String   @db.VarChar(40)
+  checkedAt DateTime @default(now()) @map("checked_at") @db.Timestamptz(6)
+  metadata  Json?
+
+  @@index([component], map: "idx_system_health_component")
+  @@map("system_health")
+}
+
+model User {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String     @unique @db.VarChar(320)
+  name         String?    @db.VarChar(160)
+  passwordHash String     @map("password_hash")
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+  projects      Project[]      @relation("ProjectCreator")
+  assets        Asset[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Organization {
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String             @db.VarChar(160)
+  slug      String             @unique @db.VarChar(120)
+  status    OrganizationStatus @default(ACTIVE)
+  storageUsedBytes  BigInt             @default(0) @map("storage_used_bytes")
+  storageLimitBytes BigInt             @default(1073741824) @map("storage_limit_bytes")
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships Membership[]
+  projects    Project[]
+  assets      Asset[]
+  processingJobs ProcessingJob[]
+  auditLogs   AuditLog[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  roleId         String           @map("role_id") @db.Uuid
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  role         Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Role {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique @db.VarChar(80)
+  description String?  @db.VarChar(240)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships     Membership[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique @db.VarChar(120)
+  description String?  @db.VarChar(240)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model RefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  csrfTokenHash String @map("csrf_token_hash")
+  familyId   String    @map("family_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedBy String?   @map("replaced_by") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model Project {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  name           String        @db.VarChar(160)
+  description    String?       @db.VarChar(1000)
+  status         ProjectStatus @default(DRAFT)
+  createdById    String        @map("created_by_id") @db.Uuid
+  archivedAt     DateTime?     @map("archived_at") @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  createdBy    User         @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assets       Asset[]
+  processingJobs ProcessingJob[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@unique([id, organizationId])
+  @@map("projects")
+}
+
+model Asset {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String      @map("organization_id") @db.Uuid
+  projectId        String      @map("project_id") @db.Uuid
+  createdById      String      @map("created_by_id") @db.Uuid
+  originalFilename String      @map("original_filename") @db.VarChar(255)
+  displayName      String      @map("display_name") @db.VarChar(255)
+  storageBucket    String      @map("storage_bucket") @db.VarChar(120)
+  storageKey       String      @unique @map("storage_key") @db.VarChar(512)
+  mimeType         String      @map("mime_type") @db.VarChar(160)
+  extension        String?     @db.VarChar(24)
+  sizeBytes        BigInt      @map("size_bytes")
+  checksum         String?     @db.VarChar(64)
+  status           AssetStatus @default(PENDING)
+  metadata         Json?
+  uploadExpiresAt  DateTime    @map("upload_expires_at") @db.Timestamptz(6)
+  deletedAt        DateTime?   @map("deleted_at") @db.Timestamptz(6)
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project        Project         @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  createdBy      User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  processingJobs ProcessingJob[]
+
+  @@unique([id, organizationId])
+  @@unique([id, projectId, organizationId])
+  @@unique([id, projectId, organizationId, storageKey])
+  @@index([organizationId, projectId])
+  @@index([organizationId, projectId, status])
+  @@index([organizationId, projectId, createdAt])
+  @@map("assets")
+}
+
+model ProcessingJob {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String              @map("organization_id") @db.Uuid
+  projectId      String              @map("project_id") @db.Uuid
+  assetId        String              @map("asset_id") @db.Uuid
+  type           String              @db.VarChar(80)
+  status         ProcessingJobStatus @default(QUEUED)
+  attempts       Int                 @default(0)
+  progress       Int                 @default(0)
+  errorCode      String?             @map("error_code") @db.VarChar(80)
+  errorMessage   String?             @map("error_message") @db.VarChar(512)
+  correlationId  String              @map("correlation_id") @db.VarChar(120)
+  startedAt      DateTime?           @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?           @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project      Project      @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  asset        Asset        @relation(fields: [assetId, projectId, organizationId], references: [id, projectId, organizationId], onDelete: Restrict)
+
+  @@unique([assetId, type])
+  @@index([organizationId, projectId])
+  @@index([assetId, status])
+  @@index([status, createdAt])
+  @@map("processing_jobs")
+}
+
+model AuditLog {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  action         String   @db.VarChar(120)
+  entityType     String   @map("entity_type") @db.VarChar(80)
+  entityId       String?  @map("entity_id") @db.Uuid
+  metadata       Json?
+  ipAddress      String?  @map("ip_address") @db.VarChar(80)
+  userAgent      String?  @map("user_agent") @db.VarChar(512)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

@@ -1,0 +1,40 @@
+{
+  "name": "zea-play",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.3.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:integration": "turbo test:integration",
+    "test:e2e": "playwright test",
+    "prisma:validate": "pnpm --filter @zea-play/api prisma:validate",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@next/eslint-plugin-next": "^15.1.2",
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.2",
+    "dotenv-cli": "^7.4.4",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.11",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript-eslint": "^8.18.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,yml,yaml,css}": [
+      "prettier --check"
+    ]
+  }
+}
