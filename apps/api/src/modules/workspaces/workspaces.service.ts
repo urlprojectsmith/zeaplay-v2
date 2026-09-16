@@ -8,6 +8,7 @@ import { MembershipStatus, Prisma, RoleScope } from '@prisma/client';
 import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { initializeDefaultStatuses } from '../statuses/status-templates';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import {
@@ -48,6 +49,7 @@ export class WorkspacesService {
       entityType: 'Workspace',
       entityId: workspace.id,
     });
+    await initializeDefaultStatuses(this.prisma, workspace.id);
     return serializeWorkspace(workspace);
   }
 

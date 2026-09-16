@@ -9,6 +9,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
+import { StatusesModule } from './modules/statuses/statuses.module';
 import { FeaturesModule } from './modules/features/features.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
@@ -41,6 +42,7 @@ import { DepartmentsModule } from './modules/departments/departments.module';
     DepartmentsModule,
     RolesModule,
     PermissionsModule,
+    StatusesModule,
     FeaturesModule,
   ],
 })

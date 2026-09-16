@@ -1,5 +1,6 @@
 import { AssetStatus, PrismaClient, ProjectStatus, RoleScope } from '@prisma/client';
 import { PasswordService } from '../src/common/auth/password.service';
+import { initializeDefaultStatuses } from '../src/modules/statuses/status-templates';
 
 const prisma = new PrismaClient();
 const passwords = new PasswordService();
@@ -21,6 +22,11 @@ const workspacePermissions = [
   'roles.update',
   'roles.manage_permissions',
   'roles.assign',
+  'statuses.view',
+  'statuses.create',
+  'statuses.update',
+  'statuses.reorder',
+  'statuses.manage',
   'project.read',
   'project.create',
   'project.update',
@@ -108,6 +114,10 @@ async function main() {
   await upsertWorkspaceMembership(member.id, workspaceAlphaMain.id, roles.MEMBER.id);
   await upsertWorkspaceMembership(owner.id, workspaceAlphaSecondary.id, roles.OWNER.id);
   await upsertWorkspaceMembership(otherOwner.id, workspaceBeta.id, roles.OWNER.id);
+
+  await initializeDefaultStatuses(prisma, workspaceAlphaMain.id);
+  await initializeDefaultStatuses(prisma, workspaceAlphaSecondary.id);
+  await initializeDefaultStatuses(prisma, workspaceBeta.id);
 
   const alphaMainProject = await upsertProject(
     workspaceAlphaMain.id,

@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 6.2 - COMPLETE / PASS
-Next: Phase 6.3 - Status Management
+Current: Phase 6.3A - PASS
+Next: Phase 6.3B - Status Management UI
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -135,6 +135,48 @@ Phase 6.2 complete invariants:
 - Inactive Roles cannot be newly assigned.
 - Workspace switching cannot leak Role/Permission state.
 
+### Phase 6.3A - PASS
+
+Shared Status/Pipeline Management backend foundation.
+
+Implemented:
+
+- One Workspace-scoped `StatusDefinition` model for `TASK`, `PROJECT`, and `TICKET`.
+- Strong entity-type and semantic category enums for shared status behavior.
+- Status fields for normalized name uniqueness, description, safe HEX color, explicit position, default, terminal, active, and system flags.
+- Forward migration with workspace/entity/name uniqueness, hot-path ordering index, and PostgreSQL partial unique index preventing multiple active defaults per Workspace/entity type.
+- Idempotent default initialization for new and seeded Workspaces.
+- Default templates:
+  - TASK: To Do, In Progress, Review, Completed.
+  - PROJECT: Initial Meeting, Requirement Analysis, Development, Testing, Client Review, Deployment, Completed.
+  - TICKET: New, Assigned, In Progress, Waiting, Resolved, Closed.
+- Workspace status APIs for list, get, create, update, activate/deactivate, set default, reorder, and default initialization.
+- Minimal shared permissions: `statuses.view`, `statuses.create`, `statuses.update`, `statuses.reorder`, `statuses.manage`.
+- Audit events for status creation, update, activation/deactivation, default changes, reorder, and default initialization.
+
+Security invariants:
+
+- Status definitions are scoped to exactly one Workspace and entity type.
+- Status APIs use the existing JWT -> WorkspaceTenantGuard -> PermissionGuard chain.
+- Status names are normalized per Workspace/entity type; duplicate casing/spacing is rejected.
+- Status colors accept strict `#RRGGBB` values only.
+- Exactly one active default is preserved per initialized Workspace/entity type.
+- Default statuses cannot be deactivated or unset directly.
+- Entity-type, foreign Workspace, cross-Agency, duplicate reorder, missing reorder, and status-limit attacks are rejected.
+- New status permissions flow through the existing backend permission catalog and custom-role delegation rules.
+
+Project compatibility decision:
+
+- Existing `Project.status` enum remains authoritative for current Project APIs.
+- `Project.statusDefinitionId` was added as an optional same-Workspace relation for future Project pipeline migration/override work.
+- Phase 6.3A does not implement Project-specific pipeline overrides or redesign Project Management.
+
+Known limitations:
+
+- No Status Management frontend yet.
+- No Task/Ticket models, Kanban, transitions, automation, gamification, or Redis status cache.
+- Existing Project APIs still use the legacy `Project.status` enum until a future migration phase adopts `StatusDefinition`.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -161,6 +203,7 @@ Phase 6.2 complete invariants:
 - Department
 - Role
 - Permission
+- StatusDefinition
 - FeatureDefinition / FeatureEntitlement
 - Project
 - Asset
@@ -195,6 +238,7 @@ Do not infer or invent model fields from this list.
 | Phase 6.2B | PASS   | Not tagged                       |
 | Phase 6.2C | PASS   | Not tagged                       |
 | Phase 6.2  | PASS   | Not tagged                       |
+| Phase 6.3A | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -213,5 +257,6 @@ Confirmed current warnings:
 - Phase 6.1 refinement added integration coverage for cross-Agency/cross-Workspace isolation, inactive Department rules, suspended manager cleanup, audit events, and clean integration-test teardown.
 - Phase 6.2B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, and high-threshold audit.
 - Phase 6.2C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
+- Phase 6.3A acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

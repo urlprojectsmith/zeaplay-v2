@@ -71,6 +71,21 @@ enum ProcessingJobStatus {
   CANCELLED
 }
 
+enum StatusEntityType {
+  TASK
+  PROJECT
+  TICKET
+}
+
+enum StatusCategory {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  REVIEW
+  COMPLETED
+  CANCELLED
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -156,6 +171,7 @@ model Workspace {
   createdBy    User   @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
   memberships  WorkspaceMembership[]
   departments  Department[]
+  statusDefinitions StatusDefinition[]
   projects     Project[]
   assets       Asset[]
   processingJobs ProcessingJob[]
@@ -300,6 +316,32 @@ model RolePermission {
   @@map("role_permissions")
 }
 
+model StatusDefinition {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String           @map("workspace_id") @db.Uuid
+  entityType     StatusEntityType @map("entity_type")
+  name           String           @db.VarChar(80)
+  nameNormalized String           @map("name_normalized") @db.VarChar(80)
+  description    String?          @db.VarChar(240)
+  color          String           @db.VarChar(7)
+  position       Int
+  category       StatusCategory
+  isDefault      Boolean          @default(false) @map("is_default")
+  isTerminal     Boolean          @default(false) @map("is_terminal")
+  isActive       Boolean          @default(true) @map("is_active")
+  isSystem       Boolean          @default(false) @map("is_system")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  projects  Project[]
+
+  @@unique([workspaceId, entityType, nameNormalized])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, entityType, isActive, position])
+  @@map("status_definitions")
+}
+
 model RefreshToken {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String    @map("user_id") @db.Uuid
@@ -324,18 +366,21 @@ model Project {
   name           String        @db.VarChar(160)
   description    String?       @db.VarChar(1000)
   status         ProjectStatus @default(DRAFT)
+  statusDefinitionId String?   @map("status_definition_id") @db.Uuid
   createdById    String        @map("created_by_id") @db.Uuid
   archivedAt     DateTime?     @map("archived_at") @db.Timestamptz(6)
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition StatusDefinition? @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   createdBy    User         @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
   assets       Asset[]
   processingJobs ProcessingJob[]
 
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([workspaceId, statusDefinitionId])
   @@index([workspaceId, createdAt])
   @@unique([id, workspaceId])
   @@map("projects")
