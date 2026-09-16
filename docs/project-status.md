@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.4A1 - Nested Task Hierarchy Backend - COMPLETE / PASS
-Next: Phase 7.4A2 - Dependencies + Related Tasks Backend
+Current: Phase 7.4A - Relationship Backend - COMPLETE / PASS
+Next: Phase 7.4B - Task Relationships UX
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -646,7 +646,82 @@ Security/performance invariants:
 Known deferred Task features:
 
 - No Task Relationships frontend yet.
-- No dependencies, related tasks, comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
+- No comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
+
+### Phase 7.4A2 - Dependencies + Related Tasks Backend - COMPLETE / PASS
+
+Implemented:
+
+- Directed `TaskDependency` graph stored as one Workspace-scoped blocker -> blocked edge.
+- Symmetric `TaskRelatedTask` graph stored as one canonical Workspace-scoped pair.
+- Dedicated backend APIs for paginated `blocked-by`, `blocks`, and `related` reads.
+- Explicit add/remove APIs for blocked-by dependencies and related links with bounded 1-100 task IDs.
+- Same-Workspace composite DB relations for dependency and related endpoints.
+- DB-level no-self constraints for dependencies and related links, plus canonical ordering check for related pairs.
+- Dependency cycle prevention with Workspace-scoped recursive CTE traversal over the active graph.
+- Concurrent dependency cycle races remain acyclic through transactional validation.
+- Concurrent graph writes preserve dependency validity; terminal/status writes and dependency adds cannot commit an invalid terminal blocked Task.
+- Related pair races create exactly one canonical row without duplicate relation exposure.
+- Task detail exposes active `blockedByCount`, `blocksCount`, and `relatedTaskCount` without adding graph arrays.
+- Terminal Task transitions are blocked by active direct non-terminal blockers.
+- Terminal Tasks cannot accept new active non-terminal blockers.
+- Bulk status validates prospective dependency state together with hierarchy rules.
+- No reverse reopen rule: reopening a blocker does not automatically reopen or reject terminal dependents.
+- Soft-deleted dependency/related rows are preserved for history and ignored by active graph/read rules.
+- Dependency and related mutation audit records include bounded task IDs and changed counts.
+
+Security/performance invariants:
+
+- Relationship APIs reuse `tasks.view` for reads and `tasks.update` for add/remove mutations.
+- New relationships reject self, unknown, deleted, foreign Workspace, and cross-Agency Tasks.
+- Route/header tenant forgery is rejected before mutation.
+- Failed cycle, tenant, deleted-target, and invalid relation requests do not create success audit records.
+- All graph traversals are Workspace scoped and parameterized; no one-query-per-depth traversal is used.
+- Normal All Tasks list/search/filter/sort behavior remains unchanged and does not load dependency or related graphs.
+- Task delete and bulk delete preserve dependency/related rows for future restore compatibility.
+
+Known deferred Task features:
+
+- No Task Relationships frontend yet.
+- No dependency UI, related-task UI, comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
+
+### Phase 7.4A3 - Relationship Backend Final Audit - PASS
+
+Audit result:
+
+- Hierarchy, dependency, and related graphs remain distinct backend concepts.
+- Same-Workspace composite protection exists for parent links, dependency endpoints, and related endpoints.
+- Hierarchy and dependency cycles are prevented, including representative concurrent writes.
+- Related links remain canonical, symmetric, and informational only.
+- Status transitions enforce hierarchy descendants plus direct active blockers.
+- Prospective bulk status enforces both hierarchy and dependency graph state atomically.
+- No reverse dependency reopen rule exists; blockers may reopen unless hierarchy independently forbids it.
+- Soft-delete preserves graph history while normal reads ignore deleted graph endpoints.
+- Surviving hierarchy children detach correctly on single and bulk soft delete.
+- Graph APIs are paginated, bounded, tenant/RBAC guarded, and audit-safe.
+- Normal All Tasks list/grid/compact hot paths do not hydrate hierarchy trees, dependency graphs, or related graphs.
+- Safe business errors are returned for cycles, terminal-state violations, foreign/unknown Tasks, and serialization conflicts.
+
+### Phase 7.4A - RELATIONSHIP BACKEND - COMPLETE / PASS
+
+Backend relationship foundation is ready for Phase 7.4B Task Relationships UX.
+
+Available backend contracts:
+
+- Direct subtasks API.
+- Parent/reparent API.
+- Blocked-by API.
+- Blocks API.
+- Related Tasks API.
+- Paginated direct relationship reads.
+- Workspace-isolated relationship writes.
+- Hierarchy/dependency status enforcement.
+- Relationship audit events and changed-only no-op behavior.
+
+Known deferred Task features:
+
+- No Task Relationships frontend yet.
+- No comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
 
 ## Architecture Invariants
 
@@ -735,6 +810,9 @@ Do not infer or invent model fields from this list.
 | Phase 7.3C    | PASS   | Not tagged                       |
 | Phase 7.3     | PASS   | Not tagged                       |
 | Phase 7.4A1   | PASS   | Not tagged                       |
+| Phase 7.4A2   | PASS   | Not tagged                       |
+| Phase 7.4A3   | PASS   | Not tagged                       |
+| Phase 7.4A    | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -761,6 +839,6 @@ Confirmed current warnings:
 - Phase 7.3C2 Task Bulk Selection UX is complete/pass.
 - Phase 7.3C3 Final Bulk + All Tasks security/performance/integration audit is complete/pass.
 - Phase 7.3 All Tasks is complete/pass.
-- Phase 7.4A1 Nested Task Hierarchy Backend is complete/pass; the next phase is Phase 7.4A1 Refinement.
+- Phase 7.4A Relationship Backend is complete/pass; the next phase is Phase 7.4B Task Relationships UX.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

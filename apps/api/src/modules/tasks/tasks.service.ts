@@ -24,6 +24,7 @@ import {
   ReplaceTaskMembershipsDto,
   ReplaceTaskProjectsDto,
   TaskQueryDto,
+  TaskRelationshipIdsDto,
   UpdateTaskDto,
 } from './dto/task.dto';
 
@@ -470,8 +471,275 @@ export class TasksService {
     return serializeTaskDetail(result.task);
   }
 
+  async listBlockedBy(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
+    await this.assertTask(tenant.workspaceId, taskId);
+    const where = {
+      workspaceId: tenant.workspaceId,
+      blockedTaskId: taskId,
+      blockerTask: { deletedAt: null },
+      blockedTask: { deletedAt: null },
+    } satisfies Prisma.TaskDependencyWhereInput;
+    const [edges, total] = await this.prisma.$transaction([
+      this.prisma.taskDependency.findMany({
+        where,
+        select: { blockerTask: { select: taskRelationshipSelect } },
+        orderBy: [{ createdAt: 'asc' }, { blockerTaskId: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.taskDependency.count({ where }),
+    ]);
+    return paginatedRelationship(
+      edges.map((edge) => edge.blockerTask),
+      query,
+      total,
+    );
+  }
+
+  async listBlocks(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
+    await this.assertTask(tenant.workspaceId, taskId);
+    const where = {
+      workspaceId: tenant.workspaceId,
+      blockerTaskId: taskId,
+      blockerTask: { deletedAt: null },
+      blockedTask: { deletedAt: null },
+    } satisfies Prisma.TaskDependencyWhereInput;
+    const [edges, total] = await this.prisma.$transaction([
+      this.prisma.taskDependency.findMany({
+        where,
+        select: { blockedTask: { select: taskRelationshipSelect } },
+        orderBy: [{ createdAt: 'asc' }, { blockedTaskId: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.taskDependency.count({ where }),
+    ]);
+    return paginatedRelationship(
+      edges.map((edge) => edge.blockedTask),
+      query,
+      total,
+    );
+  }
+
+  async addBlockedBy(
+    tenant: WorkspaceTenantContext,
+    blockedTaskId: string,
+    dto: TaskRelationshipIdsDto,
+  ) {
+    if (dto.taskIds.includes(blockedTaskId))
+      throw new BadRequestException('Task cannot block itself.');
+    const taskIds = uniqueIds([blockedTaskId, ...dto.taskIds]);
+    await this.assertBulkTasks(tenant.workspaceId, taskIds);
+    const result = await this.prisma
+      .$transaction(async (tx) => {
+        const tasks = await this.assertBulkTasks(tenant.workspaceId, taskIds, tx);
+        const blockedTask = tasks.find((task) => task.id === blockedTaskId);
+        if (
+          blockedTask?.statusDefinition.isTerminal &&
+          tasks.some((task) => task.id !== blockedTaskId && !task.statusDefinition.isTerminal)
+        ) {
+          throw new ConflictException('Terminal tasks cannot accept active non-terminal blockers.');
+        }
+        const edges = dto.taskIds.map((blockerTaskId) => ({ blockerTaskId, blockedTaskId }));
+        await assertDependencyGraphAcyclic(tx, tenant.workspaceId, edges);
+        const create = await tx.taskDependency.createMany({
+          data: edges.map((edge) => ({
+            workspaceId: tenant.workspaceId,
+            blockerTaskId: edge.blockerTaskId,
+            blockedTaskId: edge.blockedTaskId,
+            createdById: tenant.userId,
+          })),
+          skipDuplicates: true,
+        });
+        if (create.count > 0) {
+          await tx.auditLog.create({
+            data: {
+              agencyId: tenant.agencyId,
+              workspaceId: tenant.workspaceId,
+              userId: tenant.userId,
+              action: 'task.dependencies_added',
+              entityType: 'Task',
+              entityId: blockedTaskId,
+              metadata: {
+                taskId: blockedTaskId,
+                requestedCount: dto.taskIds.length,
+                changedCount: create.count,
+                unchangedCount: dto.taskIds.length - create.count,
+                taskIds: dto.taskIds,
+              },
+            },
+          });
+        }
+        return bulkResult(dto.taskIds.length, create.count);
+      }, serializableTransaction)
+      .catch(mapHierarchyWriteError);
+    return result;
+  }
+
+  async removeBlockedBy(
+    tenant: WorkspaceTenantContext,
+    blockedTaskId: string,
+    dto: TaskRelationshipIdsDto,
+  ) {
+    if (dto.taskIds.includes(blockedTaskId))
+      throw new BadRequestException('Task cannot block itself.');
+    const taskIds = uniqueIds([blockedTaskId, ...dto.taskIds]);
+    await this.assertBulkTasks(tenant.workspaceId, taskIds);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.assertBulkTasks(tenant.workspaceId, taskIds, tx);
+      const removed = await tx.taskDependency.deleteMany({
+        where: {
+          workspaceId: tenant.workspaceId,
+          blockedTaskId,
+          blockerTaskId: { in: dto.taskIds },
+        },
+      });
+      if (removed.count > 0) {
+        await tx.auditLog.create({
+          data: {
+            agencyId: tenant.agencyId,
+            workspaceId: tenant.workspaceId,
+            userId: tenant.userId,
+            action: 'task.dependencies_removed',
+            entityType: 'Task',
+            entityId: blockedTaskId,
+            metadata: {
+              taskId: blockedTaskId,
+              requestedCount: dto.taskIds.length,
+              changedCount: removed.count,
+              unchangedCount: dto.taskIds.length - removed.count,
+              taskIds: dto.taskIds,
+            },
+          },
+        });
+      }
+      return bulkResult(dto.taskIds.length, removed.count);
+    });
+    return result;
+  }
+
+  async listRelated(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
+    await this.assertTask(tenant.workspaceId, taskId);
+    const where = {
+      workspaceId: tenant.workspaceId,
+      OR: [
+        { taskAId: taskId, taskB: { deletedAt: null } },
+        { taskBId: taskId, taskA: { deletedAt: null } },
+      ],
+      taskA: { deletedAt: null },
+      taskB: { deletedAt: null },
+    } satisfies Prisma.TaskRelatedTaskWhereInput;
+    const [links, total] = await this.prisma.$transaction([
+      this.prisma.taskRelatedTask.findMany({
+        where,
+        select: {
+          taskAId: true,
+          taskA: { select: taskRelationshipSelect },
+          taskB: { select: taskRelationshipSelect },
+        },
+        orderBy: [{ createdAt: 'asc' }, { taskAId: 'asc' }, { taskBId: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.taskRelatedTask.count({ where }),
+    ]);
+    const items = links.map((link) => (link.taskAId === taskId ? link.taskB : link.taskA));
+    return paginatedRelationship(items, query, total);
+  }
+
+  async addRelated(tenant: WorkspaceTenantContext, taskId: string, dto: TaskRelationshipIdsDto) {
+    if (dto.taskIds.includes(taskId))
+      throw new BadRequestException('Task cannot relate to itself.');
+    const taskIds = uniqueIds([taskId, ...dto.taskIds]);
+    await this.assertBulkTasks(tenant.workspaceId, taskIds);
+    const pairs = dto.taskIds.map((relatedTaskId) => canonicalRelatedPair(taskId, relatedTaskId));
+    const result = await this.prisma
+      .$transaction(async (tx) => {
+        await this.assertBulkTasks(tenant.workspaceId, taskIds, tx);
+        const create = await tx.taskRelatedTask.createMany({
+          data: pairs.map((pair) => ({
+            workspaceId: tenant.workspaceId,
+            taskAId: pair.taskAId,
+            taskBId: pair.taskBId,
+            createdById: tenant.userId,
+          })),
+          skipDuplicates: true,
+        });
+        if (create.count > 0) {
+          await tx.auditLog.create({
+            data: {
+              agencyId: tenant.agencyId,
+              workspaceId: tenant.workspaceId,
+              userId: tenant.userId,
+              action: 'task.related_added',
+              entityType: 'Task',
+              entityId: taskId,
+              metadata: {
+                taskId,
+                requestedCount: dto.taskIds.length,
+                changedCount: create.count,
+                unchangedCount: dto.taskIds.length - create.count,
+                taskIds: dto.taskIds,
+              },
+            },
+          });
+        }
+        return bulkResult(dto.taskIds.length, create.count);
+      })
+      .catch(mapHierarchyWriteError);
+    return result;
+  }
+
+  async removeRelated(tenant: WorkspaceTenantContext, taskId: string, dto: TaskRelationshipIdsDto) {
+    if (dto.taskIds.includes(taskId))
+      throw new BadRequestException('Task cannot relate to itself.');
+    const taskIds = uniqueIds([taskId, ...dto.taskIds]);
+    await this.assertBulkTasks(tenant.workspaceId, taskIds);
+    const pairs = dto.taskIds.map((relatedTaskId) => canonicalRelatedPair(taskId, relatedTaskId));
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.assertBulkTasks(tenant.workspaceId, taskIds, tx);
+      const removed = await tx.taskRelatedTask.deleteMany({
+        where: {
+          workspaceId: tenant.workspaceId,
+          OR: pairs.map((pair) => ({ taskAId: pair.taskAId, taskBId: pair.taskBId })),
+        },
+      });
+      if (removed.count > 0) {
+        await tx.auditLog.create({
+          data: {
+            agencyId: tenant.agencyId,
+            workspaceId: tenant.workspaceId,
+            userId: tenant.userId,
+            action: 'task.related_removed',
+            entityType: 'Task',
+            entityId: taskId,
+            metadata: {
+              taskId,
+              requestedCount: dto.taskIds.length,
+              changedCount: removed.count,
+              unchangedCount: dto.taskIds.length - removed.count,
+              taskIds: dto.taskIds,
+            },
+          },
+        });
+      }
+      return bulkResult(dto.taskIds.length, removed.count);
+    });
+    return result;
+  }
+
   async update(tenant: WorkspaceTenantContext, taskId: string, dto: UpdateTaskDto) {
     const existing = await this.assertTask(tenant.workspaceId, taskId);
+    const changedFields = Object.entries(dto)
+      .filter(([, value]) => value !== undefined)
+      .map(([key]) => key);
+    if (
+      changedFields.length === 1 &&
+      dto.statusDefinitionId &&
+      dto.statusDefinitionId === existing.statusDefinitionId
+    ) {
+      return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId));
+    }
     const status = dto.statusDefinitionId
       ? await this.taskStatus(tenant.workspaceId, dto.statusDefinitionId)
       : null;
@@ -511,7 +779,7 @@ export class TasksService {
           : 'task.updated',
       entityType: 'Task',
       entityId: taskId,
-      metadata: { changed: Object.keys(dto) },
+      metadata: { changed: changedFields },
     });
     return serializeTaskDetail(task);
   }
@@ -838,6 +1106,16 @@ export class TasksService {
           'Parent tasks cannot become terminal while active descendants remain non-terminal.',
         );
       }
+      const dependencyBlocking = await nonTerminalBlockersOutsideSelection(
+        tx,
+        workspaceId,
+        selectedIds,
+      );
+      if (dependencyBlocking.length > 0) {
+        throw new ConflictException(
+          'Blocked tasks cannot become terminal while active blockers remain non-terminal.',
+        );
+      }
       return;
     }
     const blocking = await terminalAncestorsOutsideSelection(tx, workspaceId, selectedIds);
@@ -925,6 +1203,28 @@ const taskListSelect = {
   _count: { select: { assignees: true, followers: true, projects: true } },
 } satisfies Prisma.TaskSelect;
 
+const taskRelationshipSelect = {
+  id: true,
+  title: true,
+  priority: true,
+  dueAt: true,
+  statusDefinition: {
+    select: { id: true, name: true, color: true, category: true, isTerminal: true },
+  },
+  assignees: {
+    select: {
+      membership: {
+        select: {
+          id: true,
+          user: { select: { id: true, email: true, name: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 3,
+  },
+} satisfies Prisma.TaskSelect;
+
 const taskDetailSelect = {
   id: true,
   workspaceId: true,
@@ -995,10 +1295,23 @@ const taskDetailSelect = {
     select: { project: { select: { id: true, name: true, status: true } } },
     orderBy: { createdAt: 'asc' },
   },
-  _count: { select: { subtasks: { where: { deletedAt: null } } } },
+  _count: {
+    select: {
+      subtasks: { where: { deletedAt: null } },
+      blockedByDependencies: {
+        where: { blockerTask: { deletedAt: null }, blockedTask: { deletedAt: null } },
+      },
+      blockingDependencies: {
+        where: { blockerTask: { deletedAt: null }, blockedTask: { deletedAt: null } },
+      },
+      relatedTaskALinks: { where: { taskA: { deletedAt: null }, taskB: { deletedAt: null } } },
+      relatedTaskBLinks: { where: { taskA: { deletedAt: null }, taskB: { deletedAt: null } } },
+    },
+  },
 } satisfies Prisma.TaskSelect;
 
 type TaskListRecord = Prisma.TaskGetPayload<{ select: typeof taskListSelect }>;
+type TaskRelationshipRecord = Prisma.TaskGetPayload<{ select: typeof taskRelationshipSelect }>;
 type TaskDetailRecord = Prisma.TaskGetPayload<{ select: typeof taskDetailSelect }>;
 
 function serializeTaskListItem(task: TaskListRecord) {
@@ -1030,9 +1343,34 @@ function serializeTaskDetail(task: TaskDetailRecord) {
           }
         : null,
     directSubtaskCount: task._count.subtasks,
+    blockedByCount: task._count.blockedByDependencies,
+    blocksCount: task._count.blockingDependencies,
+    relatedTaskCount: task._count.relatedTaskALinks + task._count.relatedTaskBLinks,
     statusDefinition: undefined,
     parentTask: undefined,
     _count: undefined,
+  };
+}
+
+function serializeTaskRelationship(task: TaskRelationshipRecord) {
+  return {
+    ...task,
+    status: task.statusDefinition,
+    assignees: task.assignees.map((item) => item.membership),
+    statusDefinition: undefined,
+  };
+}
+
+function paginatedRelationship(
+  items: TaskRelationshipRecord[],
+  query: TaskQueryDto,
+  total: number,
+) {
+  return {
+    items: items.map(serializeTaskRelationship),
+    page: query.page,
+    pageSize: query.pageSize,
+    total,
   };
 }
 
@@ -1071,6 +1409,16 @@ function relationKey(taskId: string, membershipId: string) {
   return `${taskId}:${membershipId}`;
 }
 
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids)];
+}
+
+function canonicalRelatedPair(taskId: string, relatedTaskId: string) {
+  return taskId < relatedTaskId
+    ? { taskAId: taskId, taskBId: relatedTaskId }
+    : { taskAId: relatedTaskId, taskBId: taskId };
+}
+
 const serializableTransaction = {
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
 };
@@ -1080,7 +1428,7 @@ function mapHierarchyWriteError(error: unknown): never {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     (error.code === 'P2034' || error.meta?.code === '40001')
   ) {
-    throw new ConflictException('Task hierarchy changed concurrently. Retry the request.');
+    throw new ConflictException('Task relationship changed concurrently. Retry the request.');
   }
   throw error;
 }
@@ -1243,6 +1591,87 @@ async function subtreeHasNonTerminalTask(
     LIMIT 1
   `);
   return rows.length > 0;
+}
+
+async function nonTerminalBlockersOutsideSelection(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  selectedIds: string[],
+) {
+  if (selectedIds.length === 0) return [];
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    WITH selected(id) AS (
+      VALUES ${uuidValues(selectedIds)}
+    )
+    SELECT blocker.id
+    FROM task_dependencies dependency
+    JOIN selected ON selected.id = dependency.blocked_task_id
+    JOIN tasks blocked
+      ON blocked.id = dependency.blocked_task_id
+      AND blocked.workspace_id = ${workspaceId}::uuid
+      AND blocked.deleted_at IS NULL
+    JOIN tasks blocker
+      ON blocker.id = dependency.blocker_task_id
+      AND blocker.workspace_id = ${workspaceId}::uuid
+      AND blocker.deleted_at IS NULL
+    JOIN status_definitions status
+      ON status.id = blocker.status_definition_id
+      AND status.workspace_id = blocker.workspace_id
+      AND status.entity_type = 'TASK'::"StatusEntityType"
+    WHERE dependency.workspace_id = ${workspaceId}::uuid
+      AND status.is_terminal = false
+      AND NOT EXISTS (SELECT 1 FROM selected WHERE selected.id = blocker.id)
+    LIMIT 1
+  `);
+  return rows.map((row) => row.id);
+}
+
+async function assertDependencyGraphAcyclic(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  newEdges: { blockerTaskId: string; blockedTaskId: string }[],
+) {
+  if (newEdges.length === 0) return;
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    WITH RECURSIVE new_edges(blocker_task_id, blocked_task_id) AS (
+      VALUES ${Prisma.join(
+        newEdges.map(
+          (edge) => Prisma.sql`(${edge.blockerTaskId}::uuid, ${edge.blockedTaskId}::uuid)`,
+        ),
+      )}
+    ),
+    active_edges(blocker_task_id, blocked_task_id) AS (
+      SELECT dependency.blocker_task_id, dependency.blocked_task_id
+      FROM task_dependencies dependency
+      JOIN tasks blocker
+        ON blocker.id = dependency.blocker_task_id
+        AND blocker.workspace_id = ${workspaceId}::uuid
+        AND blocker.deleted_at IS NULL
+      JOIN tasks blocked
+        ON blocked.id = dependency.blocked_task_id
+        AND blocked.workspace_id = ${workspaceId}::uuid
+        AND blocked.deleted_at IS NULL
+      WHERE dependency.workspace_id = ${workspaceId}::uuid
+      UNION
+      SELECT blocker_task_id, blocked_task_id FROM new_edges
+    ),
+    paths(start_id, current_id, path, cycle) AS (
+      SELECT blocker_task_id, blocked_task_id, ARRAY[blocker_task_id, blocked_task_id], blocker_task_id = blocked_task_id
+      FROM active_edges
+      UNION ALL
+      SELECT paths.start_id, edge.blocked_task_id, paths.path || edge.blocked_task_id, edge.blocked_task_id = ANY(paths.path)
+      FROM paths
+      JOIN active_edges edge ON edge.blocker_task_id = paths.current_id
+      WHERE paths.cycle = false
+    )
+    SELECT current_id AS id
+    FROM paths
+    WHERE cycle = true
+    LIMIT 1
+  `);
+  if (rows.length > 0) {
+    throw new ConflictException('Task dependency cycles are not allowed.');
+  }
 }
 
 async function insertTaskAssigneeRows(

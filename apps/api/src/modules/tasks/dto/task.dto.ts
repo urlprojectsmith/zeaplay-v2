@@ -202,6 +202,16 @@ export class UpdateTaskParentDto {
   parentTaskId!: string | null;
 }
 
+export class TaskRelationshipIdsDto {
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 100 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  taskIds!: string[];
+}
+
 export class BulkTaskIdsDto {
   @ApiProperty({ type: [String], minItems: 1, maxItems: 100 })
   @IsArray()

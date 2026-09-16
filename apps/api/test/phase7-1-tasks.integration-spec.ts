@@ -1704,6 +1704,34 @@ describe('Phase 7.1 task core backend integration', () => {
     await expect(
       prisma.task.findUniqueOrThrow({ where: { id: root.body.data.id } }),
     ).resolves.toMatchObject({ updatedAt: beforeDetach.updatedAt });
+
+    const sameStatus = await createTask({ title: 'Idempotent status update' }).expect(201);
+    const beforeStatus = await prisma.task.findUniqueOrThrow({
+      where: { id: sameStatus.body.data.id },
+    });
+    const statusAuditCount = await prisma.auditLog.count({
+      where: { action: 'task.status_changed', entityId: sameStatus.body.data.id },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${sameStatus.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${sameStatus.body.data.id}`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: sameStatus.body.data.id } }),
+    ).resolves.toMatchObject({ updatedAt: beforeStatus.updatedAt });
+    await expect(
+      prisma.auditLog.count({
+        where: { action: 'task.status_changed', entityId: sameStatus.body.data.id },
+      }),
+    ).resolves.toBe(statusAuditCount);
   });
 
   it('enforces terminal parent and terminal ancestor status invariants deeply', async () => {
@@ -2102,6 +2130,710 @@ describe('Phase 7.1 task core backend integration', () => {
     expect((deleteAudit.metadata as { detachedChildCount?: number }).detachedChildCount).toBe(1);
   });
 
+  it('manages directed dependencies with pagination, idempotency, cycles, and completion rules', async () => {
+    const a = await createTask({ title: 'Dependency A' }).expect(201);
+    const b = await createTask({ title: 'Dependency B' }).expect(201);
+    const c = await createTask({ title: 'Dependency C' }).expect(201);
+    const d = await createTask({ title: 'Dependency D' }).expect(201);
+
+    await addBlockedBy(c.body.data.id, [a.body.data.id, b.body.data.id])
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({ requestedCount: 2, changedCount: 2 }),
+      );
+    const dependencyAddAuditCount = await prisma.auditLog.count({
+      where: { action: 'task.dependencies_added', entityId: c.body.data.id },
+    });
+    await addBlockedBy(c.body.data.id, [a.body.data.id])
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({ requestedCount: 1, changedCount: 0 }),
+      );
+    await expect(
+      prisma.auditLog.count({
+        where: { action: 'task.dependencies_added', entityId: c.body.data.id },
+      }),
+    ).resolves.toBe(dependencyAddAuditCount);
+
+    const blockedBy = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${c.body.data.id}/blocked-by?page=1&pageSize=1`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(blockedBy.body.data.total).toBe(2);
+    expect(blockedBy.body.data.items).toHaveLength(1);
+
+    await addBlockedBy(b.body.data.id, [a.body.data.id]).expect(201);
+    const blocks = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}/blocks`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(blocks.body.data.items.map((item: { id: string }) => item.id).sort()).toEqual(
+      [b.body.data.id, c.body.data.id].sort(),
+    );
+
+    await addBlockedBy(a.body.data.id, [c.body.data.id]).expect(409);
+    await addBlockedBy(d.body.data.id, [c.body.data.id]).expect(201);
+    await addBlockedBy(a.body.data.id, [d.body.data.id]).expect(409);
+    await expect(
+      prisma.taskDependency.count({
+        where: { blockerTaskId: d.body.data.id, blockedTaskId: a.body.data.id },
+      }),
+    ).resolves.toBe(0);
+    await addBlockedBy(a.body.data.id, [a.body.data.id]).expect(400);
+    await expect(
+      prisma.taskDependency.update({
+        where: {
+          blockerTaskId_blockedTaskId: {
+            blockerTaskId: a.body.data.id,
+            blockedTaskId: c.body.data.id,
+          },
+        },
+        data: { blockedTaskId: a.body.data.id },
+      }),
+    ).rejects.toThrow();
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${c.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [a.body.data.id, c.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [a.body.data.id, b.body.data.id, c.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: c.body.data.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: taskCompletedStatusId });
+
+    await removeBlockedBy(c.body.data.id, [a.body.data.id, b.body.data.id])
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(2));
+    await removeBlockedBy(c.body.data.id, [a.body.data.id])
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(0));
+  });
+
+  it('rejects invalid blockers for terminal tasks and combines hierarchy plus dependency validation', async () => {
+    const terminalBlocked = await createTask({
+      title: 'Terminal blocked task',
+      statusDefinitionId: taskCompletedStatusId,
+    }).expect(201);
+    const openBlocker = await createTask({ title: 'Open blocker for terminal task' }).expect(201);
+    const terminalBlocker = await createTask({
+      title: 'Terminal blocker for terminal task',
+      statusDefinitionId: taskCompletedStatusId,
+    }).expect(201);
+
+    await addBlockedBy(terminalBlocked.body.data.id, [openBlocker.body.data.id]).expect(409);
+    await expect(
+      prisma.taskDependency.count({
+        where: { blockedTaskId: terminalBlocked.body.data.id },
+      }),
+    ).resolves.toBe(0);
+    await addBlockedBy(terminalBlocked.body.data.id, [terminalBlocker.body.data.id]).expect(201);
+
+    const parent = await createTask({ title: 'Combined parent' }).expect(201);
+    const child = await createSubtask(parent.body.data.id, { title: 'Combined child' }).expect(201);
+    const blocker = await createTask({ title: 'Combined blocker' }).expect(201);
+    await addBlockedBy(parent.body.data.id, [blocker.body.data.id]).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${blocker.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+  });
+
+  it('keeps dependency rows historical across soft delete and ignores deleted blockers', async () => {
+    const blocker = await createTask({ title: 'Deleted dependency blocker' }).expect(201);
+    const blocked = await createTask({ title: 'Deleted dependency blocked' }).expect(201);
+    const deletedBlocked = await createTask({ title: 'Deleted blocked dependency target' }).expect(
+      201,
+    );
+    await addBlockedBy(blocked.body.data.id, [blocker.body.data.id]).expect(201);
+    await addBlockedBy(deletedBlocked.body.data.id, [blocker.body.data.id]).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${blocker.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await expect(
+      prisma.taskDependency.count({ where: { blockedTaskId: blocked.body.data.id } }),
+    ).resolves.toBe(1);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${blocked.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${blocked.body.data.id}/blocked-by`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+
+    const activeBlocker = await createTask({ title: 'Active blocker for deleted blocked' }).expect(
+      201,
+    );
+    await addBlockedBy(deletedBlocked.body.data.id, [activeBlocker.body.data.id]).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deletedBlocked.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${activeBlocker.body.data.id}/blocks`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+  });
+
+  it('manages symmetric related tasks canonically with tenant, RBAC, delete history, and audits', async () => {
+    const a = await createTask({ title: 'Related A' }).expect(201);
+    const b = await createTask({ title: 'Related B' }).expect(201);
+    const c = await createTask({ title: 'Related C' }).expect(201);
+    const foreign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Foreign related',
+    }).expect(201);
+
+    await addRelated(a.body.data.id, [b.body.data.id, c.body.data.id])
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(2));
+    const relatedAddAuditCount = await prisma.auditLog.count({
+      where: { action: 'task.related_added', entityId: a.body.data.id },
+    });
+    await addRelated(b.body.data.id, [a.body.data.id])
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(0));
+    await expect(
+      prisma.auditLog.count({ where: { action: 'task.related_added', entityId: a.body.data.id } }),
+    ).resolves.toBe(relatedAddAuditCount);
+    await expect(
+      prisma.taskRelatedTask.count({
+        where: {
+          OR: [
+            { taskAId: a.body.data.id, taskBId: b.body.data.id },
+            { taskAId: b.body.data.id, taskBId: a.body.data.id },
+          ],
+        },
+      }),
+    ).resolves.toBe(1);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${b.body.data.id}/related`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).toContain(
+          a.body.data.id,
+        ),
+      );
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await addRelated(a.body.data.id, [a.body.data.id]).expect(400);
+    const dbCheckCreator = (
+      await prisma.task.findUniqueOrThrow({
+        where: { id: a.body.data.id },
+        select: { createdById: true },
+      })
+    ).createdById;
+    await expect(
+      prisma.taskRelatedTask.create({
+        data: {
+          workspaceId: workspaceA1,
+          taskAId: a.body.data.id,
+          taskBId: a.body.data.id,
+          createdById: dbCheckCreator,
+        },
+      }),
+    ).rejects.toThrow();
+    const canonicalX = await createTask({ title: 'Canonical DB X' }).expect(201);
+    const canonicalY = await createTask({ title: 'Canonical DB Y' }).expect(201);
+    const [higherTaskId, lowerTaskId] =
+      canonicalX.body.data.id > canonicalY.body.data.id
+        ? [canonicalX.body.data.id, canonicalY.body.data.id]
+        : [canonicalY.body.data.id, canonicalX.body.data.id];
+    await expect(
+      prisma.taskRelatedTask.create({
+        data: {
+          workspaceId: workspaceA1,
+          taskAId: higherTaskId,
+          taskBId: lowerTaskId,
+          createdById: dbCheckCreator,
+        },
+      }),
+    ).rejects.toThrow();
+    await addRelated(a.body.data.id, [foreign.body.data.id]).expect(404);
+    await addRelated(a.body.data.id, [b.body.data.id], createOnlyToken).expect(403);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}/related`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${c.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await expect(
+      prisma.taskRelatedTask.count({
+        where: { OR: [{ taskAId: c.body.data.id }, { taskBId: c.body.data.id }] },
+      }),
+    ).resolves.toBe(1);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}/related`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).not.toContain(
+          c.body.data.id,
+        ),
+      );
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.relatedTaskCount).toBe(1));
+
+    await removeRelated(a.body.data.id, [b.body.data.id])
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(1));
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'task.related_added', entityId: a.body.data.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit).toMatchObject({ agencyId: agencyA, workspaceId: workspaceA1 });
+    expect((audit.metadata as { changedCount?: number }).changedCount).toBe(2);
+  });
+
+  it('rejects dependency and related tenant attacks without success audit', async () => {
+    const base = await createTask({ title: 'Relationship tenant base' }).expect(201);
+    const foreign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Relationship foreign workspace',
+    }).expect(201);
+    const crossAgency = await createTaskInWorkspace(workspaceB1, agencyB, ownerBToken, {
+      title: 'Relationship cross agency',
+    }).expect(201);
+    const deleted = await createTask({ title: 'Relationship deleted target' }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deleted.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    for (const targetId of [
+      foreign.body.data.id,
+      crossAgency.body.data.id,
+      randomUUID(),
+      deleted.body.data.id,
+    ]) {
+      await addBlockedBy(base.body.data.id, [targetId]).expect(404);
+      await addRelated(base.body.data.id, [targetId]).expect(404);
+    }
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${base.body.data.id}/blocked-by`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ taskIds: [base.body.data.id] })
+      .expect(403);
+    await expect(
+      prisma.auditLog.count({
+        where: {
+          action: { in: ['task.dependencies_added', 'task.related_added'] },
+          entityId: base.body.data.id,
+        },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it('keeps concurrent dependency and related writes safe', async () => {
+    const a = await createTask({ title: 'Concurrent dependency A' }).expect(201);
+    const b = await createTask({ title: 'Concurrent dependency B' }).expect(201);
+    const reciprocal = await Promise.all([
+      addBlockedBy(b.body.data.id, [a.body.data.id]),
+      addBlockedBy(a.body.data.id, [b.body.data.id]),
+    ]);
+    expect(reciprocal.every((response) => [201, 409].includes(response.status))).toBe(true);
+    await expectDependencyAcyclic([a.body.data.id, b.body.data.id]);
+
+    const related = await Promise.all([
+      addRelated(a.body.data.id, [b.body.data.id]),
+      addRelated(b.body.data.id, [a.body.data.id]),
+    ]);
+    expect(related.every((response) => response.status === 201)).toBe(true);
+    await expect(
+      prisma.taskRelatedTask.count({
+        where: {
+          OR: [
+            { taskAId: a.body.data.id, taskBId: b.body.data.id },
+            { taskAId: b.body.data.id, taskBId: a.body.data.id },
+          ],
+        },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('keeps relationship DB fences and graph semantics independent', async () => {
+    const parent = await createTask({ title: 'Independent graph parent' }).expect(201);
+    const child = await createSubtask(parent.body.data.id, {
+      title: 'Independent graph child',
+    }).expect(201);
+    const foreign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Independent graph foreign',
+    }).expect(201);
+    const creatorId = (
+      await prisma.task.findUniqueOrThrow({
+        where: { id: parent.body.data.id },
+        select: { createdById: true },
+      })
+    ).createdById;
+
+    await expect(
+      prisma.taskDependency.create({
+        data: {
+          workspaceId: workspaceA1,
+          blockerTaskId: foreign.body.data.id,
+          blockedTaskId: parent.body.data.id,
+          createdById: creatorId,
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.taskRelatedTask.create({
+        data: {
+          workspaceId: workspaceA1,
+          taskAId: parent.body.data.id,
+          taskBId: foreign.body.data.id,
+          createdById: creatorId,
+        },
+      }),
+    ).rejects.toThrow();
+
+    await addBlockedBy(parent.body.data.id, [child.body.data.id]).expect(201);
+    await addRelated(parent.body.data.id, [child.body.data.id]).expect(201);
+    await expectNoCycle([parent.body.data.id, child.body.data.id]);
+    await expectDependencyAcyclic([parent.body.data.id, child.body.data.id]);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+
+    const relatedOnly = await createTask({ title: 'Related informational source' }).expect(201);
+    const relatedTarget = await createTask({ title: 'Related informational target' }).expect(201);
+    await addRelated(relatedOnly.body.data.id, [relatedTarget.body.data.id]).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${relatedOnly.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+  });
+
+  it('validates combined hierarchy and dependency bulk status transitions atomically', async () => {
+    const p = await createTask({ title: 'Deep combined parent' }).expect(201);
+    const a = await createSubtask(p.body.data.id, { title: 'Deep combined child' }).expect(201);
+    const b = await createSubtask(a.body.data.id, { title: 'Deep combined grandchild' }).expect(
+      201,
+    );
+    const x = await createTask({ title: 'Deep combined blocker P' }).expect(201);
+    const y = await createTask({ title: 'Deep combined blocker A' }).expect(201);
+    await addBlockedBy(p.body.data.id, [x.body.data.id]).expect(201);
+    await addBlockedBy(a.body.data.id, [y.body.data.id]).expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [p.body.data.id, a.body.data.id, b.body.data.id, y.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(409);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: p.body.data.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: taskDefaultStatusId });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [p.body.data.id, a.body.data.id, x.body.data.id, y.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(409);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: a.body.data.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: taskDefaultStatusId });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [p.body.data.id, a.body.data.id, b.body.data.id, x.body.data.id, y.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(200);
+  });
+
+  it('preserves graph history while active reads and counts ignore deleted endpoints', async () => {
+    const p = await createTask({ title: 'Delete graph parent' }).expect(201);
+    const a = await createSubtask(p.body.data.id, { title: 'Delete graph child' }).expect(201);
+    const b = await createSubtask(a.body.data.id, { title: 'Delete graph grandchild' }).expect(201);
+    const x = await createTask({ title: 'Delete graph blocker' }).expect(201);
+    const y = await createTask({ title: 'Delete graph blocked' }).expect(201);
+    const z = await createTask({ title: 'Delete graph related' }).expect(201);
+    await addBlockedBy(p.body.data.id, [x.body.data.id]).expect(201);
+    await addBlockedBy(y.body.data.id, [a.body.data.id]).expect(201);
+    await addRelated(p.body.data.id, [z.body.data.id]).expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${p.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${p.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: a.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: b.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: a.body.data.id, deletedAt: null });
+    await expect(
+      prisma.taskDependency.count({
+        where: {
+          OR: [
+            { blockerTaskId: x.body.data.id, blockedTaskId: p.body.data.id },
+            { blockerTaskId: a.body.data.id, blockedTaskId: y.body.data.id },
+          ],
+        },
+      }),
+    ).resolves.toBe(2);
+    await expect(
+      prisma.taskRelatedTask.count({
+        where: { OR: [{ taskAId: p.body.data.id }, { taskBId: p.body.data.id }] },
+      }),
+    ).resolves.toBe(1);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${x.body.data.id}/blocks`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${z.body.data.id}/related`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${y.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.blockedByCount).toBe(1));
+  });
+
+  it('keeps status and relationship races from committing invalid graph states', async () => {
+    const blocker = await createTask({ title: 'Race blocker' }).expect(201);
+    const blocked = await createTask({ title: 'Race blocked' }).expect(201);
+    const dependencyRace = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${blocked.body.data.id}/status`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskCompletedStatusId }),
+      addBlockedBy(blocked.body.data.id, [blocker.body.data.id]),
+    ]);
+    expect(dependencyRace.filter((response) => response.status === 409)).toHaveLength(1);
+    expect(dependencyRace.filter((response) => [200, 201].includes(response.status))).toHaveLength(
+      1,
+    );
+    const blockedAfterRace = await prisma.task.findUniqueOrThrow({
+      where: { id: blocked.body.data.id },
+      select: { statusDefinition: { select: { isTerminal: true } } },
+    });
+    const activeBlockers = await prisma.taskDependency.count({
+      where: {
+        blockedTaskId: blocked.body.data.id,
+        blockerTask: { deletedAt: null, statusDefinition: { isTerminal: false } },
+      },
+    });
+    expect(blockedAfterRace.statusDefinition.isTerminal && activeBlockers > 0).toBe(false);
+
+    const parent = await createTask({ title: 'Race parent' }).expect(201);
+    const childRace = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskCompletedStatusId }),
+      createSubtask(parent.body.data.id, { title: 'Race child' }),
+    ]);
+    expect(childRace.filter((response) => response.status === 409)).toHaveLength(1);
+    expect(childRace.filter((response) => [200, 201].includes(response.status))).toHaveLength(1);
+    await expectNoTerminalParentWithOpenDescendant(parent.body.data.id);
+
+    const reparentTarget = await createTask({ title: 'Race reparent target' }).expect(201);
+    const movingRoot = await createTask({ title: 'Race moving root' }).expect(201);
+    await createSubtask(movingRoot.body.data.id, { title: 'Race moving child' }).expect(201);
+    const reparentRace = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${reparentTarget.body.data.id}/status`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskCompletedStatusId }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${movingRoot.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId: reparentTarget.body.data.id }),
+    ]);
+    expect(reparentRace.filter((response) => response.status === 409)).toHaveLength(1);
+    expect(reparentRace.filter((response) => response.status === 200)).toHaveLength(1);
+    await expectNoTerminalParentWithOpenDescendant(reparentTarget.body.data.id);
+  });
+
+  it('bounds graph mutation inputs, read pagination, and all-tasks graph hydration', async () => {
+    const base = await createTask({ title: 'Bounded graph base' }).expect(201);
+    const creatorId = (
+      await prisma.task.findUniqueOrThrow({
+        where: { id: base.body.data.id },
+        select: { createdById: true },
+      })
+    ).createdById;
+    await addBlockedBy(base.body.data.id, []).expect(422);
+    await addRelated(base.body.data.id, []).expect(422);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${base.body.data.id}/blocked-by?page=0`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(422);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${base.body.data.id}/related?pageSize=101`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(422);
+
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+      workspaceId: workspaceA1,
+      title: `Bounded graph blocker ${index.toString().padStart(3, '0')}`,
+      statusDefinitionId: taskDefaultStatusId,
+      createdById: creatorId,
+    }));
+    await prisma.task.createMany({ data: rows });
+    const blockers = await prisma.task.findMany({
+      where: { workspaceId: workspaceA1, title: { startsWith: 'Bounded graph blocker ' } },
+      select: { id: true },
+      orderBy: { title: 'asc' },
+    });
+    expect(blockers).toHaveLength(101);
+    await addBlockedBy(
+      base.body.data.id,
+      blockers.slice(0, 100).map((task) => task.id),
+    )
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(100));
+    await addRelated(
+      base.body.data.id,
+      blockers.slice(0, 100).map((task) => task.id),
+    )
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(100));
+    await addBlockedBy(
+      base.body.data.id,
+      blockers.map((task) => task.id),
+    ).expect(422);
+    await addRelated(
+      base.body.data.id,
+      blockers.map((task) => task.id),
+    ).expect(422);
+
+    const listed = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?page=1&pageSize=1`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(listed.body.data.items[0]).not.toHaveProperty('blockedByCount');
+    expect(listed.body.data.items[0]).not.toHaveProperty('blocksCount');
+    expect(listed.body.data.items[0]).not.toHaveProperty('relatedTaskCount');
+    expect(listed.body.data.items[0].counts).not.toHaveProperty('subtasks');
+    expect(listed.body.data.items[0].counts).not.toHaveProperty('blockedByDependencies');
+  });
+
   it('retains historical project and department links after later archive or deactivation', async () => {
     const created = await createTask({
       title: 'Historical relation task',
@@ -2166,6 +2898,38 @@ describe('Phase 7.1 task core backend integration', () => {
       .send(body);
   }
 
+  function addBlockedBy(taskId: string, taskIds: string[], token = updateOnlyToken) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/blocked-by`)
+      .set(auth(token))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds });
+  }
+
+  function removeBlockedBy(taskId: string, taskIds: string[], token = updateOnlyToken) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/blocked-by/remove`)
+      .set(auth(token))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds });
+  }
+
+  function addRelated(taskId: string, taskIds: string[], token = updateOnlyToken) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/related`)
+      .set(auth(token))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds });
+  }
+
+  function removeRelated(taskId: string, taskIds: string[], token = updateOnlyToken) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/related/remove`)
+      .set(auth(token))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds });
+  }
+
   function createTaskInWorkspace(
     workspaceId: string,
     agencyId: string,
@@ -2207,6 +2971,73 @@ describe('Phase 7.1 task core backend integration', () => {
         cursor = parentById.get(cursor);
       }
     }
+  }
+
+  async function expectDependencyAcyclic(taskIds: string[]) {
+    const dependencies = await prisma.taskDependency.findMany({
+      where: { blockerTaskId: { in: taskIds }, blockedTaskId: { in: taskIds } },
+      select: { blockerTaskId: true, blockedTaskId: true },
+    });
+    const blockedByBlocker = new Map<string, string[]>();
+    for (const dependency of dependencies) {
+      const existing = blockedByBlocker.get(dependency.blockerTaskId) ?? [];
+      existing.push(dependency.blockedTaskId);
+      blockedByBlocker.set(dependency.blockerTaskId, existing);
+    }
+    for (const taskId of taskIds) {
+      const stack = [{ id: taskId, path: new Set<string>() }];
+      while (stack.length > 0) {
+        const current = stack.pop();
+        if (!current) continue;
+        expect(current.path.has(current.id)).toBe(false);
+        const path = new Set(current.path);
+        path.add(current.id);
+        for (const next of blockedByBlocker.get(current.id) ?? []) {
+          stack.push({ id: next, path });
+        }
+      }
+    }
+  }
+
+  async function expectNoTerminalParentWithOpenDescendant(rootTaskId: string) {
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+      WITH RECURSIVE descendants(id, path) AS (
+        SELECT child.id, ARRAY[child.id]
+        FROM tasks child
+        WHERE child.parent_task_id = ${rootTaskId}::uuid
+          AND child.workspace_id = ${workspaceA1}::uuid
+          AND child.deleted_at IS NULL
+        UNION ALL
+        SELECT child.id, descendants.path || child.id
+        FROM tasks child
+        JOIN descendants ON child.parent_task_id = descendants.id
+        WHERE child.workspace_id = ${workspaceA1}::uuid
+          AND child.deleted_at IS NULL
+          AND NOT child.id = ANY(descendants.path)
+      )
+      SELECT child.id
+      FROM tasks parent
+      JOIN status_definitions parent_status
+        ON parent_status.id = parent.status_definition_id
+        AND parent_status.workspace_id = parent.workspace_id
+        AND parent_status.entity_type = 'TASK'::"StatusEntityType"
+      JOIN descendants child ON true
+      JOIN tasks child_task
+        ON child_task.id = child.id
+        AND child_task.workspace_id = parent.workspace_id
+        AND child_task.deleted_at IS NULL
+      JOIN status_definitions child_status
+        ON child_status.id = child_task.status_definition_id
+        AND child_status.workspace_id = child_task.workspace_id
+        AND child_status.entity_type = 'TASK'::"StatusEntityType"
+      WHERE parent.id = ${rootTaskId}::uuid
+        AND parent.workspace_id = ${workspaceA1}::uuid
+        AND parent.deleted_at IS NULL
+        AND parent_status.is_terminal = true
+        AND child_status.is_terminal = false
+      LIMIT 1
+    `;
+    expect(rows).toHaveLength(0);
   }
 
   async function seedFixtures() {
@@ -2423,6 +3254,8 @@ describe('Phase 7.1 task core backend integration', () => {
 
 async function resetDatabase() {
   await prisma.$transaction([
+    prisma.taskRelatedTask.deleteMany(),
+    prisma.taskDependency.deleteMany(),
     prisma.taskAssignee.deleteMany(),
     prisma.taskFollower.deleteMany(),
     prisma.taskProject.deleteMany(),

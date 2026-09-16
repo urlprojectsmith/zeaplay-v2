@@ -32,6 +32,7 @@ import {
   ReplaceTaskProjectsDto,
   TaskParamsDto,
   TaskQueryDto,
+  TaskRelationshipIdsDto,
   UpdateTaskDto,
   UpdateTaskParentDto,
   UpdateTaskStatusDto,
@@ -132,6 +133,76 @@ export class TasksController {
     @Body() dto: UpdateTaskParentDto,
   ) {
     return this.tasks.updateParent(tenant, params.taskId, dto.parentTaskId ?? null);
+  }
+
+  @Get(':taskId/blocked-by')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listBlockedBy(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listBlockedBy(tenant, params.taskId, query);
+  }
+
+  @Post(':taskId/blocked-by')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  addBlockedBy(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskRelationshipIdsDto,
+  ) {
+    return this.tasks.addBlockedBy(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/blocked-by/remove')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  removeBlockedBy(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskRelationshipIdsDto,
+  ) {
+    return this.tasks.removeBlockedBy(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/blocks')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listBlocks(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listBlocks(tenant, params.taskId, query);
+  }
+
+  @Get(':taskId/related')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listRelated(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listRelated(tenant, params.taskId, query);
+  }
+
+  @Post(':taskId/related')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  addRelated(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskRelationshipIdsDto,
+  ) {
+    return this.tasks.addRelated(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/related/remove')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  removeRelated(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskRelationshipIdsDto,
+  ) {
+    return this.tasks.removeRelated(tenant, params.taskId, dto);
   }
 
   @Get(':taskId')

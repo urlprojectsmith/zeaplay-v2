@@ -113,30 +113,32 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  memberships   Membership[]
-  agencyMemberships AgencyMembership[]
-  workspaceMemberships WorkspaceMembership[]
-  refreshTokens RefreshToken[]
-  projects      Project[]      @relation("ProjectCreator")
-  tasksCreated  Task[]         @relation("TaskCreator")
-  tasksUpdated  Task[]         @relation("TaskUpdater")
-  assets        Asset[]
-  auditLogs     AuditLog[]
-  agenciesCreated Agency[] @relation("AgencyCreator")
-  workspacesCreated Workspace[] @relation("WorkspaceCreator")
+  memberships             Membership[]
+  agencyMemberships       AgencyMembership[]
+  workspaceMemberships    WorkspaceMembership[]
+  refreshTokens           RefreshToken[]
+  projects                Project[]             @relation("ProjectCreator")
+  tasksCreated            Task[]                @relation("TaskCreator")
+  tasksUpdated            Task[]                @relation("TaskUpdater")
+  taskDependenciesCreated TaskDependency[]      @relation("TaskDependencyCreator")
+  taskRelatedLinksCreated TaskRelatedTask[]     @relation("TaskRelatedTaskCreator")
+  assets                  Asset[]
+  auditLogs               AuditLog[]
+  agenciesCreated         Agency[]              @relation("AgencyCreator")
+  workspacesCreated       Workspace[]           @relation("WorkspaceCreator")
 
   @@map("users")
 }
 
 model Organization {
-  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String             @db.VarChar(160)
-  slug      String             @unique @db.VarChar(120)
-  status    OrganizationStatus @default(ACTIVE)
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String             @db.VarChar(160)
+  slug              String             @unique @db.VarChar(120)
+  status            OrganizationStatus @default(ACTIVE)
   storageUsedBytes  BigInt             @default(0) @map("storage_used_bytes")
   storageLimitBytes BigInt             @default(1073741824) @map("storage_limit_bytes")
-  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships Membership[]
   auditLogs   AuditLog[]
@@ -153,11 +155,11 @@ model Agency {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  createdBy User @relation("AgencyCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  memberships AgencyMembership[]
-  workspaces  Workspace[]
+  createdBy           User                 @relation("AgencyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships         AgencyMembership[]
+  workspaces          Workspace[]
   featureEntitlements FeatureEntitlement[]
-  auditLogs   AuditLog[]
+  auditLogs           AuditLog[]
 
   @@index([status])
   @@index([createdById])
@@ -176,20 +178,22 @@ model Workspace {
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  agency       Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  createdBy    User   @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  memberships  WorkspaceMembership[]
-  departments  Department[]
-  statusDefinitions StatusDefinition[]
-  projects     Project[]
-  tasks        Task[]
-  taskAssignees TaskAssignee[]
-  taskFollowers TaskFollower[]
-  taskProjects TaskProject[]
-  assets       Asset[]
-  processingJobs ProcessingJob[]
+  agency              Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy           User                  @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships         WorkspaceMembership[]
+  departments         Department[]
+  statusDefinitions   StatusDefinition[]
+  projects            Project[]
+  tasks               Task[]
+  taskAssignees       TaskAssignee[]
+  taskFollowers       TaskFollower[]
+  taskProjects        TaskProject[]
+  taskDependencies    TaskDependency[]
+  taskRelatedTasks    TaskRelatedTask[]
+  assets              Asset[]
+  processingJobs      ProcessingJob[]
   featureEntitlements FeatureEntitlement[]
-  auditLogs    AuditLog[]
+  auditLogs           AuditLog[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -199,19 +203,19 @@ model Workspace {
 }
 
 model Department {
-  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String           @map("workspace_id") @db.Uuid
-  name        String           @db.VarChar(160)
-  description String?          @db.VarChar(500)
-  status      DepartmentStatus @default(ACTIVE)
-  managerMembershipId String?  @map("manager_membership_id") @db.Uuid
-  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String           @map("workspace_id") @db.Uuid
+  name                String           @db.VarChar(160)
+  description         String?          @db.VarChar(500)
+  status              DepartmentStatus @default(ACTIVE)
+  managerMembershipId String?          @map("manager_membership_id") @db.Uuid
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  managerMembership WorkspaceMembership? @relation("DepartmentManager", fields: [managerMembershipId], references: [id], onDelete: SetNull)
-  members WorkspaceMembership[] @relation("DepartmentMembers")
-  tasks Task[]
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  managerMembership WorkspaceMembership?  @relation("DepartmentManager", fields: [managerMembershipId], references: [id], onDelete: SetNull)
+  members           WorkspaceMembership[] @relation("DepartmentMembers")
+  tasks             Task[]
 
   @@unique([workspaceId, name])
   @@unique([id, workspaceId])
@@ -259,22 +263,22 @@ model AgencyMembership {
 }
 
 model WorkspaceMembership {
-  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String           @map("user_id") @db.Uuid
-  workspaceId String           @map("workspace_id") @db.Uuid
-  roleId      String           @map("role_id") @db.Uuid
-  departmentId String?         @map("department_id") @db.Uuid
-  status      MembershipStatus @default(ACTIVE)
-  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String           @map("user_id") @db.Uuid
+  workspaceId  String           @map("workspace_id") @db.Uuid
+  roleId       String           @map("role_id") @db.Uuid
+  departmentId String?          @map("department_id") @db.Uuid
+  status       MembershipStatus @default(ACTIVE)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  role      Role      @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  department Department? @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  managedDepartments Department[] @relation("DepartmentManager")
-  assignedTasks TaskAssignee[]
-  followedTasks TaskFollower[]
+  user               User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  role               Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  department         Department?    @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  managedDepartments Department[]   @relation("DepartmentManager")
+  assignedTasks      TaskAssignee[]
+  followedTasks      TaskFollower[]
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -287,27 +291,27 @@ model WorkspaceMembership {
 }
 
 model Role {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key         String   @unique @db.VarChar(120)
-  name        String   @db.VarChar(80)
-  nameNormalized String? @map("name_normalized") @db.VarChar(80)
-  scope       RoleScope @default(WORKSPACE)
-  isSystem    Boolean  @default(true) @map("is_system")
-  isActive    Boolean  @default(true) @map("is_active")
-  workspaceId String?  @map("workspace_id") @db.Uuid
-  description String?  @db.VarChar(240)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key            String    @unique @db.VarChar(120)
+  name           String    @db.VarChar(80)
+  nameNormalized String?   @map("name_normalized") @db.VarChar(80)
+  scope          RoleScope @default(WORKSPACE)
+  isSystem       Boolean   @default(true) @map("is_system")
+  isActive       Boolean   @default(true) @map("is_active")
+  workspaceId    String?   @map("workspace_id") @db.Uuid
+  description    String?   @db.VarChar(240)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  memberships     Membership[]
-  agencyMemberships AgencyMembership[]
+  memberships          Membership[]
+  agencyMemberships    AgencyMembership[]
   workspaceMemberships WorkspaceMembership[]
-  rolePermissions RolePermission[]
+  rolePermissions      RolePermission[]
 
+  @@unique([workspaceId, nameNormalized])
   @@index([scope])
   @@index([workspaceId])
   @@index([workspaceId, isActive])
-  @@unique([workspaceId, nameNormalized])
   @@map("roles")
 }
 
@@ -361,15 +365,15 @@ model StatusDefinition {
 }
 
 model RefreshToken {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  tokenHash  String    @unique @map("token_hash")
-  csrfTokenHash String @map("csrf_token_hash")
-  familyId   String    @map("family_id") @db.Uuid
-  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
-  replacedBy String?   @map("replaced_by") @db.Uuid
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  tokenHash     String    @unique @map("token_hash")
+  csrfTokenHash String    @map("csrf_token_hash")
+  familyId      String    @map("family_id") @db.Uuid
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedBy    String?   @map("replaced_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -379,29 +383,29 @@ model RefreshToken {
 }
 
 model Project {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId    String        @map("workspace_id") @db.Uuid
-  name           String        @db.VarChar(160)
-  description    String?       @db.VarChar(1000)
-  status         ProjectStatus @default(DRAFT)
-  statusDefinitionId String?   @map("status_definition_id") @db.Uuid
-  createdById    String        @map("created_by_id") @db.Uuid
-  archivedAt     DateTime?     @map("archived_at") @db.Timestamptz(6)
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String        @map("workspace_id") @db.Uuid
+  name               String        @db.VarChar(160)
+  description        String?       @db.VarChar(1000)
+  status             ProjectStatus @default(DRAFT)
+  statusDefinitionId String?       @map("status_definition_id") @db.Uuid
+  createdById        String        @map("created_by_id") @db.Uuid
+  archivedAt         DateTime?     @map("archived_at") @db.Timestamptz(6)
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   statusDefinition StatusDefinition? @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdBy    User         @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  assets       Asset[]
-  processingJobs ProcessingJob[]
-  taskLinks    TaskProject[]
+  createdBy        User              @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assets           Asset[]
+  processingJobs   ProcessingJob[]
+  taskLinks        TaskProject[]
 
+  @@unique([id, workspaceId])
   @@index([workspaceId])
   @@index([workspaceId, status])
   @@index([workspaceId, statusDefinitionId])
   @@index([workspaceId, createdAt])
-  @@unique([id, workspaceId])
   @@map("projects")
 }
 
@@ -422,16 +426,20 @@ model Task {
   createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  statusDefinition StatusDefinition @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  parentTask       Task?            @relation("TaskHierarchy", fields: [parentTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  subtasks         Task[]           @relation("TaskHierarchy")
-  department       Department?      @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdBy        User            @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy        User?           @relation("TaskUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
-  assignees        TaskAssignee[]
-  followers        TaskFollower[]
-  projects         TaskProject[]
+  workspace             Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition      StatusDefinition  @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  parentTask            Task?             @relation("TaskHierarchy", fields: [parentTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  subtasks              Task[]            @relation("TaskHierarchy")
+  department            Department?       @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy             User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy             User?             @relation("TaskUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  assignees             TaskAssignee[]
+  followers             TaskFollower[]
+  projects              TaskProject[]
+  blockingDependencies  TaskDependency[]  @relation("TaskDependencyBlocker")
+  blockedByDependencies TaskDependency[]  @relation("TaskDependencyBlocked")
+  relatedTaskALinks     TaskRelatedTask[] @relation("TaskRelatedTaskA")
+  relatedTaskBLinks     TaskRelatedTask[] @relation("TaskRelatedTaskB")
 
   @@unique([id, workspaceId])
   @@index([workspaceId, statusDefinitionId, createdAt])
@@ -442,6 +450,42 @@ model Task {
   @@index([workspaceId, createdAt])
   @@index([workspaceId, createdById])
   @@map("tasks")
+}
+
+model TaskDependency {
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  blockerTaskId String   @map("blocker_task_id") @db.Uuid
+  blockedTaskId String   @map("blocked_task_id") @db.Uuid
+  createdById   String   @map("created_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  blockerTask Task      @relation("TaskDependencyBlocker", fields: [blockerTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  blockedTask Task      @relation("TaskDependencyBlocked", fields: [blockedTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy   User      @relation("TaskDependencyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@id([blockerTaskId, blockedTaskId])
+  @@index([workspaceId, blockerTaskId, createdAt])
+  @@index([workspaceId, blockedTaskId, createdAt])
+  @@map("task_dependencies")
+}
+
+model TaskRelatedTask {
+  workspaceId String   @map("workspace_id") @db.Uuid
+  taskAId     String   @map("task_a_id") @db.Uuid
+  taskBId     String   @map("task_b_id") @db.Uuid
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  taskA     Task      @relation("TaskRelatedTaskA", fields: [taskAId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  taskB     Task      @relation("TaskRelatedTaskB", fields: [taskBId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy User      @relation("TaskRelatedTaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@id([taskAId, taskBId])
+  @@index([workspaceId, taskAId, createdAt])
+  @@index([workspaceId, taskBId, createdAt])
+  @@map("task_related_tasks")
 }
 
 model TaskAssignee {
@@ -524,25 +568,25 @@ model Asset {
 }
 
 model ProcessingJob {
-  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId    String              @map("workspace_id") @db.Uuid
-  projectId      String              @map("project_id") @db.Uuid
-  assetId        String              @map("asset_id") @db.Uuid
-  type           String              @db.VarChar(80)
-  status         ProcessingJobStatus @default(QUEUED)
-  attempts       Int                 @default(0)
-  progress       Int                 @default(0)
-  errorCode      String?             @map("error_code") @db.VarChar(80)
-  errorMessage   String?             @map("error_message") @db.VarChar(512)
-  correlationId  String              @map("correlation_id") @db.VarChar(120)
-  startedAt      DateTime?           @map("started_at") @db.Timestamptz(6)
-  completedAt    DateTime?           @map("completed_at") @db.Timestamptz(6)
-  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String              @map("workspace_id") @db.Uuid
+  projectId     String              @map("project_id") @db.Uuid
+  assetId       String              @map("asset_id") @db.Uuid
+  type          String              @db.VarChar(80)
+  status        ProcessingJobStatus @default(QUEUED)
+  attempts      Int                 @default(0)
+  progress      Int                 @default(0)
+  errorCode     String?             @map("error_code") @db.VarChar(80)
+  errorMessage  String?             @map("error_message") @db.VarChar(512)
+  correlationId String              @map("correlation_id") @db.VarChar(120)
+  startedAt     DateTime?           @map("started_at") @db.Timestamptz(6)
+  completedAt   DateTime?           @map("completed_at") @db.Timestamptz(6)
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  project      Project      @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  asset        Asset        @relation(fields: [assetId, projectId, workspaceId], references: [id, projectId, workspaceId], onDelete: Restrict)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project   Project   @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  asset     Asset     @relation(fields: [assetId, projectId, workspaceId], references: [id, projectId, workspaceId], onDelete: Restrict)
 
   @@unique([assetId, type])
   @@index([workspaceId, projectId])
@@ -552,13 +596,13 @@ model ProcessingJob {
 }
 
 model FeatureDefinition {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key         String   @unique @db.VarChar(120)
-  name        String   @db.VarChar(160)
-  description String?  @db.VarChar(240)
-  enabledByDefault Boolean @default(false) @map("enabled_by_default")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key              String   @unique @db.VarChar(120)
+  name             String   @db.VarChar(160)
+  description      String?  @db.VarChar(240)
+  enabledByDefault Boolean  @default(false) @map("enabled_by_default")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   entitlements FeatureEntitlement[]
 
