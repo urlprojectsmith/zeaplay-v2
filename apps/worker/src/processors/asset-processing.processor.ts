@@ -35,14 +35,21 @@ export class AssetProcessingProcessor extends WorkerHost {
 
   async process(job: Job<AssetJobEnvelope>) {
     const envelope = assertEnvelope(job.data);
-    await this.prisma.processingJob.updateMany({
-      where: { id: envelope.jobId, status: ProcessingJobStatus.QUEUED },
+    const claimed = await this.updateProcessingJob(envelope, {
+      where: { status: ProcessingJobStatus.QUEUED },
       data: {
         status: ProcessingJobStatus.RUNNING,
         startedAt: new Date(),
         attempts: job.attemptsMade + 1,
       },
     });
+    if (claimed.count !== 1) {
+      this.logger.warn({
+        ...logContext(envelope),
+        message: 'Asset processing job envelope did not match a queued processing job',
+      });
+      return;
+    }
 
     const asset = await this.prisma.asset.findFirst({
       where: {
@@ -97,8 +104,7 @@ export class AssetProcessingProcessor extends WorkerHost {
             },
           },
         }),
-        this.prisma.processingJob.update({
-          where: { id: envelope.jobId },
+        this.updateProcessingJob(envelope, {
           data: {
             status: ProcessingJobStatus.SUCCEEDED,
             progress: 100,
@@ -120,15 +126,13 @@ export class AssetProcessingProcessor extends WorkerHost {
   }
 
   private async succeed(envelope: AssetJobEnvelope) {
-    await this.prisma.processingJob.updateMany({
-      where: { id: envelope.jobId },
+    await this.updateProcessingJob(envelope, {
       data: { status: ProcessingJobStatus.SUCCEEDED, progress: 100, completedAt: new Date() },
     });
   }
 
   private async cancel(envelope: AssetJobEnvelope) {
-    await this.prisma.processingJob.updateMany({
-      where: { id: envelope.jobId },
+    await this.updateProcessingJob(envelope, {
       data: { status: ProcessingJobStatus.CANCELLED, completedAt: new Date() },
     });
   }
@@ -140,8 +144,7 @@ export class AssetProcessingProcessor extends WorkerHost {
     retryable: boolean,
   ) {
     await this.prisma.$transaction([
-      this.prisma.processingJob.updateMany({
-        where: { id: envelope.jobId },
+      this.updateProcessingJob(envelope, {
         data: {
           status: ProcessingJobStatus.FAILED,
           errorCode: code,
@@ -167,8 +170,7 @@ export class AssetProcessingProcessor extends WorkerHost {
   }
 
   private async deferRetry(envelope: AssetJobEnvelope, job: Job<AssetJobEnvelope>) {
-    await this.prisma.processingJob.updateMany({
-      where: { id: envelope.jobId },
+    await this.updateProcessingJob(envelope, {
       data: {
         status: ProcessingJobStatus.QUEUED,
         attempts: job.attemptsMade + 1,
@@ -181,6 +183,25 @@ export class AssetProcessingProcessor extends WorkerHost {
       ...logContext(envelope),
       retryable: true,
       message: 'Asset processing deferred for retry',
+    });
+  }
+
+  private updateProcessingJob(
+    envelope: AssetJobEnvelope,
+    options: {
+      where?: { status?: ProcessingJobStatus };
+      data: Parameters<PrismaService['processingJob']['updateMany']>[0]['data'];
+    },
+  ) {
+    return this.prisma.processingJob.updateMany({
+      where: {
+        id: envelope.jobId,
+        workspaceId: envelope.workspaceId,
+        projectId: envelope.projectId,
+        assetId: envelope.assetId,
+        ...options.where,
+      },
+      data: options.data,
     });
   }
 }

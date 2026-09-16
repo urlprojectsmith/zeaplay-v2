@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 6 - COMPLETE / PASS
-Next: Foundation Deep Audit (Phase 4 + Phase 5 + Phase 6 revalidation)
+Current: Foundation v1 - STABLE
+Next: Phase 7 - Task Management
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -248,6 +248,114 @@ Shared Status/Pipeline Management is complete for Phase 6.
 
 Workspace Users/Departments, Workspace custom Roles/Permissions, and shared Status Management are complete for Phase 6.
 
+### Foundation Deep Audit 6.4A - PASS
+
+Phase 4 multi-tenant foundation revalidation.
+
+Verified:
+
+- Active tenant hierarchy remains Platform/global seed data -> Agency -> Workspace -> WorkspaceMembership -> Role/Permission -> Workspace data.
+- Tenant context is resolved server-side from authenticated user, active Agency membership, active Workspace membership or Agency admin authority, and route/header agreement.
+- Frontend tenant selection is only UI preference; backend guards remain authoritative for Agency and Workspace access.
+- Agency admins can administratively access Workspaces inside their Agency; ordinary Agency users require active Workspace membership.
+- OWNER and AGENCY_OWNER wildcard authorization remains bounded by resolved tenant context.
+- Departments, statuses, projects, assets, processing jobs, feature entitlements, audit logs, and storage quota accounting were rechecked for Workspace/Agency scoping.
+- Legacy `Organization` references are compatibility-only in schema, audit history, permission constants, persisted frontend fallback, and stale docs; no active runtime tenant guard depends on `x-organization-id`.
+- Feature entitlement hierarchy preserves platform -> agency -> workspace denial precedence and has database constraints for agency/workspace consistency.
+- No tenant-owned Redis cache keys were found; Redis remains auth rate-limit, health, and queue infrastructure only.
+
+Fixed:
+
+- Worker processing job state transitions are now scoped by the complete job tenant tuple: `jobId`, `workspaceId`, `projectId`, and `assetId`.
+- A forged or mismatched worker job envelope can no longer claim, succeed, fail, cancel, or requeue a processing job by `jobId` alone.
+- Added worker regression coverage for mismatched processing-job tenant tuples.
+
+Deferred:
+
+- Plan/billing productization on top of feature entitlements.
+- Final Organization compatibility removal and stale Organization documentation cleanup.
+- Formal tenant cache namespace rules when product data caches are introduced.
+- Broader offboarding/deprovisioning flows beyond existing active/suspended membership controls.
+
+### Foundation Deep Audit 6.4B - PASS
+
+Phase 5 frontend foundation revalidation after Phase 6 product UI.
+
+Verified:
+
+- Dashboard route scopes remain separated as `/developer`, `/super-admin`, `/agency`, and `/workspace`.
+- Shared shell architecture remains centralized through `DashboardRouteChrome`, `ProtectedDashboardBoundary`, `DashboardShell`, `AppHeader`, `AppSidebar`, `MobileSidebar`, `PageHeader`, `PageContainer`, and `Breadcrumbs`.
+- Developer and Super Admin dashboards remain structural foundations only and explicitly do not grant backend platform authorization.
+- Workspace Phase 6 pages for Users, Departments, Roles/Permissions, and Status Management remain tenant-query-keyed and Workspace-scoped.
+- Access token remains memory-only; persisted frontend state is limited to tenant selection, theme, language, and sidebar preference.
+- Session hydration reconciles stale persisted Agency/Workspace IDs against `/auth/me`.
+- API calls remain centralized through `ApiClient` with `/api/v1`, credentials, bearer token, CSRF handoff, correlation IDs, and `x-agency-id`/`x-workspace-id`.
+- TanStack Query client is stable and avoids retries for deterministic 400/401/403/404/422 responses.
+- UI primitives are present for Button, Input, Textarea, Select, Checkbox, Radio, Switch, Card, Badge, Avatar, Tabs, Dialog, DropdownMenu, Tooltip, Popover, Pagination, Skeleton, Progress, Separator, EmptyState, and StatusIndicator.
+- Light, Dark, and Colorful themes use semantic tokens and continue to cover real Phase 6 management pages.
+- Tamil localization is present for shell navigation and Phase 6 management pages, with document `lang` updated from the active locale.
+- Storybook remains backend-independent for generic UI components.
+
+Fixed:
+
+- Agency `Roles & Permissions` navigation no longer links into the Workspace-owned `/workspace/roles` page; it is now correctly marked as deferred Agency foundation.
+- White-label `logoUrl`, `faviconUrl`, and `loginBackground` values are sanitized to safe relative, HTTP, or HTTPS URLs before use.
+- The intentional `BrandLogo` `<img>` usage is narrowly lint-suppressed because arbitrary tenant logo hosts should not require unsafe Next image remote allowlists.
+- Playwright/Next dev-origin warning for `127.0.0.1` is fixed through a narrow `allowedDevOrigins` entry.
+- Shared dashboard/error/profile/mobile-shell strings were routed through existing English/Tamil i18n.
+- Added frontend regression coverage for white-label asset URL sanitization and Agency roles navigation ownership.
+
+Dashboard page inventory summary:
+
+- Developer: Dashboard is IMPLEMENTED; Agencies, Sub-Accounts, Modules, Feature Flags, Templates, Isolated Space, Releases, Deployments, System Health, Logs, API & Webhooks, Database, Jobs, Security, and Settings are INTENTIONALLY DEFERRED.
+- Super Admin: Dashboard is IMPLEMENTED; Agencies, Sub-Accounts, Users, Plans & Billing, Feature Management, Modules, Isolated Space, Global Leaderboard, API Management, Webhooks, Audit Logs, Notifications, Developer Access, and System Settings are INTENTIONALLY DEFERRED.
+- Agency: Dashboard is IMPLEMENTED; Sub-Accounts, Users, Departments, Roles & Permissions, Plans & Usage, Feature Controls, Agency Leaderboard, Reports, API & Webhooks, Integrations, Notifications, and Settings are INTENTIONALLY DEFERRED.
+- Workspace: Dashboard, Users, Departments, Roles & Permissions, and Status Management are IMPLEMENTED; Tasks, Projects, Tickets, Gamification, Calendar, Automation, Docs, Forms, Goals, Reports, Custom Dashboard, Notifications, Integrations, and Settings are INTENTIONALLY DEFERRED. Legacy `/dashboard/projects` remains working.
+
+Warnings:
+
+- Next build still reports flat-config plugin detection warning even though `@next/eslint-plugin-next` is configured and lint passes.
+- Storybook still reports upstream Rolldown/direct-`eval` and chunk-size warnings.
+- `pnpm audit --audit-level high` still passes while reporting one moderate Storybook transitive advisory: `@storybook/addon-actions -> uuid@9.0.1`; patched `uuid >=11.1.1` is outside the addon's current semver range and fixing cleanly requires a future Storybook major/minor dependency review.
+
+Deferred:
+
+- Developer backend authorization, Super Admin backend authorization, Agency-level product pages, final white-label backend, global search, notifications backend, integrations, billing, PWA, and future product modules.
+- Formal permission-aware hiding for future feature-gated navigation once feature entitlements are wired into frontend navigation.
+
+### Foundation Deep Audit 6.4C - PASS
+
+Final Phase 4 + Phase 5 + Phase 6 foundation integration revalidation.
+
+Verified:
+
+- Full chain remains coherent: authenticated User -> Agency -> Workspace -> WorkspaceMembership -> Role -> Permission -> tenant context -> frontend Workspace selection -> Workspace Users/Departments/Roles/Statuses -> backend tenant enforcement.
+- Existing Phase 4 and Phase 6 integration suites continue to reject cross-Workspace, cross-Agency, forged-header, suspended-tenant, role-escalation, foreign-role, foreign-department, foreign-status, wrong-entity, project, and asset access attacks.
+- Frontend session restoration, protected routing, tenant switching, theme/language persistence, sidebar navigation, and Phase 6 management pages remain integrated.
+- Custom Roles remain Workspace-scoped; permission catalog data remains backend authoritative; permission and role changes propagate to backend authorization on the next request.
+- Shared statuses remain Workspace- and entity-type scoped across TASK, PROJECT, and TICKET, while current Project APIs intentionally remain compatible with legacy `Project.status`.
+- Legacy `Organization` usage remains compatibility-only and is not part of active tenant authorization.
+- Feature entitlement foundation remains compatible with the Workspace navigation and backend tenant model without implying future product pages are implemented.
+
+Fixed:
+
+- Tenant React Query cache is now cleared centrally when the authenticated session is lost after hydration.
+- Workspace Users clears stale user, department, selected-detail, and pagination state on Workspace switch.
+- Workspace Departments clears stale department, user, editor, dialog, and form state on Workspace switch.
+- Workspace Roles closes stale create/clone dialogs and clears local draft/dirty state on Workspace switch.
+- Added frontend regressions for session-loss cache clearing and selected user-detail isolation across Workspace switches.
+
+Deferred:
+
+- Task/Ticket/Gamification/Automation/Billing/Docs/Forms/Goals/PWA/Developer backend/Super Admin backend/Isolated Space/SSO/final white-label backend work remains deferred.
+- Storybook moderate transitive advisory and upstream eval/chunk warnings remain deferred to a future dependency review because high-severity audit still passes.
+
+### Foundation v1 - STABLE
+
+Phase 4, Phase 5, and Phase 6 foundations are validated together.
+
+Ready for Phase 7 Task Management to build on Workspace tenancy, users, departments, custom Roles, permission catalog/guards, TASK StatusDefinitions, assets, audit logging, dashboard shell, theme/i18n, TanStack Query, centralized API client, and existing cross-tenant attack coverage.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -259,6 +367,8 @@ Workspace Users/Departments, Workspace custom Roles/Permissions, and shared Stat
 - Each initialized Workspace/entity type has exactly one active default status.
 - Status ordering is transactional and complete-list based.
 - Frontend tenant caches must include Workspace identity, and status caches must include entity type.
+- Tenant React Query cache must be cleared on session loss after hydration.
+- Workspace pages must clear selected details, open editors, and draft dialogs on Workspace switch.
 - Access token remains memory-only.
 - Refresh token remains HttpOnly.
 - CSRF protection remains enabled.
@@ -294,7 +404,6 @@ Do not infer or invent model fields from this list.
 - Stale pending upload cleanup.
 - Production Docker digest pinning.
 - Next ESLint detection warning.
-- `allowedDevOrigins` warning.
 - Final Developer/Super Admin backend authorization.
 - Final white-label backend.
 - PWA.
@@ -302,31 +411,33 @@ Do not infer or invent model fields from this list.
 
 ## Phase History
 
-| Phase      | Status | Latest stable Git tag            |
-| ---------- | ------ | -------------------------------- |
-| Phase 1    | PASS   | Not identifiable in current tags |
-| Phase 2    | PASS   | Not identifiable in current tags |
-| Phase 3    | PASS   | `phase-3-stable`                 |
-| Phase 4    | PASS   | `phase-4-stable`                 |
-| Phase 5    | PASS   | `phase-5-stable`                 |
-| Phase 6.1  | PASS   | Not tagged                       |
-| Phase 6.2A | PASS   | Not tagged                       |
-| Phase 6.2B | PASS   | Not tagged                       |
-| Phase 6.2C | PASS   | Not tagged                       |
-| Phase 6.2  | PASS   | Not tagged                       |
-| Phase 6.3A | PASS   | Not tagged                       |
-| Phase 6.3B | PASS   | Not tagged                       |
-| Phase 6.3C | PASS   | Not tagged                       |
-| Phase 6.3  | PASS   | Not tagged                       |
-| Phase 6    | PASS   | Not tagged                       |
+| Phase         | Status | Latest stable Git tag            |
+| ------------- | ------ | -------------------------------- |
+| Phase 1       | PASS   | Not identifiable in current tags |
+| Phase 2       | PASS   | Not identifiable in current tags |
+| Phase 3       | PASS   | `phase-3-stable`                 |
+| Phase 4       | PASS   | `phase-4-stable`                 |
+| Phase 5       | PASS   | `phase-5-stable`                 |
+| Phase 6.1     | PASS   | Not tagged                       |
+| Phase 6.2A    | PASS   | Not tagged                       |
+| Phase 6.2B    | PASS   | Not tagged                       |
+| Phase 6.2C    | PASS   | Not tagged                       |
+| Phase 6.2     | PASS   | Not tagged                       |
+| Phase 6.3A    | PASS   | Not tagged                       |
+| Phase 6.3B    | PASS   | Not tagged                       |
+| Phase 6.3C    | PASS   | Not tagged                       |
+| Phase 6.3     | PASS   | Not tagged                       |
+| Phase 6       | PASS   | Not tagged                       |
+| Phase 6.4A    | PASS   | Not tagged                       |
+| Phase 6.4B    | PASS   | Not tagged                       |
+| Phase 6.4C    | PASS   | Not tagged                       |
+| Foundation v1 | STABLE | Not tagged                       |
 
 ## Current Warnings
 
 Confirmed current warnings:
 
 - Next build reports: "The Next.js plugin was not detected in your ESLint configuration."
-- `BrandLogo.tsx` uses `<img>` for arbitrary white-label logo URLs, producing the Next `@next/next/no-img-element` warning.
-- Playwright/Next dev server reports future `allowedDevOrigins` configuration warning for `127.0.0.1` cross-origin `/_next/*` assets.
 - Storybook build reports upstream Storybook/Rolldown direct `eval` warnings and chunk-size warnings.
 - `pnpm audit --audit-level high` passes, while reporting 1 moderate vulnerability.
 
@@ -340,5 +451,9 @@ Confirmed current warnings:
 - Phase 6.3A acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - Phase 6.3B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - Phase 6.3C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
+- Phase 6.4A acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
+- Phase 6.4B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
+- Phase 6.4C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
+- Foundation v1 is stable; the next phase is Phase 7 Task Management.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

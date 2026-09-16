@@ -1,26 +1,30 @@
 'use client';
 
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@zea-play/ui';
+import { useLanguage } from '../../contexts/language-provider';
 
 export function ErrorState({
-  title = 'Something went wrong',
-  description = 'The page could not be loaded. Please try again.',
+  title,
+  description,
   action,
 }: {
   title?: string;
   description?: string;
   action?: React.ReactNode;
 }) {
+  const { locale, t } = useLanguage();
   return (
     <Card className="mx-auto mt-12 max-w-xl">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle>{title ?? t(locale, 'states.somethingWentWrong')}</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">{description}</p>
+        <p className="text-sm text-[hsl(var(--muted-foreground))]">
+          {description ?? t(locale, 'states.pageLoadFailed')}
+        </p>
         {action ?? (
           <Button type="button" onClick={() => window.location.reload()}>
-            Try again
+            {t(locale, 'common.tryAgain')}
           </Button>
         )}
       </CardContent>
@@ -29,14 +33,21 @@ export function ErrorState({
 }
 
 export function PermissionDeniedState() {
+  const { locale, t } = useLanguage();
   return (
     <ErrorState
-      title="Permission denied"
-      description="This area is waiting for backend authorization for your account."
+      title={t(locale, 'states.permissionDenied')}
+      description={t(locale, 'states.permissionDeniedDescription')}
     />
   );
 }
 
 export function SessionExpiredState() {
-  return <ErrorState title="Session expired" description="Please sign in again to continue." />;
+  const { locale, t } = useLanguage();
+  return (
+    <ErrorState
+      title={t(locale, 'states.sessionExpired')}
+      description={t(locale, 'states.sessionExpiredDescription')}
+    />
+  );
 }

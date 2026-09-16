@@ -68,7 +68,15 @@ export function WorkspaceDepartmentsPage() {
   });
 
   useEffect(() => {
-    if (!workspaceId) return;
+    setDepartments([]);
+    setUsers([]);
+    setEditing(null);
+    setOpen(false);
+    form.reset({ name: '', description: '', managerUserId: 'NONE', status: 'ACTIVE' });
+    if (!workspaceId) {
+      setLoading(false);
+      return;
+    }
     let active = true;
     setLoading(true);
     setError(null);
@@ -95,7 +103,7 @@ export function WorkspaceDepartmentsPage() {
     return () => {
       active = false;
     };
-  }, [search, status, workspaceId]);
+  }, [form, search, status, workspaceId]);
 
   function startCreate() {
     setEditing(null);

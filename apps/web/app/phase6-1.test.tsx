@@ -195,6 +195,40 @@ describe('phase 6.1 and 6.2B workspace pages', () => {
     expect(screen.queryByRole('option', { name: 'Inactive Lead' })).not.toBeInTheDocument();
   });
 
+  it('clears selected user detail when switching workspaces', async () => {
+    listWorkspaceUsers.mockImplementation(({ workspaceId }: { workspaceId: string }) =>
+      Promise.resolve(
+        workspaceId === 'workspace-1'
+          ? userPage
+          : {
+              items: [
+                {
+                  ...userPage.items[0],
+                  id: 'user-3',
+                  email: 'secondary@zeaplay.test',
+                  name: 'Secondary Member',
+                  workspaceId: 'workspace-2',
+                },
+              ],
+              page: 1,
+              pageSize: 10,
+              total: 1,
+            },
+      ),
+    );
+
+    renderWithLanguage(<WorkspaceUsersPage />);
+    fireEvent.click((await screen.findAllByText('Member One'))[0]!);
+    expect(screen.getAllByText('Member One').length).toBeGreaterThan(1);
+
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+
+    expect((await screen.findAllByText('Secondary Member')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.queryByText('Member One')).not.toBeInTheDocument());
+  });
+
   it('validates department create form with React Hook Form and Zod', async () => {
     listWorkspaceUsers.mockResolvedValue(userPage);
     renderWithLanguage(<WorkspaceDepartmentsPage />);

@@ -39,7 +39,7 @@ export function DashboardFoundation({ scope }: { scope: DashboardScope }) {
       />
       {config.requiresPlatformScope ? (
         <EmptyState
-          title="Backend authorization pending"
+          title={t(locale, 'dashboard.backendAuthorizationPending')}
           description={t(locale, 'dashboard.noBackendScope')}
         />
       ) : null}
@@ -56,11 +56,13 @@ export function DashboardFoundation({ scope }: { scope: DashboardScope }) {
         <Card>
           <CardHeader>
             <CardTitle>{t(locale, 'dashboard.selectedContext')}</CardTitle>
-            <CardDescription>{selectedAgency?.name ?? 'No agency selected'}</CardDescription>
+            <CardDescription>
+              {selectedAgency?.name ?? t(locale, 'dashboard.noAgencySelected')}
+            </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
             <p className="text-sm text-[hsl(var(--muted-foreground))]">
-              {selectedWorkspace?.name ?? 'No workspace selected'}
+              {selectedWorkspace?.name ?? t(locale, 'dashboard.noWorkspaceSelected')}
             </p>
             <div className="grid gap-3">
               <AgencySwitcher />
@@ -90,9 +92,7 @@ export function DashboardFoundation({ scope }: { scope: DashboardScope }) {
       <Card>
         <CardHeader>
           <CardTitle>{t(locale, 'dashboard.navigationModules')}</CardTitle>
-          <CardDescription>
-            Configured for Phase 6 visibility and feature-entitlement filtering.
-          </CardDescription>
+          <CardDescription>{t(locale, 'dashboard.featureFilteringReady')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {navItems.map((item) => (

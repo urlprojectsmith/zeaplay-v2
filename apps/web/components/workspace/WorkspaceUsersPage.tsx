@@ -56,7 +56,14 @@ export function WorkspaceUsersPage() {
   });
 
   useEffect(() => {
-    if (!workspaceId) return;
+    setUsers([]);
+    setDepartments([]);
+    setSelected(null);
+    setTotal(0);
+    if (!workspaceId) {
+      setLoading(false);
+      return;
+    }
     let active = true;
     setLoading(true);
     setError(null);
@@ -78,7 +85,7 @@ export function WorkspaceUsersPage() {
         setDepartments(departmentPage.items);
         setTotal(userPage.total);
         setSelected((current) =>
-          current ? (userPage.items.find((item) => item.id === current.id) ?? current) : null,
+          current ? (userPage.items.find((item) => item.id === current.id) ?? null) : null,
         );
       })
       .catch((nextError: Error) => {

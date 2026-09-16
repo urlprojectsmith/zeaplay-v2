@@ -18,7 +18,7 @@ export function ProfileMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button aria-label="Open profile menu" size="icon" variant="ghost">
+        <Button aria-label={t(locale, 'common.openProfileMenu')} size="icon" variant="ghost">
           <Avatar name={name} />
         </Button>
       </DropdownMenuTrigger>

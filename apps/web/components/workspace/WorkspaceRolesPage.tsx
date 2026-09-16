@@ -113,11 +113,6 @@ export function WorkspaceRolesPage() {
     setDraftPermissionIds(new Set(selectedRole?.permissions.map((permission) => permission.id)));
   }, [selectedRole?.id, selectedRole?.permissions]);
 
-  useEffect(() => {
-    setSelectedRoleId(null);
-    setDirty(false);
-  }, [workspaceId]);
-
   const visibleRoles = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return roles.filter((role) => {
@@ -136,6 +131,14 @@ export function WorkspaceRolesPage() {
     resolver: zodResolver(roleFormSchema),
     defaultValues: { name: '', description: '' },
   });
+
+  useEffect(() => {
+    setSelectedRoleId(null);
+    setDirty(false);
+    setCreateOpen(false);
+    setCloneSource(null);
+    createForm.reset({ name: '', description: '' });
+  }, [createForm, workspaceId]);
   const editForm = useForm<RoleFormValues>({
     resolver: zodResolver(roleFormSchema),
     values: {

@@ -1,5 +1,6 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useQueryClient } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LayoutDashboard } from 'lucide-react';
 import {
@@ -11,12 +12,13 @@ import {
   TooltipProvider,
 } from '@zea-play/ui';
 import { LanguageProvider, useLanguage } from '../contexts/language-provider';
+import { Providers } from '../contexts/providers';
 import { ThemeProvider, useTheme } from '../contexts/theme-provider';
 import { DashboardRouteChrome } from '../components/layout/DashboardRouteChrome';
 import { ProtectedDashboardBoundary } from '../components/layout/ProtectedDashboardBoundary';
 import { BrandProvider } from '../components/branding/BrandProvider';
 import { NavigationGroup } from '../components/navigation/NavigationGroup';
-import { canShowFeature } from '../components/navigation/navigation-config';
+import { canShowFeature, dashboardConfigs } from '../components/navigation/navigation-config';
 import { useSessionStore, type SessionAgency } from '../stores/session';
 
 const replace = vi.fn();
@@ -41,6 +43,29 @@ function LanguageProbe() {
   return (
     <button type="button" onClick={() => setLocale('ta')}>
       {locale}:{t(locale, 'dashboard.foundationReady')}
+    </button>
+  );
+}
+
+function QueryCacheProbe() {
+  const queryClient = useQueryClient();
+  const queryKey = ['workspace', 'workspace-1', 'users'] as const;
+  const [cached, setCached] = React.useState(false);
+  React.useEffect(
+    () =>
+      queryClient.getQueryCache().subscribe(() => {
+        setCached(Boolean(queryClient.getQueryData(queryKey)));
+      }),
+    [queryClient, queryKey],
+  );
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        queryClient.setQueryData(queryKey, [{ id: 'user-1' }]);
+      }}
+    >
+      {cached ? 'cached' : 'empty'}
     </button>
   );
 }
@@ -200,6 +225,27 @@ describe('phase 5 foundations', () => {
     expect(replace).not.toHaveBeenCalledWith('/login');
   });
 
+  it('clears tenant query cache when the authenticated session is lost', async () => {
+    useSessionStore.setState({
+      hydrated: true,
+      accessToken: 'token',
+      user: { id: 'user-1', email: 'owner@zeaplay.test' },
+    });
+    render(
+      <Providers>
+        <QueryCacheProbe />
+      </Providers>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'empty' }));
+    expect(screen.getByRole('button', { name: 'cached' })).toBeInTheDocument();
+
+    act(() => {
+      useSessionStore.setState({ accessToken: null, user: null });
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'empty' })).toBeInTheDocument());
+  });
+
   it('sanitizes brand colors and falls back for invalid values', async () => {
     render(
       <BrandProvider
@@ -218,6 +264,26 @@ describe('phase 5 foundations', () => {
     );
     expect(document.documentElement.style.getPropertyValue('--secondary')).toBe('210 50% 40%');
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe('327 80% 54%');
+  });
+
+  it('sanitizes white-label asset URLs and keeps agency roles navigation deferred', async () => {
+    render(
+      <BrandProvider
+        brand={{
+          logoUrl: 'javascript:alert(1)',
+          faviconUrl: 'data:text/html,<svg onload=alert(1)>',
+          loginBackground: 'https://cdn.example.test/background.png',
+        }}
+      >
+        <p>brand</p>
+      </BrandProvider>,
+    );
+
+    const agencyItems = dashboardConfigs.agency.groups.flatMap((group) => group.items);
+    const agencyRoles = agencyItems.find((item) => item.labelKey === 'navigation.rolesPermissions');
+
+    await waitFor(() => expect(document.querySelector('img')).not.toBeInTheDocument());
+    expect(agencyRoles).toMatchObject({ disabled: true, href: '#' });
   });
 
   it('keeps feature visibility dormant and supports nested active routes', () => {

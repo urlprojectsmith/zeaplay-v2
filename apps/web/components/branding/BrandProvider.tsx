@@ -31,6 +31,9 @@ export function BrandProvider({
       primaryColor: sanitizeBrandColor(brand.primaryColor) ?? defaultBrand.primaryColor,
       secondaryColor: sanitizeBrandColor(brand.secondaryColor) ?? defaultBrand.secondaryColor,
       accentColor: sanitizeBrandColor(brand.accentColor) ?? defaultBrand.accentColor,
+      logoUrl: sanitizeBrandUrl(brand.logoUrl),
+      faviconUrl: sanitizeBrandUrl(brand.faviconUrl),
+      loginBackground: sanitizeBrandUrl(brand.loginBackground),
     }),
     [brand],
   );
@@ -101,4 +104,16 @@ function sanitizeBrandColor(value: string | undefined) {
     if (hue < 0) hue += 360;
   }
   return `${Math.round(hue)} ${Math.round(saturation * 100)}% ${Math.round(lightness * 100)}%`;
+}
+
+function sanitizeBrandUrl(value: string | undefined) {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.startsWith('/')) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
 }

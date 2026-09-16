@@ -41,7 +41,7 @@ describe('AssetProcessingProcessor', () => {
         }),
       }),
     );
-    expect(prisma.processingJob.update).toHaveBeenCalledWith(
+    expect(prisma.processingJob.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'SUCCEEDED' }) }),
     );
   });
@@ -53,8 +53,39 @@ describe('AssetProcessingProcessor', () => {
     await processor.process({ data: envelope, attemptsMade: 0 } as never);
 
     expect(prisma.processingJob.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'FAILED' }) }),
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: envelope.jobId,
+          workspaceId: envelope.workspaceId,
+          projectId: envelope.projectId,
+          assetId: envelope.assetId,
+        }),
+        data: expect.objectContaining({ status: 'FAILED' }),
+      }),
     );
+  });
+
+  it('does not alter processing jobs when the envelope tenant tuple does not match', async () => {
+    const prisma = prismaMock({ asset: null, claimedCount: 0 });
+    const processor = new AssetProcessingProcessor(prisma as never, {} as never);
+
+    await processor.process({ data: envelope, attemptsMade: 0 } as never);
+
+    expect(prisma.processingJob.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.processingJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: envelope.jobId,
+          workspaceId: envelope.workspaceId,
+          projectId: envelope.projectId,
+          assetId: envelope.assetId,
+          status: 'QUEUED',
+        }),
+        data: expect.objectContaining({ status: 'RUNNING' }),
+      }),
+    );
+    expect(prisma.asset.findFirst).not.toHaveBeenCalled();
+    expect(prisma.asset.updateMany).not.toHaveBeenCalled();
   });
 
   it('rejects invalid job envelopes', async () => {
@@ -153,11 +184,10 @@ describe('AssetProcessingProcessor', () => {
   });
 });
 
-function prismaMock({ asset }: { asset: unknown }) {
+function prismaMock({ asset, claimedCount = 1 }: { asset: unknown; claimedCount?: number }) {
   const mock = {
     processingJob: {
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: claimedCount }),
     },
     asset: {
       findFirst: jest.fn().mockResolvedValue(asset),

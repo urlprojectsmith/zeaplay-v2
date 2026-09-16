@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { BrandLogo } from '../branding/BrandLogo';
+import { useLanguage } from '../../contexts/language-provider';
 import type { DashboardConfig } from '../navigation/navigation-config';
 import { LanguageSwitcher } from '../navigation/LanguageSwitcher';
 import { NavigationGroup } from '../navigation/NavigationGroup';
@@ -19,6 +20,7 @@ export function MobileSidebar({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { locale, t } = useLanguage();
   const pathname = usePathname();
 
   useEffect(() => {
@@ -33,7 +35,7 @@ export function MobileSidebar({
             <BrandLogo />
           </DialogTitle>
           <Button
-            aria-label="Close navigation"
+            aria-label={t(locale, 'common.closeMenu')}
             size="icon"
             type="button"
             variant="ghost"
