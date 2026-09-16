@@ -21,6 +21,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
+import { TasksModule } from './modules/tasks/tasks.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { DepartmentsModule } from './modules/departments/departments.module';
     AuthModule,
     ProjectsModule,
     AssetsModule,
+    TasksModule,
     AgenciesModule,
     WorkspacesModule,
     UsersModule,

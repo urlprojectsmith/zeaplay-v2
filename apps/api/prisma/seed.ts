@@ -1,4 +1,4 @@
-import { AssetStatus, PrismaClient, ProjectStatus, RoleScope } from '@prisma/client';
+import { AssetStatus, PrismaClient, ProjectStatus, RoleScope, TaskPriority } from '@prisma/client';
 import { PasswordService } from '../src/common/auth/password.service';
 import { initializeDefaultStatuses } from '../src/modules/statuses/status-templates';
 
@@ -27,6 +27,12 @@ const workspacePermissions = [
   'statuses.update',
   'statuses.reorder',
   'statuses.manage',
+  'tasks.view',
+  'tasks.create',
+  'tasks.update',
+  'tasks.delete',
+  'tasks.assign',
+  'tasks.manage',
   'project.read',
   'project.create',
   'project.update',
@@ -109,11 +115,31 @@ async function main() {
   await upsertAgencyMembership(member.id, agencyAlpha.id, roles.AGENCY_USER.id);
   await upsertAgencyMembership(otherOwner.id, agencyBeta.id, roles.AGENCY_OWNER.id);
 
-  await upsertWorkspaceMembership(owner.id, workspaceAlphaMain.id, roles.OWNER.id);
-  await upsertWorkspaceMembership(admin.id, workspaceAlphaMain.id, roles.ADMIN.id);
-  await upsertWorkspaceMembership(member.id, workspaceAlphaMain.id, roles.MEMBER.id);
-  await upsertWorkspaceMembership(owner.id, workspaceAlphaSecondary.id, roles.OWNER.id);
-  await upsertWorkspaceMembership(otherOwner.id, workspaceBeta.id, roles.OWNER.id);
+  const ownerAlphaMainMembership = await upsertWorkspaceMembership(
+    owner.id,
+    workspaceAlphaMain.id,
+    roles.OWNER.id,
+  );
+  const adminAlphaMainMembership = await upsertWorkspaceMembership(
+    admin.id,
+    workspaceAlphaMain.id,
+    roles.ADMIN.id,
+  );
+  const memberAlphaMainMembership = await upsertWorkspaceMembership(
+    member.id,
+    workspaceAlphaMain.id,
+    roles.MEMBER.id,
+  );
+  const ownerAlphaSecondaryMembership = await upsertWorkspaceMembership(
+    owner.id,
+    workspaceAlphaSecondary.id,
+    roles.OWNER.id,
+  );
+  const ownerBetaMembership = await upsertWorkspaceMembership(
+    otherOwner.id,
+    workspaceBeta.id,
+    roles.OWNER.id,
+  );
 
   await initializeDefaultStatuses(prisma, workspaceAlphaMain.id);
   await initializeDefaultStatuses(prisma, workspaceAlphaSecondary.id);
@@ -137,6 +163,52 @@ async function main() {
     'Beta Sandbox',
     'Seed project for Agency Beta.',
   );
+  await seedTasks([
+    {
+      workspaceId: workspaceAlphaMain.id,
+      title: 'Prepare Alpha launch checklist',
+      createdById: owner.id,
+      priority: TaskPriority.HIGH,
+      statusName: 'To Do',
+      assigneeMembershipIds: [adminAlphaMainMembership.id, memberAlphaMainMembership.id],
+      followerMembershipIds: [ownerAlphaMainMembership.id],
+      projectIds: [alphaMainProject.id],
+      dueAt: daysFromNow(7),
+    },
+    {
+      workspaceId: workspaceAlphaMain.id,
+      title: 'Review Alpha QA notes',
+      createdById: admin.id,
+      priority: TaskPriority.MEDIUM,
+      statusName: 'In Progress',
+      assigneeMembershipIds: [memberAlphaMainMembership.id],
+      followerMembershipIds: [adminAlphaMainMembership.id],
+      projectIds: [],
+      dueAt: daysFromNow(10),
+    },
+    {
+      workspaceId: workspaceAlphaSecondary.id,
+      title: 'Confirm secondary workspace kickoff',
+      createdById: owner.id,
+      priority: TaskPriority.LOW,
+      statusName: 'To Do',
+      assigneeMembershipIds: [ownerAlphaSecondaryMembership.id],
+      followerMembershipIds: [],
+      projectIds: [alphaSecondaryProject.id],
+      dueAt: daysFromNow(14),
+    },
+    {
+      workspaceId: workspaceBeta.id,
+      title: 'Beta sandbox setup',
+      createdById: otherOwner.id,
+      priority: TaskPriority.URGENT,
+      statusName: 'Review',
+      assigneeMembershipIds: [ownerBetaMembership.id],
+      followerMembershipIds: [],
+      projectIds: [betaProject.id],
+      dueAt: daysFromNow(3),
+    },
+  ]);
   await upsertAsset(
     workspaceAlphaMain.id,
     alphaMainProject.id,
@@ -276,7 +348,7 @@ async function upsertAgencyMembership(userId: string, agencyId: string, roleId: 
 }
 
 async function upsertWorkspaceMembership(userId: string, workspaceId: string, roleId: string) {
-  await prisma.workspaceMembership.upsert({
+  return prisma.workspaceMembership.upsert({
     where: { userId_workspaceId: { userId, workspaceId } },
     update: { roleId },
     create: { userId, workspaceId, roleId },
@@ -322,6 +394,89 @@ async function upsertAsset(
       uploadExpiresAt: new Date(Date.now() + 60_000),
     },
   });
+}
+
+async function seedTasks(
+  tasks: {
+    workspaceId: string;
+    title: string;
+    createdById: string;
+    priority: TaskPriority;
+    statusName: string;
+    assigneeMembershipIds: string[];
+    followerMembershipIds: string[];
+    projectIds: string[];
+    dueAt: Date;
+  }[],
+) {
+  for (const taskSeed of tasks) {
+    const status = await prisma.statusDefinition.findFirstOrThrow({
+      where: {
+        workspaceId: taskSeed.workspaceId,
+        entityType: 'TASK',
+        name: taskSeed.statusName,
+        isActive: true,
+      },
+    });
+    const existing = await prisma.task.findFirst({
+      where: { workspaceId: taskSeed.workspaceId, title: taskSeed.title },
+    });
+    const task =
+      existing ??
+      (await prisma.task.create({
+        data: {
+          workspaceId: taskSeed.workspaceId,
+          title: taskSeed.title,
+          createdById: taskSeed.createdById,
+          priority: taskSeed.priority,
+          statusDefinitionId: status.id,
+          dueAt: taskSeed.dueAt,
+        },
+      }));
+    await prisma.task.update({
+      where: { id: task.id },
+      data: {
+        priority: taskSeed.priority,
+        statusDefinitionId: status.id,
+        dueAt: taskSeed.dueAt,
+        deletedAt: null,
+      },
+    });
+    await prisma.taskAssignee.deleteMany({ where: { taskId: task.id } });
+    await prisma.taskFollower.deleteMany({ where: { taskId: task.id } });
+    await prisma.taskProject.deleteMany({ where: { taskId: task.id } });
+    if (taskSeed.assigneeMembershipIds.length > 0) {
+      await prisma.taskAssignee.createMany({
+        data: taskSeed.assigneeMembershipIds.map((membershipId) => ({
+          taskId: task.id,
+          workspaceId: taskSeed.workspaceId,
+          membershipId,
+        })),
+      });
+    }
+    if (taskSeed.followerMembershipIds.length > 0) {
+      await prisma.taskFollower.createMany({
+        data: taskSeed.followerMembershipIds.map((membershipId) => ({
+          taskId: task.id,
+          workspaceId: taskSeed.workspaceId,
+          membershipId,
+        })),
+      });
+    }
+    if (taskSeed.projectIds.length > 0) {
+      await prisma.taskProject.createMany({
+        data: taskSeed.projectIds.map((projectId) => ({
+          taskId: task.id,
+          workspaceId: taskSeed.workspaceId,
+          projectId,
+        })),
+      });
+    }
+  }
+}
+
+function daysFromNow(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
 async function refreshWorkspaceStorage(workspaceId: string) {

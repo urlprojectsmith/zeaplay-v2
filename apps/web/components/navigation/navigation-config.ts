@@ -179,7 +179,7 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
         label: 'Work',
         items: [
           { labelKey: 'navigation.dashboard', href: '/workspace/dashboard', icon: LayoutDashboard },
-          disabled('navigation.tasks', ListChecks, 'tasks'),
+          { labelKey: 'navigation.tasks', href: '/workspace/tasks', icon: ListChecks },
           disabled('navigation.projects', ClipboardList, 'projects'),
           disabled('navigation.tickets', SearchCode, 'tickets'),
           disabled('navigation.gamification', Sparkles, 'gamification'),

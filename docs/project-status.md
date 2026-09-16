@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Foundation v1 - STABLE
-Next: Phase 7 - Task Management
+Current: Phase 7.3B - COMPLETE / PASS
+Next: Phase 7.3C - Bulk Selection & Actions
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -356,6 +356,136 @@ Phase 4, Phase 5, and Phase 6 foundations are validated together.
 
 Ready for Phase 7 Task Management to build on Workspace tenancy, users, departments, custom Roles, permission catalog/guards, TASK StatusDefinitions, assets, audit logging, dashboard shell, theme/i18n, TanStack Query, centralized API client, and existing cross-tenant attack coverage.
 
+### Phase 7.1 - COMPLETE / PASS
+
+Task Core Backend foundation.
+
+Implemented:
+
+- Workspace-scoped `Task` model with `TaskPriority`, due datetime storage, created/updated user tracking, archive/delete lifecycle fields, and bounded list indexes.
+- TASK `StatusDefinition` integration with active same-Workspace TASK status validation and default TASK status fallback.
+- Multiple assignees and followers through WorkspaceMembership-based join tables with active same-Workspace validation.
+- Multiple Project links through a TaskProject join table; linked Projects must be same-Workspace and non-archived when assigned.
+- Optional same-Workspace active Department assignment.
+- Workspace-scoped Task APIs for create, list, get, update, status update, assignee replacement, follower replacement, project-link replacement, and soft delete.
+- Stable Task permissions: `tasks.view`, `tasks.create`, `tasks.update`, `tasks.delete`, `tasks.assign`, `tasks.manage`.
+- Audit records for create, update, status change, assignee/follower/project changes, and soft delete.
+- Development seed Tasks across Alpha Main, Alpha Secondary, and Beta Main.
+
+Security invariants:
+
+- Task APIs use JWT -> WorkspaceTenantGuard -> PermissionGuard.
+- Route Workspace, `x-agency-id`, and `x-workspace-id` must match resolved tenant context.
+- Task ownership and all joins are Workspace-scoped.
+- Foreign assignee, follower, project, department, and status references are rejected.
+- Suspended memberships cannot be assigned or followed.
+- Task creation with relation payloads is transactional; invalid relation input leaves no partial Task.
+- Dedicated status updates are idempotent when the requested status is already current and avoid extra status-change audit noise.
+- Duplicate assignee, follower, and project replacement payloads are rejected consistently.
+- `tasks.manage` is reserved and does not grant implicit Task wildcard access in Phase 7.1.
+- Existing TaskProject and Task Department history is retained if a linked Project is later archived or Department later becomes inactive; new assignment to archived/inactive resources remains rejected.
+- Soft-deleted Tasks are excluded from normal list/get.
+
+Known limitations:
+
+- No Task attachments; existing Asset remains Project-required.
+- No subtasks, dependencies, comments, tags, recurrence, templates, approvals, timers, workload scoring, Kanban, Calendar, Gantt, gamification, or automation.
+
+### Phase 7.2 - COMPLETE / PASS
+
+Task Creation Experience foundation.
+
+Implemented:
+
+- `/workspace/tasks` route using `PageContainer`, `PageHeader`, and the existing Workspace dashboard shell.
+- Enabled the Workspace Tasks navigation item at `/workspace/tasks` without enabling unrelated future modules.
+- Simple quick-create rule: default Task creation shows only required Title, Assignee, and Due Date.
+- Optional Add more details area for Phase 7.1-supported fields only: Description, Priority, Status, Additional Assignees, Followers, Department, Projects, and Due Time.
+- Lightweight Live Preview for unsaved form state when advanced details are open.
+- Workspace-scoped Task service and query keys for create, recent Tasks, eligible active Workspace users, active TASK statuses, active Departments, and bounded Project search.
+- Temporary due-date helper: local date-only selection converts to browser-local end-of-day and then UTC ISO; optional due time combines local date and time exactly once before UTC conversion.
+- Dialog dirty-state confirmation and mandatory Workspace-switch reset/close behavior so stale Workspace A relation IDs cannot submit into Workspace B.
+- English and Tamil Phase 7.2 labels, theme-compatible form/select/chip/preview styling, and responsive single-column/mobile plus desktop preview layout.
+
+Security/tenant UX:
+
+- Backend remains authoritative for `tasks.create` and all relation ownership checks.
+- Backend default TASK status remains authoritative when the create form does not send a status.
+- Frontend selector data is loaded from real Workspace-scoped APIs and query keys include Workspace identity.
+- Selector caches and selected chips are reset on Workspace switch and cannot submit stale tenant-bound IDs.
+- Live Preview uses local unsaved state only, displays selected relation names, and avoids raw UTC/date payload strings.
+- Create errors map permission, validation, stale/foreign relation, conflict, and network failures to user-facing feedback.
+- Duplicate create submission is blocked while create is pending.
+
+Known deferred Task features:
+
+- Phase 7.3 All Tasks list/grid/table/filter/sort/bulk experience.
+- Attachments, tags, comments, subtasks, dependencies, recurrence, templates, completion proof, approvals, timer, workload, Kanban, Calendar, Gantt, gamification, and automation.
+
+### Phase 7.3A - COMPLETE / PASS
+
+All Tasks List/Table Foundation.
+
+Implemented:
+
+- `/workspace/tasks` now combines Quick Create with an All Tasks browsing area.
+- Server-side Task pagination with page-size controls for 10, 25, and 50 rows.
+- Server-side search with debounced URL-backed `search` state.
+- Server-side filters for TASK status, priority, assignee, department, project, and due date range.
+- Backend allowlisted sorting for Task title, due date, created date, and updated date.
+- URL-backed list state for search, filters, sorting, page, and page size, with malformed values sanitized back to safe defaults.
+- Workspace-scoped Task query-key factory with `all`, `list`, and `detail` keys that include Workspace identity.
+- Read-only Task detail dialog backed by `GET /workspaces/:workspaceId/tasks/:taskId`.
+- Responsive desktop table plus mobile list-card rendering for the same List/Table mode.
+- Create Task success invalidates current Workspace Task lists without touching unrelated Workspaces.
+
+Security/tenant UX:
+
+- Backend `tasks.view` authorization remains authoritative for list and detail.
+- Task detail closes on Workspace switch.
+- Tenant-bound URL filters for status, assignee, department, project, and created-by are cleared on Workspace switch.
+- Search is preserved on Workspace switch, but Workspace-owned filters are removed and pagination resets to page 1.
+- Query keys and placeholder behavior must not leak Task list or detail data across Workspaces.
+- List rows render only compact summaries and do not issue detail requests until a Task is opened.
+- Due-range conversion reuses centralized local-date boundary helpers.
+- Terminal/completed TASK statuses do not display misleading overdue badges.
+
+Known deferred Task features:
+
+- No Grid, Compact view, Bulk Actions, Kanban, editing redesign, comments, attachments, tags, subtasks, dependencies, recurrence, templates, approvals, time tracking, workload, Calendar, Gantt, gamification, or automation.
+
+### Phase 7.3B - COMPLETE / PASS
+
+All Tasks Grid + Compact Views.
+
+Implemented:
+
+- All Tasks supports exactly three presentation modes: List, Grid, and Compact, with stable URL values `list`, `grid`, and `compact`.
+- The existing List/Table mode remains the detailed browsing view.
+- Grid renders compact responsive Task cards with title, status, priority, due state, assignee summary, department, and project summary.
+- Compact renders dense Task rows with title, status, priority, assignee summary, due date/state, and compact department/project context.
+- View switching is URL-backed through `view` and persists a tenant-neutral UI preference in localStorage.
+- URL view wins over stored preference; invalid URL or stored view values fall back safely to List.
+- List/Grid/Compact share the same server-side Task list query, search, filters, sorting, pagination, empty/error handling, and Task detail dialog.
+- Focused refinement verified URL validation, stored preference validation, active-renderer-only behavior, long-content truncation, due-state consistency, and no view-only Task list refetches.
+
+Security/tenant UX:
+
+- View is presentation state only and is not included in Task list query keys or backend request params.
+- View never fragments the server-data cache; List/Grid/Compact share one `taskKeys.list(workspaceId, normalizedParams)` architecture.
+- Only the active Task view renderer mounts; inactive view DOM is not hidden with CSS.
+- No Grid-specific or Compact-specific backend API was introduced.
+- Task detail continues to use the existing Workspace + Task detail query and is fetched only when a visible Task is opened.
+- One Task detail implementation is reused by List, Grid, and Compact.
+- Workspace-neutral view preference may survive Workspace switch.
+- Tenant-bound filters for status, assignee, department, project, and created-by still reset on Workspace switch.
+- URL view values and stored preferences are validated; invalid URL values resolve safely to List under the current precedence policy.
+- Task data, tenant IDs, access tokens, and business data are not persisted in the view preference.
+
+Known deferred Task features:
+
+- No Bulk Actions, Kanban, inline editing, comments, attachments, tags, subtasks, dependencies, recurrence, templates, approvals, time tracking, workload, Calendar, Gantt, gamification, or automation.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -390,6 +520,7 @@ Ready for Phase 7 Task Management to build on Workspace tenancy, users, departme
 - Role
 - Permission
 - StatusDefinition
+- Task / TaskAssignee / TaskFollower / TaskProject
 - FeatureDefinition / FeatureEntitlement
 - Project
 - Asset
@@ -432,6 +563,10 @@ Do not infer or invent model fields from this list.
 | Phase 6.4B    | PASS   | Not tagged                       |
 | Phase 6.4C    | PASS   | Not tagged                       |
 | Foundation v1 | STABLE | Not tagged                       |
+| Phase 7.1     | PASS   | Not tagged                       |
+| Phase 7.2     | PASS   | Not tagged                       |
+| Phase 7.3A    | PASS   | Not tagged                       |
+| Phase 7.3B    | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -454,6 +589,6 @@ Confirmed current warnings:
 - Phase 6.4A acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - Phase 6.4B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
 - Phase 6.4C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
-- Foundation v1 is stable; the next phase is Phase 7 Task Management.
+- Phase 7.3B All Tasks Grid + Compact Views and focused refinement are complete/pass; the next phase is Phase 7.3C Bulk Selection & Actions.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

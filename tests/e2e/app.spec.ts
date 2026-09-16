@@ -354,6 +354,134 @@ async function mockStatusManagementApi(page: Page) {
   });
 }
 
+async function mockTaskCreationApi(page: Page) {
+  const now = '2026-09-16T00:00:00.000Z';
+  const users = [
+    {
+      id: 'user-anya',
+      membershipId: 'membership-anya',
+      workspaceId: 'workspace-1',
+      email: 'anya@zeaplay.test',
+      name: 'Anya',
+      userStatus: 'ACTIVE',
+      membershipStatus: 'ACTIVE',
+      role: { id: 'role-member', key: 'MEMBER', name: 'Member' },
+      department: null,
+      joinedAt: now,
+      createdAt: now,
+    },
+  ];
+  const taskStatus = {
+    id: 'status-task-todo',
+    workspaceId: 'workspace-1',
+    entityType: 'TASK',
+    name: 'To Do',
+    description: null,
+    color: '#64748B',
+    position: 1,
+    category: 'TODO',
+    isDefault: true,
+    isTerminal: false,
+    isActive: true,
+    isSystem: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const tasks: Array<Record<string, unknown>> = [];
+
+  await page.route(/.*\/workspaces\/workspace-1\/users(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: users, page: 1, pageSize: 10, total: users.length });
+  });
+  await page.route(/.*\/workspaces\/workspace-2\/users(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [], page: 1, pageSize: 10, total: 0 });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/departments(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [], page: 1, pageSize: 100, total: 0 });
+  });
+  await page.route(/.*\/workspaces\/workspace-2\/departments(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [], page: 1, pageSize: 100, total: 0 });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/statuses\/TASK(\?.*)?$/, async (route) => {
+    await fulfillApi(route, [taskStatus]);
+  });
+  await page.route(/.*\/workspaces\/workspace-2\/statuses\/TASK(\?.*)?$/, async (route) => {
+    await fulfillApi(route, [{ ...taskStatus, workspaceId: 'workspace-2' }]);
+  });
+  await page.route(/.*\/projects(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [], page: 1, pageSize: 10, total: 0 });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/[^/]+$/, async (route) => {
+    const taskId = route.request().url().split('/').pop();
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) {
+      await fulfillApi(route, { message: 'Not found' }, 404);
+      return;
+    }
+    await fulfillApi(route, {
+      ...task,
+      createdBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
+      updatedBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
+    });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks(\?.*)?$/, async (route) => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON() as {
+        title: string;
+        dueAt: string;
+        assigneeMembershipIds: string[];
+      };
+      const task = {
+        id: 'task-e2e',
+        workspaceId: 'workspace-1',
+        title: body.title,
+        description: null,
+        priority: 'MEDIUM',
+        status: taskStatus,
+        department: null,
+        dueAt: body.dueAt,
+        assignees: users
+          .filter((user) => body.assigneeMembershipIds.includes(user.membershipId))
+          .map((user) => ({
+            id: user.membershipId,
+            user: { id: user.id, email: user.email, name: user.name },
+          })),
+        followers: [],
+        projects: [],
+        counts: { assignees: body.assigneeMembershipIds.length, followers: 0, projects: 0 },
+        createdAt: now,
+        updatedAt: now,
+      };
+      tasks.unshift(task);
+      await fulfillApi(route, task);
+      return;
+    }
+    const url = new URL(route.request().url());
+    const search = url.searchParams.get('search')?.toLowerCase() ?? '';
+    const statusDefinitionId = url.searchParams.get('statusDefinitionId');
+    const pageNumber = Number(url.searchParams.get('page') ?? 1);
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 20);
+    const filtered = tasks.filter((task) => {
+      if (search && !String(task.title).toLowerCase().includes(search)) return false;
+      if (
+        statusDefinitionId &&
+        (task.status as { id?: string } | undefined)?.id !== statusDefinitionId
+      ) {
+        return false;
+      }
+      return true;
+    });
+    await fulfillApi(route, {
+      items: filtered.slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      page: pageNumber,
+      pageSize,
+      total: filtered.length,
+    });
+  });
+  await page.route(/.*\/workspaces\/workspace-2\/tasks(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [], page: 1, pageSize: 25, total: 0 });
+  });
+}
+
 test('application boots and login route loads', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
@@ -479,6 +607,73 @@ test('authenticated status management supports workspace status lifecycle UI', a
   const doingBox = await page.getByText('Doing').first().boundingBox();
   const todoBox = await page.getByText('To Do').first().boundingBox();
   expect(doingBox?.y ?? 0).toBeLessThan(todoBox?.y ?? Number.MAX_SAFE_INTEGER);
+});
+
+test('authenticated task creation supports the quick-create flow', async ({ page }) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  await page.goto('/workspace/tasks');
+  await expect(page.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Create Task' }).click();
+  await expect(page.getByLabel('Title *')).toBeVisible();
+  await expect(page.getByLabel('Assignee *')).toBeVisible();
+  await expect(page.getByLabel('Due Date *')).toBeVisible();
+  await expect(page.getByLabel('Description')).toBeHidden();
+
+  await page.getByLabel('Title *').fill('E2E quick task');
+  await page.getByRole('button', { name: /Anya/ }).click();
+  await page.getByLabel('Due Date *').fill('2026-09-30');
+  await page.getByRole('button', { name: 'Create Task' }).click();
+
+  await expect(page.getByText('Task created')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'All Tasks' })).toBeVisible();
+  await expect(page.getByText('E2E quick task').first()).toBeVisible();
+
+  await page.getByLabel('Search tasks').fill('quick');
+  await expect(page).toHaveURL(/search=quick/);
+  await expect(page.getByText('E2E quick task').first()).toBeVisible();
+
+  await page.goto('/workspace/tasks?search=quick&status=status-task-todo');
+  await expect(page).toHaveURL(/status=status-task-todo/);
+  await expect(page.getByText('E2E quick task').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Grid' }).click();
+  await expect(page).toHaveURL(/view=grid/);
+  await expect(page.getByText('E2E quick task').first()).toBeVisible();
+  await page.getByRole('button', { name: /Open task details: E2E quick task/ }).click();
+  await expect(page.getByRole('dialog')).toContainText('Task details');
+  await expect(page.getByRole('dialog')).toContainText('Anya');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  await page.getByRole('button', { name: 'Compact' }).click();
+  await expect(page).toHaveURL(/view=compact/);
+  await expect(page.getByText('E2E quick task').first()).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Compact' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByText('E2E quick task').first()).toBeVisible();
+
+  for (const width of [375, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const view of ['List', 'Grid', 'Compact']) {
+      await page.getByRole('button', { name: view }).click();
+      await expect(page.getByText('E2E quick task').first()).toBeVisible();
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(1);
+    }
+  }
+
+  await page.getByText('Agency One').first().click();
+  await page.getByRole('option', { name: 'Agency Two' }).click();
+  await expect(page.getByText('Workspace Two').first()).toBeVisible();
+  await expect(page.getByText('E2E quick task')).toBeHidden();
+  await expect(page.getByText('No matching tasks')).toBeVisible();
 });
 
 test('workspace roles page remains responsive across supported widths', async ({ page }) => {
