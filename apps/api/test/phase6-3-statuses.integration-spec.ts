@@ -126,6 +126,21 @@ describe('Phase 6.3A shared statuses integration', () => {
     });
     expect(customized.name).toBe('Custom Review');
     expect(customized.color).toBe('#111111');
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/statuses/initialize-defaults`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(201);
+    const initializedAudit = await prisma.auditLog.findFirst({
+      where: {
+        agencyId: agencyA,
+        workspaceId: workspaceA1,
+        action: 'statuses.defaults_initialized',
+        entityType: 'StatusDefinition',
+      },
+    });
+    expect(initializedAudit).toBeTruthy();
   });
 
   it('creates statuses for each entity type and enforces normalized name/color rules', async () => {
@@ -197,6 +212,12 @@ describe('Phase 6.3A shared statuses integration', () => {
       .send({ isActive: false })
       .expect(200);
     await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/statuses/TASK/${completed.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ isActive: true })
+      .expect(200);
+    await request(app.getHttpServer())
       .get(`/api/v1/workspaces/${workspaceA1}/statuses/TASK/${completed.id}`)
       .set(auth(adminToken))
       .set(ctx(agencyA, workspaceA1))
@@ -207,16 +228,30 @@ describe('Phase 6.3A shared statuses integration', () => {
         workspaceId: workspaceA1,
         entityType: 'StatusDefinition',
         action: {
-          in: ['status.created', 'status.updated', 'status.default_changed', 'status.deactivated'],
+          in: [
+            'status.created',
+            'status.updated',
+            'status.default_changed',
+            'status.deactivated',
+            'status.activated',
+          ],
         },
       },
-      select: { action: true, agencyId: true, workspaceId: true, userId: true, metadata: true },
+      select: {
+        action: true,
+        agencyId: true,
+        workspaceId: true,
+        userId: true,
+        entityId: true,
+        metadata: true,
+      },
     });
     for (const action of [
       'status.created',
       'status.updated',
       'status.default_changed',
       'status.deactivated',
+      'status.activated',
     ]) {
       expect(actions.some((item) => item.action === action)).toBe(true);
     }
@@ -224,6 +259,13 @@ describe('Phase 6.3A shared statuses integration', () => {
       actions.every((item) => item.agencyId === agencyA && item.workspaceId === workspaceA1),
     ).toBe(true);
     expect(actions.every((item) => item.userId)).toBe(true);
+    const taskActions = actions.filter(
+      (item) => item.entityId === statusId || item.entityId === completed.id,
+    );
+    expect(taskActions.length).toBeGreaterThanOrEqual(5);
+    expect(
+      taskActions.every((item) => (item.metadata as { entityType?: string }).entityType === 'TASK'),
+    ).toBe(true);
   });
 
   it('switches defaults transactionally under concurrent requests', async () => {

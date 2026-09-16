@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 6.3A - PASS
-Next: Phase 6.3B - Status Management UI
+Current: Phase 6 - COMPLETE / PASS
+Next: Foundation Deep Audit (Phase 4 + Phase 5 + Phase 6 revalidation)
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -177,12 +177,88 @@ Known limitations:
 - No Task/Ticket models, Kanban, transitions, automation, gamification, or Redis status cache.
 - Existing Project APIs still use the legacy `Project.status` enum until a future migration phase adopts `StatusDefinition`.
 
+### Phase 6.3B - PASS
+
+Status Management UI on top of the Phase 6.3A backend.
+
+Implemented:
+
+- `/workspace/statuses` route linked from the Workspace sidebar as Status Management.
+- One shared UI for `TASK`, `PROJECT`, and `TICKET` status definitions.
+- Entity-specific labels: Task Statuses, Project Pipeline, and Ticket Statuses.
+- Create/edit dialogs with name, optional description, strict HEX color input, curated color palette, semantic category, and terminal toggle.
+- Explicit Set as Default confirmation that shows current and target default statuses.
+- Active/inactive filtering, protected current-default deactivation UI, reactivation, and default initialization empty state.
+- Position ordering through Move Up/Move Down controls using the full backend reorder payload.
+- React Query keys scoped by Workspace and entity type to avoid stale Workspace leakage.
+- English and Tamil labels for the status management UI.
+- Frontend unit coverage for tabs, create/edit validation, duplicate/error handling, default changes, active/inactive actions, reorder rollback, status cap, Workspace switching, Tamil labels, and theme contexts.
+- E2E coverage for authenticated status management lifecycle across task/project/ticket tabs.
+
+Security invariants:
+
+- The frontend only calls Workspace-scoped Phase 6.3A APIs; backend tenant authorization and permission checks remain authoritative.
+- Status IDs are sent only to the backend endpoints that validate Workspace/entity ownership.
+- Reorder controls operate only from the full All-statuses list so the backend receives a complete ordered ID set.
+- Create is disabled from the full entity count when the backend limit of 50 statuses is reached.
+
+Known limitations:
+
+- Phase 6.3B is UI-only and does not migrate Project APIs to `statusDefinitionId`.
+- No Task/Ticket models, Kanban, workflow transitions, automation, gamification, Redis cache, reset-defaults action, or drag/drop dependency.
+
+### Phase 6.3C - PASS
+
+Final Status Management integration and security audit.
+
+Verified:
+
+- Workspace -> TASK/PROJECT/TICKET configuration -> Status API -> Status Management UI -> RBAC -> tenant isolation -> persistence.
+- Status API list/create/edit/default/deactivate/reactivate/reorder flows remain Workspace-scoped and entity-type scoped.
+- Cross-Workspace, cross-Agency, header-forgery, wrong entity-type, foreign status-id, inactive default, duplicate reorder, partial reorder, missing reorder, extra reorder, and status-limit attacks are rejected.
+- Status names are normalized for duplicate rejection per Workspace/entity type, while matching names across different Workspaces or entity types remain allowed.
+- Unsafe colors are rejected by both frontend validation and backend DTO validation; backend accepts only strict `#RRGGBB`.
+- Terminal state remains separate from semantic category, allowing multiple terminal categories such as Completed and Cancelled.
+- Initialize Defaults is idempotent and does not reset customized existing statuses.
+- Exactly one active default is preserved per initialized Workspace/entity type.
+- Reorder persistence uses a complete ordered ID set, rolls back failed frontend optimistic updates, and preserves contiguous positions.
+- Status RBAC permissions are present in the permission catalog and custom Roles can delegate status view permission without granting mutations.
+- Status audit records cover create, update, color/category changes, default changes, deactivate/reactivate, reorder, and initialize defaults with actor, Agency, Workspace, entity type, and status id where relevant.
+- Frontend query keys are Workspace/entity aware; ordinary mutations invalidate only the current Workspace/entity list, while Initialize Defaults invalidates the current Workspace status subtree.
+- Existing Project APIs still use legacy `Project.status`; `statusDefinitionId` remains non-user-facing for future migration work.
+- No Task/Ticket models or APIs were introduced.
+- English/Tamil labels and Light/Dark/Colorful theme coverage remain intact.
+- Phase 6.1 Users/Departments and Phase 6.2 Roles/Permissions/Permission Matrix regressions remain passing.
+
+Phase 6.3 complete invariants:
+
+- Shared Workspace status engine covers TASK, PROJECT, and TICKET configuration.
+- Status definitions are tenant scoped and entity-type isolated.
+- Exactly one active default is preserved for each initialized Workspace/entity type.
+- Ordering is transactional and complete-list based.
+- RBAC and permission-catalog integration remain backend authoritative.
+- Frontend status cache is Workspace/entity aware.
+- Status Management UI supports English/Tamil and Light/Dark/Colorful themes.
+
+### Phase 6.3 - COMPLETE / PASS
+
+Shared Status/Pipeline Management is complete for Phase 6.
+
+### Phase 6 - COMPLETE / PASS
+
+Workspace Users/Departments, Workspace custom Roles/Permissions, and shared Status Management are complete for Phase 6.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
 - Agency -> Workspace is active tenant hierarchy.
 - Workspace is operational data boundary.
 - Backend tenant authorization is authoritative.
+- Workspace users/departments, roles/permissions, and statuses are tenant-scoped Workspace resources.
+- Shared statuses are entity-type isolated across TASK, PROJECT, and TICKET.
+- Each initialized Workspace/entity type has exactly one active default status.
+- Status ordering is transactional and complete-list based.
+- Frontend tenant caches must include Workspace identity, and status caches must include entity type.
 - Access token remains memory-only.
 - Refresh token remains HttpOnly.
 - CSRF protection remains enabled.
@@ -239,6 +315,10 @@ Do not infer or invent model fields from this list.
 | Phase 6.2C | PASS   | Not tagged                       |
 | Phase 6.2  | PASS   | Not tagged                       |
 | Phase 6.3A | PASS   | Not tagged                       |
+| Phase 6.3B | PASS   | Not tagged                       |
+| Phase 6.3C | PASS   | Not tagged                       |
+| Phase 6.3  | PASS   | Not tagged                       |
+| Phase 6    | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -258,5 +338,7 @@ Confirmed current warnings:
 - Phase 6.2B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, and high-threshold audit.
 - Phase 6.2C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - Phase 6.3A acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
+- Phase 6.3B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
+- Phase 6.3C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

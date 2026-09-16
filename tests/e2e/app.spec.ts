@@ -207,6 +207,153 @@ async function mockRoleManagementApi(page: Page) {
   });
 }
 
+async function mockStatusManagementApi(page: Page) {
+  type EntityType = 'TASK' | 'PROJECT' | 'TICKET';
+  type StatusDefinition = {
+    id: string;
+    workspaceId: string;
+    entityType: EntityType;
+    name: string;
+    description: string | null;
+    color: string;
+    position: number;
+    category: string;
+    isDefault: boolean;
+    isTerminal: boolean;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+  };
+
+  const now = new Date().toISOString();
+  const makeStatus = (
+    id: string,
+    entityType: EntityType,
+    name: string,
+    position: number,
+    overrides: Partial<StatusDefinition> = {},
+  ): StatusDefinition => ({
+    id,
+    workspaceId: 'workspace-1',
+    entityType,
+    name,
+    description: null,
+    color: '#64748B',
+    position,
+    category: 'TODO',
+    isDefault: false,
+    isTerminal: false,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+
+  const statuses: Record<EntityType, StatusDefinition[]> = {
+    TASK: [
+      makeStatus('task-todo', 'TASK', 'To Do', 1, { isDefault: true }),
+      makeStatus('task-progress', 'TASK', 'In Progress', 2, {
+        color: '#2563EB',
+        category: 'IN_PROGRESS',
+      }),
+    ],
+    PROJECT: [
+      makeStatus('project-lead', 'PROJECT', 'Lead', 1, {
+        isDefault: true,
+        category: 'BACKLOG',
+      }),
+      makeStatus('project-review', 'PROJECT', 'Client Review', 2, { category: 'REVIEW' }),
+    ],
+    TICKET: [
+      makeStatus('ticket-new', 'TICKET', 'New', 1, { isDefault: true }),
+      makeStatus('ticket-closed', 'TICKET', 'Closed', 2, {
+        isTerminal: true,
+        category: 'COMPLETED',
+      }),
+    ],
+  };
+
+  await page.route(/.*\/workspaces\/workspace-1\/statuses.*/, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const parts = url.pathname.split('/').filter(Boolean);
+    const entityType = parts[parts.indexOf('statuses') + 1] as EntityType | undefined;
+    const statusId = parts[parts.indexOf('statuses') + 2];
+    const action = parts[parts.indexOf('statuses') + 3];
+
+    if (request.method() === 'POST' && entityType === 'initialize-defaults') {
+      await fulfillApi(route, Object.values(statuses).flat());
+      return;
+    }
+
+    if (!entityType || !statuses[entityType]) {
+      await fulfillApi(route, []);
+      return;
+    }
+
+    if (request.method() === 'GET') {
+      await fulfillApi(
+        route,
+        statuses[entityType].sort((a, b) => a.position - b.position),
+      );
+      return;
+    }
+
+    if (request.method() === 'POST' && !statusId) {
+      const body = request.postDataJSON() as Partial<StatusDefinition>;
+      const created = makeStatus(
+        `${entityType.toLowerCase()}-${Date.now()}`,
+        entityType,
+        body.name ?? 'Custom',
+        statuses[entityType].length + 1,
+        {
+          description: body.description ?? null,
+          color: body.color ?? '#64748B',
+          category: body.category ?? 'TODO',
+          isTerminal: Boolean(body.isTerminal),
+        },
+      );
+      statuses[entityType].push(created);
+      await fulfillApi(route, created, 201);
+      return;
+    }
+
+    if (request.method() === 'PATCH' && statusId === 'reorder') {
+      const body = request.postDataJSON() as { orderedStatusIds: string[] };
+      statuses[entityType] = body.orderedStatusIds.map((id, index) => ({
+        ...statuses[entityType].find((status) => status.id === id)!,
+        position: index + 1,
+      }));
+      await fulfillApi(route, statuses[entityType]);
+      return;
+    }
+
+    const existing = statuses[entityType].find((status) => status.id === statusId);
+    if (!existing) {
+      await fulfillApi(route, { message: 'Not found' }, 404);
+      return;
+    }
+
+    if (request.method() === 'POST' && action === 'set-default') {
+      statuses[entityType] = statuses[entityType].map((status) => ({
+        ...status,
+        isDefault: status.id === statusId,
+      }));
+      await fulfillApi(
+        route,
+        statuses[entityType].find((status) => status.id === statusId),
+      );
+      return;
+    }
+
+    if (request.method() === 'PATCH') {
+      const body = request.postDataJSON() as Partial<StatusDefinition>;
+      Object.assign(existing, body, { updatedAt: now });
+      await fulfillApi(route, existing);
+    }
+  });
+}
+
 test('application boots and login route loads', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
@@ -287,6 +434,51 @@ test('authenticated role management supports custom roles and permission assignm
   await expect(page.getByText('Member One').first()).toBeVisible();
   await page.getByRole('combobox', { name: 'Role' }).nth(1).click();
   await expect(page.getByRole('option', { name: 'QA Lead', exact: true })).toBeVisible();
+});
+
+test('authenticated status management supports workspace status lifecycle UI', async ({ page }) => {
+  await mockAuthenticatedSession(page);
+  await mockStatusManagementApi(page);
+
+  await page.goto('/workspace/statuses');
+  await expect(page.getByRole('heading', { name: 'Status Management' })).toBeVisible();
+  await expect(page.getByText('To Do').first()).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Project Pipeline' }).click();
+  await expect(page.getByText('Client Review').first()).toBeVisible();
+  await page.getByRole('tab', { name: 'Ticket Statuses' }).click();
+  await expect(page.getByText('Closed').first()).toBeVisible();
+  await page.getByRole('tab', { name: 'Task Statuses' }).click();
+
+  await page.getByRole('button', { name: /create task status/i }).click();
+  await page.getByLabel('Name').fill('Blocked');
+  await page.getByLabel('Description').fill('Waiting on a dependency');
+  await page.getByRole('textbox', { name: 'Color' }).fill('#DC2626');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.getByText('Blocked').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Actions: In Progress' }).click();
+  await page.getByRole('menuitem', { name: 'Edit' }).click();
+  await page.getByLabel('Name').fill('Doing');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Doing').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Actions: Doing' }).click();
+  await page.getByRole('menuitem', { name: 'Set as Default' }).click();
+  await expect(page.getByText('Current Default:')).toBeVisible();
+  await page.getByRole('button', { name: 'Set as Default' }).click();
+  await expect(
+    page.locator('.p-0').filter({ hasText: 'Doing' }).getByText('Default'),
+  ).toBeVisible();
+
+  const doingCard = page.locator('.p-0').filter({ hasText: 'Doing' }).first();
+  await doingCard.getByRole('button', { name: /move up/i }).click();
+  await page.reload();
+  await expect(page.getByText('Doing').first()).toBeVisible();
+  await expect(page.getByText('To Do').first()).toBeVisible();
+  const doingBox = await page.getByText('Doing').first().boundingBox();
+  const todoBox = await page.getByText('To Do').first().boundingBox();
+  expect(doingBox?.y ?? 0).toBeLessThan(todoBox?.y ?? Number.MAX_SAFE_INTEGER);
 });
 
 test('workspace roles page remains responsive across supported widths', async ({ page }) => {
