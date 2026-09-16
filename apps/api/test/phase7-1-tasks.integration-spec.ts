@@ -82,6 +82,7 @@ describe('Phase 7.1 task core backend integration', () => {
   let betaProjectId: string;
   let taskDefaultStatusId: string;
   let taskReviewStatusId: string;
+  let taskCompletedStatusId: string;
   let inactiveTaskStatusId: string;
   let projectStatusId: string;
   let ticketStatusId: string;
@@ -1266,6 +1267,10 @@ describe('Phase 7.1 task core backend integration', () => {
         .send({ taskIds: [task.body.data.id], membershipIds: [adminMembershipId] }),
     ]);
     expect(calls.map((response) => response.status)).toEqual([201, 201]);
+    expect(calls.reduce((total, response) => total + response.body.data.changedCount, 0)).toBe(1);
+    expect(
+      calls.reduce((total, response) => total + response.body.data.relationChangedCount, 0),
+    ).toBe(1);
     await expect(
       prisma.taskAssignee.count({
         where: { taskId: task.body.data.id, membershipId: adminMembershipId },
@@ -1366,6 +1371,737 @@ describe('Phase 7.1 task core backend integration', () => {
       .expect(422);
   });
 
+  it('supports direct subtasks, parent summaries, detach, and valid reparenting', async () => {
+    const root = await createTask({ title: 'Hierarchy root' }).expect(201);
+    const otherRoot = await createTask({ title: 'Hierarchy other root' }).expect(201);
+    const child = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks`)
+      .set(auth(createOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Hierarchy child', dueAt: '2027-01-01T00:00:00Z' })
+      .expect(201);
+    const grandchild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Hierarchy grandchild' })
+      .expect(201);
+
+    expect(child.body.data.parentTaskId).toBe(root.body.data.id);
+    expect(child.body.data.parent.id).toBe(root.body.data.id);
+    const rootDetail = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(rootDetail.body.data.directSubtaskCount).toBe(1);
+
+    const directChildren = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(directChildren.body.data.items.map((item: { id: string }) => item.id)).toEqual([
+      child.body.data.id,
+    ]);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: null })
+      .expect(200)
+      .expect((response) => expect(response.body.data.parentTaskId).toBeNull());
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: otherRoot.body.data.id })
+      .expect(200)
+      .expect((response) => expect(response.body.data.parentTaskId).toBe(otherRoot.body.data.id));
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: grandchild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: child.body.data.id });
+  });
+
+  it('enforces hierarchy database constraints and safe direct-subtask reads', async () => {
+    const root = await createTask({ title: 'DB hierarchy root' }).expect(201);
+    const childA = await createSubtask(root.body.data.id, { title: 'DB hierarchy child A' }).expect(
+      201,
+    );
+    const childB = await createSubtask(root.body.data.id, { title: 'DB hierarchy child B' }).expect(
+      201,
+    );
+    const grandchild = await createSubtask(childA.body.data.id, {
+      title: 'DB hierarchy grandchild',
+    }).expect(201);
+    const foreign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'DB foreign parent',
+    }).expect(201);
+
+    await expect(
+      prisma.task.update({
+        where: { id: root.body.data.id },
+        data: { parentTaskId: root.body.data.id },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.task.update({
+        where: { id: childA.body.data.id },
+        data: { parentTaskId: foreign.body.data.id },
+      }),
+    ).rejects.toThrow();
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${childB.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    const firstPage = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks?page=1&pageSize=1`,
+      )
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(firstPage.body.data.total).toBe(1);
+    expect(firstPage.body.data.items.map((item: { id: string }) => item.id)).toEqual([
+      childA.body.data.id,
+    ]);
+    expect(firstPage.body.data.items.map((item: { id: string }) => item.id)).not.toContain(
+      grandchild.body.data.id,
+    );
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks?page=0`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(422);
+
+    const detail = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(detail.body.data.directSubtaskCount).toBe(1);
+
+    const historicalParent = await createTask({ title: 'Historical deleted parent' }).expect(201);
+    const historicalChild = await createSubtask(historicalParent.body.data.id, {
+      title: 'Historical child',
+    }).expect(201);
+    await prisma.task.update({
+      where: { id: historicalParent.body.data.id },
+      data: { deletedAt: new Date() },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${historicalChild.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.parent).toBeNull());
+  });
+
+  it('rejects hierarchy cycles, foreign parents, deleted parents, forged headers, and weak RBAC', async () => {
+    const root = await createTask({ title: 'Cycle root' }).expect(201);
+    const child = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Cycle child' })
+      .expect(201);
+    const grandchild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Cycle grandchild' })
+      .expect(201);
+    const sameAgencyForeign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Foreign workspace parent',
+    }).expect(201);
+    const crossAgencyForeign = await createTaskInWorkspace(workspaceB1, agencyB, ownerBToken, {
+      title: 'Cross agency parent',
+    }).expect(201);
+    const deletedParent = await createTask({ title: 'Deleted parent' }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deletedParent.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: root.body.data.id })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: grandchild.body.data.id })
+      .expect(409);
+
+    let deepParentId = root.body.data.id;
+    const deepIds: string[] = [];
+    for (const title of ['Cycle D', 'Cycle E']) {
+      const created = await createSubtask(deepParentId, { title }).expect(201);
+      deepIds.push(created.body.data.id);
+      deepParentId = created.body.data.id;
+    }
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: deepIds[deepIds.length - 1] })
+      .expect(409);
+
+    for (const parentTaskId of [
+      sameAgencyForeign.body.data.id,
+      crossAgencyForeign.body.data.id,
+      randomUUID(),
+      deletedParent.body.data.id,
+    ]) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId })
+        .expect(404);
+    }
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ parentTaskId: root.body.data.id })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks`)
+      .set(auth(ownerBToken))
+      .set(ctx(agencyA, workspaceB1))
+      .send({ title: 'Forged workspace subtask' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(ownerBToken))
+      .set(ctx(agencyB, workspaceA1))
+      .send({ parentTaskId: root.body.data.id })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Viewer cannot create subtask' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/subtasks`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Update-only cannot create subtask' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: null })
+      .expect(403);
+  });
+
+  it('keeps concurrent hierarchy reparent races acyclic with safe conflicts', async () => {
+    const reciprocalA = await createTask({ title: 'Concurrent reciprocal A' }).expect(201);
+    const reciprocalB = await createTask({ title: 'Concurrent reciprocal B' }).expect(201);
+
+    const reciprocalResults = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${reciprocalA.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId: reciprocalB.body.data.id }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${reciprocalB.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId: reciprocalA.body.data.id }),
+    ]);
+    expect(reciprocalResults.map((response) => response.status).sort()).toEqual([200, 409]);
+    await expectNoCycle([reciprocalA.body.data.id, reciprocalB.body.data.id]);
+
+    const a = await createTask({ title: 'Concurrent deep A' }).expect(201);
+    const b = await createTask({ title: 'Concurrent deep B' }).expect(201);
+    const c = await createTask({ title: 'Concurrent deep C' }).expect(201);
+    const deepResults = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${a.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId: b.body.data.id }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${b.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId: c.body.data.id }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${c.body.data.id}/parent`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ parentTaskId: a.body.data.id }),
+    ]);
+    expect(deepResults.every((response) => [200, 409].includes(response.status))).toBe(true);
+    await expectNoCycle([a.body.data.id, b.body.data.id, c.body.data.id]);
+  });
+
+  it('keeps reparent and detach idempotent without noisy hierarchy audits', async () => {
+    const parent = await createTask({ title: 'Idempotent parent' }).expect(201);
+    const child = await createTask({ title: 'Idempotent child' }).expect(201);
+    const subtask = await createSubtask(parent.body.data.id, {
+      title: 'Audited subtask creation',
+    }).expect(201);
+
+    const subtaskAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'task.created', entityId: subtask.body.data.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect((subtaskAudit.metadata as { parentTaskId?: string }).parentTaskId).toBe(
+      parent.body.data.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: parent.body.data.id })
+      .expect(200);
+    const afterReparent = await prisma.task.findUniqueOrThrow({
+      where: { id: child.body.data.id },
+    });
+    const parentChangedAudits = await prisma.auditLog.count({
+      where: { action: 'task.parent_changed', entityId: child.body.data.id },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: parent.body.data.id })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: child.body.data.id } }),
+    ).resolves.toMatchObject({ updatedAt: afterReparent.updatedAt });
+    await expect(
+      prisma.auditLog.count({
+        where: { action: 'task.parent_changed', entityId: child.body.data.id },
+      }),
+    ).resolves.toBe(parentChangedAudits);
+
+    const root = await createTask({ title: 'Idempotent root detach' }).expect(201);
+    const beforeDetach = await prisma.task.findUniqueOrThrow({ where: { id: root.body.data.id } });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${root.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: null })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: root.body.data.id } }),
+    ).resolves.toMatchObject({ updatedAt: beforeDetach.updatedAt });
+  });
+
+  it('enforces terminal parent and terminal ancestor status invariants deeply', async () => {
+    const parent = await createTask({ title: 'Terminal parent' }).expect(201);
+    const child = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Terminal child' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${child.body.data.id}`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(200);
+
+    const deepParent = await createTask({ title: 'Deep terminal parent' }).expect(201);
+    const deepChild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${deepParent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Deep terminal child' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${deepChild.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Deep non-terminal grandchild' })
+      .expect(201);
+    await prisma.task.update({
+      where: { id: deepChild.body.data.id },
+      data: { statusDefinitionId: taskCompletedStatusId },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${deepParent.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+
+    const corruptParent = await createTask({ title: 'Corrupt ancestor parent' }).expect(201);
+    const corruptMiddle = await createSubtask(corruptParent.body.data.id, {
+      title: 'Corrupt ancestor middle',
+    }).expect(201);
+    const corruptLeaf = await createSubtask(corruptMiddle.body.data.id, {
+      title: 'Corrupt ancestor leaf',
+      statusDefinitionId: taskCompletedStatusId,
+    }).expect(201);
+    await prisma.task.update({
+      where: { id: corruptParent.body.data.id },
+      data: { statusDefinitionId: taskCompletedStatusId },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${corruptLeaf.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(409);
+  });
+
+  it('validates bulk status with prospective hierarchy state', async () => {
+    const parent = await createTask({ title: 'Bulk hierarchy parent' }).expect(201);
+    const child = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Bulk hierarchy child' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [parent.body.data.id], statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [parent.body.data.id, child.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [child.body.data.id], statusDefinitionId: taskDefaultStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [parent.body.data.id, child.body.data.id],
+        statusDefinitionId: taskDefaultStatusId,
+      })
+      .expect(200);
+
+    const deepParent = await createTask({ title: 'Deep bulk parent' }).expect(201);
+    const deepChild = await createSubtask(deepParent.body.data.id, {
+      title: 'Deep bulk child',
+    }).expect(201);
+    const deepGrandchild = await createSubtask(deepChild.body.data.id, {
+      title: 'Deep bulk grandchild',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [deepParent.body.data.id, deepChild.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [deepParent.body.data.id, deepChild.body.data.id, deepGrandchild.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [deepChild.body.data.id, deepGrandchild.body.data.id],
+        statusDefinitionId: taskDefaultStatusId,
+      })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [deepGrandchild.body.data.id], statusDefinitionId: taskDefaultStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [deepParent.body.data.id, deepChild.body.data.id, deepGrandchild.body.data.id],
+        statusDefinitionId: taskDefaultStatusId,
+      })
+      .expect(200);
+  });
+
+  it('guards terminal parent create/reparent rules and detaches surviving children on delete', async () => {
+    const terminalParent = await createTask({
+      title: 'Terminal parent for attach',
+      statusDefinitionId: taskCompletedStatusId,
+    }).expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${terminalParent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Open child under terminal parent' })
+      .expect(409);
+    const terminalChild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${terminalParent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        title: 'Terminal child under terminal parent',
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(201);
+    const openMove = await createTask({ title: 'Open task moved under terminal' }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${openMove.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: terminalParent.body.data.id })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${openMove.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${openMove.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: terminalParent.body.data.id })
+      .expect(200);
+    expect(terminalChild.body.data.parentTaskId).toBe(terminalParent.body.data.id);
+
+    const terminalSubtreeRoot = await createTask({ title: 'Terminal subtree root' }).expect(201);
+    await createSubtask(terminalSubtreeRoot.body.data.id, {
+      title: 'Open descendant in terminal subtree',
+    }).expect(201);
+    await prisma.task.update({
+      where: { id: terminalSubtreeRoot.body.data.id },
+      data: { statusDefinitionId: taskCompletedStatusId },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${terminalSubtreeRoot.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: terminalParent.body.data.id })
+      .expect(409);
+
+    const nonTerminalParent = await createTask({ title: 'Non-terminal reparent target' }).expect(
+      201,
+    );
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${terminalChild.body.data.id}/parent`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ parentTaskId: nonTerminalParent.body.data.id })
+      .expect(200);
+
+    const deleteParent = await createTask({ title: 'Delete hierarchy parent' }).expect(201);
+    const deleteChild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${deleteParent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Delete hierarchy child' })
+      .expect(201);
+    const deleteGrandchild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${deleteChild.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Delete hierarchy grandchild' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deleteParent.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: deleteChild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: deleteGrandchild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: deleteChild.body.data.id, deletedAt: null });
+
+    const bulkParent = await createTask({ title: 'Bulk delete hierarchy parent' }).expect(201);
+    const bulkChild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${bulkParent.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Bulk delete hierarchy child' })
+      .expect(201);
+    const bulkGrandchild = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${bulkChild.body.data.id}/subtasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ title: 'Bulk delete hierarchy grandchild' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [bulkParent.body.data.id, bulkChild.body.data.id] })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: bulkGrandchild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+
+    const middleParent = await createTask({ title: 'Delete middle parent' }).expect(201);
+    const middle = await createSubtask(middleParent.body.data.id, {
+      title: 'Delete middle node',
+    }).expect(201);
+    const middleChild = await createSubtask(middle.body.data.id, {
+      title: 'Delete middle child',
+    }).expect(201);
+    const middleGrandchild = await createSubtask(middleChild.body.data.id, {
+      title: 'Delete middle grandchild',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${middle.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: middleParent.body.data.id } }),
+    ).resolves.toMatchObject({ deletedAt: null });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: middleChild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: middleGrandchild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: middleChild.body.data.id, deletedAt: null });
+
+    const leafParent = await createTask({ title: 'Delete leaf parent' }).expect(201);
+    const leaf = await createSubtask(leafParent.body.data.id, { title: 'Delete leaf' }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${leaf.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: leafParent.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+
+    const nonContiguousParent = await createTask({ title: 'Bulk non-contiguous parent' }).expect(
+      201,
+    );
+    const nonContiguousChild = await createSubtask(nonContiguousParent.body.data.id, {
+      title: 'Bulk non-contiguous child',
+    }).expect(201);
+    const nonContiguousGrandchild = await createSubtask(nonContiguousChild.body.data.id, {
+      title: 'Bulk non-contiguous grandchild',
+    }).expect(201);
+    const nonContiguousGreatGrandchild = await createSubtask(nonContiguousGrandchild.body.data.id, {
+      title: 'Bulk non-contiguous great grandchild',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [nonContiguousParent.body.data.id, nonContiguousGrandchild.body.data.id],
+      })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: nonContiguousChild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: nonContiguousGreatGrandchild.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+
+    const orderParentOne = await createTask({ title: 'Bulk order parent one' }).expect(201);
+    const orderChildOne = await createSubtask(orderParentOne.body.data.id, {
+      title: 'Bulk order child one',
+    }).expect(201);
+    const orderGrandchildOne = await createSubtask(orderChildOne.body.data.id, {
+      title: 'Bulk order grandchild one',
+    }).expect(201);
+    const orderParentTwo = await createTask({ title: 'Bulk order parent two' }).expect(201);
+    const orderChildTwo = await createSubtask(orderParentTwo.body.data.id, {
+      title: 'Bulk order child two',
+    }).expect(201);
+    const orderGrandchildTwo = await createSubtask(orderChildTwo.body.data.id, {
+      title: 'Bulk order grandchild two',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [orderParentOne.body.data.id, orderChildOne.body.data.id] })
+      .expect(200);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [orderChildTwo.body.data.id, orderParentTwo.body.data.id] })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: orderGrandchildOne.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: orderGrandchildTwo.body.data.id } }),
+    ).resolves.toMatchObject({ parentTaskId: null, deletedAt: null });
+
+    const deleteAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'task.deleted', entityId: deleteParent.body.data.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect((deleteAudit.metadata as { detachedChildCount?: number }).detachedChildCount).toBe(1);
+  });
+
   it('retains historical project and department links after later archive or deactivation', async () => {
     const created = await createTask({
       title: 'Historical relation task',
@@ -1416,6 +2152,20 @@ describe('Phase 7.1 task core backend integration', () => {
       .send(body);
   }
 
+  function createSubtask(
+    parentTaskId: string,
+    body: Record<string, unknown>,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${parentTaskId}/subtasks`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send(body);
+  }
+
   function createTaskInWorkspace(
     workspaceId: string,
     agencyId: string,
@@ -1440,6 +2190,23 @@ describe('Phase 7.1 task core backend integration', () => {
     if (expected.assignees !== undefined) expect(task._count.assignees).toBe(expected.assignees);
     if (expected.followers !== undefined) expect(task._count.followers).toBe(expected.followers);
     if (expected.projects !== undefined) expect(task._count.projects).toBe(expected.projects);
+  }
+
+  async function expectNoCycle(taskIds: string[]) {
+    const tasks = await prisma.task.findMany({
+      where: { id: { in: taskIds } },
+      select: { id: true, parentTaskId: true },
+    });
+    const parentById = new Map(tasks.map((task) => [task.id, task.parentTaskId]));
+    for (const taskId of taskIds) {
+      const seen = new Set<string>();
+      let cursor: string | null | undefined = taskId;
+      while (cursor) {
+        expect(seen.has(cursor)).toBe(false);
+        seen.add(cursor);
+        cursor = parentById.get(cursor);
+      }
+    }
   }
 
   async function seedFixtures() {
@@ -1600,6 +2367,11 @@ describe('Phase 7.1 task core backend integration', () => {
     taskReviewStatusId = (
       await prisma.statusDefinition.findFirstOrThrow({
         where: { workspaceId: wa.id, entityType: 'TASK', name: 'Review' },
+      })
+    ).id;
+    taskCompletedStatusId = (
+      await prisma.statusDefinition.findFirstOrThrow({
+        where: { workspaceId: wa.id, entityType: 'TASK', name: 'Completed' },
       })
     ).id;
     projectStatusId = (

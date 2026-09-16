@@ -195,6 +195,13 @@ export class UpdateTaskStatusDto {
   statusDefinitionId!: string;
 }
 
+export class UpdateTaskParentDto {
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsUUID()
+  parentTaskId!: string | null;
+}
+
 export class BulkTaskIdsDto {
   @ApiProperty({ type: [String], minItems: 1, maxItems: 100 })
   @IsArray()

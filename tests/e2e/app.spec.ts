@@ -354,7 +354,7 @@ async function mockStatusManagementApi(page: Page) {
   });
 }
 
-async function mockTaskCreationApi(page: Page) {
+async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } = {}) {
   const now = '2026-09-16T00:00:00.000Z';
   const users = [
     {
@@ -387,6 +387,16 @@ async function mockTaskCreationApi(page: Page) {
     createdAt: now,
     updatedAt: now,
   };
+  const completedTaskStatus = {
+    ...taskStatus,
+    id: 'status-task-completed',
+    name: 'Completed',
+    position: 2,
+    category: 'DONE',
+    isDefault: false,
+    isTerminal: true,
+  };
+  const taskStatuses = [taskStatus, completedTaskStatus];
   const tasks: Array<Record<string, unknown>> = [
     {
       id: 'task-seed-alpha',
@@ -421,6 +431,24 @@ async function mockTaskCreationApi(page: Page) {
       updatedAt: now,
     },
   ];
+  for (let index = 1; index <= (options.extraTasks ?? 0); index += 1) {
+    tasks.push({
+      id: `task-extra-${index}`,
+      workspaceId: 'workspace-1',
+      title: `Extra task ${index}`,
+      description: null,
+      priority: 'MEDIUM',
+      status: taskStatus,
+      department: null,
+      dueAt: '2026-10-15T00:00:00.000Z',
+      assignees: [],
+      followers: [],
+      projects: [],
+      counts: { assignees: 0, followers: 0, projects: 0 },
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
 
   await page.route(/.*\/workspaces\/workspace-1\/users(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: users, page: 1, pageSize: 10, total: users.length });
@@ -435,7 +463,7 @@ async function mockTaskCreationApi(page: Page) {
     await fulfillApi(route, { items: [], page: 1, pageSize: 100, total: 0 });
   });
   await page.route(/.*\/workspaces\/workspace-1\/statuses\/TASK(\?.*)?$/, async (route) => {
-    await fulfillApi(route, [taskStatus]);
+    await fulfillApi(route, taskStatuses);
   });
   await page.route(/.*\/workspaces\/workspace-2\/statuses\/TASK(\?.*)?$/, async (route) => {
     await fulfillApi(route, [{ ...taskStatus, workspaceId: 'workspace-2' }]);
@@ -445,6 +473,10 @@ async function mockTaskCreationApi(page: Page) {
   });
   await page.route(/.*\/workspaces\/workspace-1\/tasks\/bulk\/priority$/, async (route) => {
     const body = route.request().postDataJSON() as { taskIds: string[]; priority: string };
+    if (body.priority === 'URGENT') {
+      await fulfillApi(route, { message: 'One or more selected tasks are unavailable.' }, 404);
+      return;
+    }
     let changedCount = 0;
     for (const task of tasks) {
       if (!body.taskIds.includes(String(task.id))) continue;
@@ -466,10 +498,12 @@ async function mockTaskCreationApi(page: Page) {
       statusDefinitionId: string;
     };
     let changedCount = 0;
+    const nextStatus =
+      taskStatuses.find((status) => status.id === body.statusDefinitionId) ?? taskStatus;
     for (const task of tasks) {
       if (!body.taskIds.includes(String(task.id))) continue;
       if ((task.status as { id?: string }).id !== body.statusDefinitionId) {
-        task.status = taskStatus;
+        task.status = nextStatus;
         task.updatedAt = now;
         changedCount += 1;
       }
@@ -771,7 +805,7 @@ test('authenticated task creation supports the quick-create flow', async ({ page
   await expect(page.getByRole('heading', { name: 'All Tasks' })).toBeVisible();
   await expect(page.getByText('E2E quick task').first()).toBeVisible();
 
-  await page.getByLabel('Search tasks').fill('quick');
+  await page.goto('/workspace/tasks?search=quick');
   await expect(page).toHaveURL(/search=quick/);
   await expect(page.getByText('E2E quick task').first()).toBeVisible();
 
@@ -904,6 +938,67 @@ test('authenticated task browser clears bulk selection on workspace change', asy
 
   await expect(page.getByText('Workspace Two').first()).toBeVisible();
   await expect(page.getByText('1 task selected')).toHaveCount(0);
+});
+
+test('authenticated task browser handles stale, terminal, detail, pagination, and mobile bulk states', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page, { extraTasks: 9 });
+
+  await page.goto('/workspace/tasks');
+  await expect(page.getByText('Seed alpha task').first()).toBeVisible();
+
+  await page.getByLabel('Select task: Seed alpha task').first().click();
+  await page.getByRole('button', { name: 'Change priority' }).click();
+  await page.getByRole('combobox', { name: 'Priority' }).click();
+  await page
+    .getByRole('option', { name: 'Urgent' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Update 1 tasks' }).click();
+  await expect(
+    page.getByText('One or more selected tasks are no longer available. Refresh and try again.'),
+  ).toBeVisible();
+  await expect(page.getByText('1 task selected').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  await page.getByRole('button', { name: 'Change status' }).click();
+  await page.getByRole('combobox', { name: 'Status' }).click();
+  await page
+    .getByRole('option', { name: 'Completed' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Update 1 tasks' }).click();
+  await expect(page.getByText('1 task selected')).toHaveCount(0);
+  const alphaRow = page.getByRole('row', { name: /Seed alpha task/ });
+  await expect(alphaRow.getByText('Completed')).toBeVisible();
+  await expect(alphaRow.getByText('Upcoming')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Completed');
+  await expect(page.getByRole('dialog')).not.toContainText('Upcoming');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.goto('/workspace/tasks?page=2&pageSize=10');
+  await expect(page.locator('button:visible', { hasText: 'Extra task 9' }).first()).toBeVisible();
+  await page.getByLabel('Select all on this page').click();
+  await expect(page.getByText('1 task selected').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Delete tasks' }).click();
+  await page.getByRole('button', { name: 'Delete 1 tasks' }).click();
+  await expect(page.getByText('1 task selected')).toHaveCount(0);
+  await expect.poll(() => page.url()).not.toContain('page=2');
+  await expect(page.getByText('Extra task 9')).toHaveCount(0);
+
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.locator('[aria-label="Select task: Seed alpha task"]:visible').click();
+  await page.getByRole('button', { name: 'Bulk actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete tasks' }).click();
+  await expect(page.getByText('Delete 1 selected tasks?')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete 1 tasks' }).click();
+  await expect(page.getByText('Seed alpha task')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('workspace roles page remains responsive across supported widths', async ({ page }) => {

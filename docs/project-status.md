@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.3C2 - COMPLETE / PASS
-Next: Phase 7.3C2 Refinement - Focused Bulk Selection UX polish/audit
+Current: Phase 7.4A1 - Nested Task Hierarchy Backend - COMPLETE / PASS
+Next: Phase 7.4A2 - Dependencies + Related Tasks Backend
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -560,7 +560,93 @@ Known deferred Task features:
 
 - No select-all-across-all-pages behavior.
 - No Kanban, inline editing, comments, attachments, tags, subtasks, dependencies, recurrence, templates, approvals, time tracking, workload, Calendar, Gantt, gamification, or automation.
-- Phase 7.3C is not marked complete until the requested Phase 7.3C2 refinement/final audit is complete.
+
+### Phase 7.3C3 - PASS
+
+Final Bulk + All Tasks security / performance / integration audit.
+
+Verified:
+
+- Workspace-scoped All Tasks remains server-side paginated, searched, filtered, and sorted.
+- List, Grid, and Compact share one Workspace-scoped Task list query and one read-only Task detail flow.
+- Current-page-only bulk selection is in memory only; view switching preserves selection, while dataset, tenant, and session changes clear selection.
+- Bulk status, priority, assignee add/remove, and delete use one backend request per operation.
+- Bulk backend operations are bounded, transactional, tenant scoped, permission scoped, and audit only successful mutations.
+- Same-Agency cross-Workspace, cross-Agency, unknown Task, soft-deleted Task, forged-header, invalid status, invalid priority, stale membership, and unauthorized bulk attempts are rejected without partial mutation.
+- Bulk assignee add remains idempotent under concurrent duplicate requests and reports counts from actual database inserts.
+- Bulk soft delete sets `deletedAt`, preserves TaskAssignee, TaskFollower, TaskProject, and audit history, and normal lists continue to exclude deleted Tasks.
+- Query keys include Workspace identity for list/detail/selector data; successful bulk mutations invalidate only current Workspace task queries.
+- Relation rendering uses list summaries and does not issue per-row detail requests.
+- No local business persistence was added; only the tenant-neutral view preference remains intentional presentation persistence.
+- Quick Create remains unchanged: Title, Assignee, and Due Date are the initial fields.
+
+Phase 7.3 complete invariants:
+
+- Workspace-scoped paginated All Tasks.
+- Server-side search/filter/sort.
+- List/Grid/Compact share one query.
+- Read-only Task detail.
+- Current-page-only bulk selection.
+- View switching preserves selection.
+- Dataset/tenant changes clear selection.
+- Transactional bulk status/priority/assignee/delete.
+- One bulk request per operation.
+- Independent Task permissions.
+- Tenant-correct audit.
+- Bounded query/database behavior.
+- No cross-Workspace cache/selection leakage.
+
+Known deferred Task features:
+
+- No Phase 7.4 Task Relationships yet.
+- No subtasks, dependencies, comments, tags, attachments, recurrence, templates, approvals, completion proof, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
+
+### Phase 7.3C - COMPLETE / PASS
+
+Task Bulk Backend Engine, Bulk Selection UX, and final Bulk + All Tasks audit are complete for Phase 7.3.
+
+### Phase 7.3 - ALL TASKS - COMPLETE / PASS
+
+All Tasks foundation is complete for Phase 7, including Quick Create integration, List/Grid/Compact, search, filters, sort, pagination, URL state, read-only detail, bulk selection, bulk backend operations, tenant/security checks, audit, and performance boundaries.
+
+### Phase 7.4A1 - Nested Task Hierarchy Backend - COMPLETE / PASS
+
+Implemented:
+
+- Optional same-Workspace `parentTaskId` on Task with restrictive self relation and no cascade delete.
+- Unlimited logical nesting through direct parent links; normal Task creation remains root creation by default.
+- Dedicated backend APIs for creating direct subtasks, listing direct subtasks with pagination, and reparenting/detaching Tasks.
+- Task detail hierarchy summary with parent summary and direct subtask count.
+- Cycle prevention for self-parenting and deep descendant reparent attempts.
+- Same-Workspace parent enforcement; foreign Workspace, cross-Agency, unknown, and soft-deleted parents are rejected.
+- Terminal parent invariant: parent Tasks cannot move terminal while active descendants remain non-terminal.
+- Terminal ancestor reopen invariant: active descendants cannot move non-terminal while an active terminal ancestor remains terminal.
+- Bulk status prospective validation so parent/child terminal or reopen transitions can succeed atomically when the committed state is valid.
+- Parent soft-delete behavior detaches surviving direct children to root without deleting descendants.
+- Bulk delete detaches surviving direct children of any deleted parent in the same transaction.
+- Task creation audit includes `parentTaskId` for subtask creation, while parent changes, detach, and deletion side-effect counts remain traceable.
+
+Security/performance invariants:
+
+- Hierarchy APIs use existing `tasks.view`, `tasks.create`, `tasks.update`, and `tasks.delete` permissions.
+- Database-level same-Workspace parent FK and self-parent check protect Task hierarchy if service validation is bypassed.
+- Recursive validation is Workspace scoped, cycle guarded with path tracking, and uses PostgreSQL recursive CTEs instead of one query per depth level.
+- Deep, self, and representative concurrent reparent cycle attempts are rejected or conflict safely; final committed hierarchy remains acyclic.
+- Logical nesting remains unlimited; no product depth cap is enforced.
+- Direct subtask reads return active direct children only, are paginated, and do not recursively hydrate descendants.
+- Normal All Tasks list/search/filter/sort behavior remains unchanged and does not recursively hydrate trees.
+- Task detail exposes only an immediate active parent summary and active direct subtask count.
+- Terminal parent checks inspect the full active moved subtree before attach/reparent.
+- Terminal completion checks inspect all active descendants, and terminal ancestors block descendant reopen.
+- Bulk status validates the prospective hierarchy state atomically for deep terminal/reopen transitions.
+- Task deletion and bulk deletion detach surviving direct children to root; descendants never cascade-delete.
+- Hierarchy writes remain tenant/RBAC/audit safe, including forged-header rejection and retryable conflict handling.
+- Quick Create remains unchanged and does not expose a Parent field.
+
+Known deferred Task features:
+
+- No Task Relationships frontend yet.
+- No dependencies, related tasks, comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
 
 ## Architecture Invariants
 
@@ -645,6 +731,10 @@ Do not infer or invent model fields from this list.
 | Phase 7.3B    | PASS   | Not tagged                       |
 | Phase 7.3C1   | PASS   | Not tagged                       |
 | Phase 7.3C2   | PASS   | Not tagged                       |
+| Phase 7.3C3   | PASS   | Not tagged                       |
+| Phase 7.3C    | PASS   | Not tagged                       |
+| Phase 7.3     | PASS   | Not tagged                       |
+| Phase 7.4A1   | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -668,6 +758,9 @@ Confirmed current warnings:
 - Phase 6.4B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
 - Phase 6.4C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
 - Phase 7.3C1 Task Bulk Action Backend Engine and focused refinement are complete/pass.
-- Phase 7.3C2 Task Bulk Selection UX is complete/pass; the next phase is Phase 7.3C2 Refinement, not Phase 7.3C3.
+- Phase 7.3C2 Task Bulk Selection UX is complete/pass.
+- Phase 7.3C3 Final Bulk + All Tasks security/performance/integration audit is complete/pass.
+- Phase 7.3 All Tasks is complete/pass.
+- Phase 7.4A1 Nested Task Hierarchy Backend is complete/pass; the next phase is Phase 7.4A1 Refinement.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

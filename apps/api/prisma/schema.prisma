@@ -412,6 +412,7 @@ model Task {
   description        String?      @db.VarChar(4000)
   priority           TaskPriority @default(MEDIUM)
   statusDefinitionId String       @map("status_definition_id") @db.Uuid
+  parentTaskId       String?      @map("parent_task_id") @db.Uuid
   departmentId       String?      @map("department_id") @db.Uuid
   dueAt              DateTime?    @map("due_at") @db.Timestamptz(6)
   createdById        String       @map("created_by_id") @db.Uuid
@@ -423,6 +424,8 @@ model Task {
 
   workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   statusDefinition StatusDefinition @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  parentTask       Task?            @relation("TaskHierarchy", fields: [parentTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  subtasks         Task[]           @relation("TaskHierarchy")
   department       Department?      @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   createdBy        User            @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy        User?           @relation("TaskUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
@@ -434,6 +437,7 @@ model Task {
   @@index([workspaceId, statusDefinitionId, createdAt])
   @@index([workspaceId, priority, createdAt])
   @@index([workspaceId, dueAt])
+  @@index([workspaceId, parentTaskId, createdAt])
   @@index([workspaceId, departmentId])
   @@index([workspaceId, createdAt])
   @@index([workspaceId, createdById])

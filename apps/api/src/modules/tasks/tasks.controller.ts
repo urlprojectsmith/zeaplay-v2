@@ -33,6 +33,7 @@ import {
   TaskParamsDto,
   TaskQueryDto,
   UpdateTaskDto,
+  UpdateTaskParentDto,
   UpdateTaskStatusDto,
 } from './dto/task.dto';
 import { TasksService } from './tasks.service';
@@ -101,6 +102,36 @@ export class TasksController {
     @Body() dto: BulkTaskIdsDto,
   ) {
     return this.tasks.bulkRemove(tenant, dto);
+  }
+
+  @Post(':taskId/subtasks')
+  @RequirePermissions(PermissionKeys.tasksCreate)
+  createSubtask(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: CreateTaskDto,
+  ) {
+    return this.tasks.createSubtask(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/subtasks')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listSubtasks(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listSubtasks(tenant, params.taskId, query);
+  }
+
+  @Patch(':taskId/parent')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  updateParent(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: UpdateTaskParentDto,
+  ) {
+    return this.tasks.updateParent(tenant, params.taskId, dto.parentTaskId ?? null);
   }
 
   @Get(':taskId')
