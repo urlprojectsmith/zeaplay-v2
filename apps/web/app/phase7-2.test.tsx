@@ -13,6 +13,11 @@ const listRecentWorkspaceTasks = vi.fn();
 const listWorkspaceTasks = vi.fn();
 const getWorkspaceTask = vi.fn();
 const createTaskMock = vi.fn();
+const bulkUpdateTaskStatus = vi.fn();
+const bulkUpdateTaskPriority = vi.fn();
+const bulkAddTaskAssignees = vi.fn();
+const bulkRemoveTaskAssignees = vi.fn();
+const bulkDeleteTasks = vi.fn();
 const listWorkspaceProjects = vi.fn();
 const listWorkspaceUsers = vi.fn();
 const listDepartments = vi.fn();
@@ -66,6 +71,11 @@ vi.mock('../services/workspace-tasks', async () => {
     listWorkspaceTasks: (...args: unknown[]) => listWorkspaceTasks(...args),
     getWorkspaceTask: (...args: unknown[]) => getWorkspaceTask(...args),
     createWorkspaceTask: (...args: unknown[]) => createTaskMock(...args),
+    bulkUpdateTaskStatus: (...args: unknown[]) => bulkUpdateTaskStatus(...args),
+    bulkUpdateTaskPriority: (...args: unknown[]) => bulkUpdateTaskPriority(...args),
+    bulkAddTaskAssignees: (...args: unknown[]) => bulkAddTaskAssignees(...args),
+    bulkRemoveTaskAssignees: (...args: unknown[]) => bulkRemoveTaskAssignees(...args),
+    bulkDeleteTasks: (...args: unknown[]) => bulkDeleteTasks(...args),
     listWorkspaceProjects: (...args: unknown[]) => listWorkspaceProjects(...args),
   };
 });
@@ -1062,12 +1072,16 @@ describe('Phase 7.3B all tasks grid and compact views', () => {
       const rendered = renderWithProviders(<WorkspaceTasksPage />);
 
       expect(await screen.findByText('Summary empty')).toBeInTheDocument();
-      const oneSummary = screen.getByRole('button', { name: /Open task details: Summary one/ });
+      const oneSummary = taskSurfaceFromOpenButton(
+        screen.getByRole('button', { name: /Open task details: Summary one/ }),
+      );
       expect(oneSummary).toHaveTextContent('Anya');
       expect(oneSummary).toHaveTextContent('Launch');
-      const manySummary = screen.getByRole('button', {
-        name: new RegExp(`Open task details: ${longTitle}`),
-      });
+      const manySummary = taskSurfaceFromOpenButton(
+        screen.getByRole('button', {
+          name: new RegExp(`Open task details: ${longTitle}`),
+        }),
+      );
       expect(manySummary).toHaveTextContent('Anya, Chen +1');
       expect(manySummary).toHaveTextContent(`${longProject} +2`);
       expect(screen.getAllByTitle(longTitle)).not.toHaveLength(0);
@@ -1253,6 +1267,275 @@ describe('Phase 7.2 task service payload construction', () => {
   });
 });
 
+describe('Phase 7.3C2 task bulk selection UX', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentSearchParams = new URLSearchParams();
+    localStorage.clear();
+    useSessionStore.setState({
+      selectedAgencyId: 'agency-1',
+      selectedWorkspaceId: 'workspace-1',
+      hydrated: true,
+      accessToken: 'token',
+      user: { id: 'admin-1', email: 'admin@zeaplay.test' },
+    });
+    listWorkspaceTasks.mockResolvedValue({
+      items: [
+        taskFixture({ id: 'task-alpha', title: 'Alpha launch task' }),
+        taskFixture({ id: 'task-beta', title: 'Beta review task', priority: 'LOW' }),
+      ],
+      page: 1,
+      pageSize: 25,
+      total: 2,
+    });
+    getWorkspaceTask.mockResolvedValue(
+      taskFixture({ id: 'task-alpha', title: 'Alpha launch task' }),
+    );
+    listWorkspaceUsers.mockResolvedValue({
+      items: [user('membership-a', 'Anya'), user('membership-c', 'Chen')],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+    });
+    listDepartments.mockResolvedValue({
+      items: [{ id: 'department-1', workspaceId: 'workspace-1', name: 'Design', status: 'ACTIVE' }],
+      page: 1,
+      pageSize: 100,
+      total: 1,
+    });
+    listWorkspaceStatuses.mockResolvedValue([
+      status('status-task', 'TASK', 'To Do'),
+      status('status-review', 'TASK', 'Review', false),
+    ]);
+    listWorkspaceProjects.mockResolvedValue({
+      items: [{ id: 'project-1', workspaceId: 'workspace-1', name: 'Launch', status: 'ACTIVE' }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    bulkUpdateTaskStatus.mockResolvedValue({
+      requestedCount: 2,
+      changedCount: 1,
+      unchangedCount: 1,
+    });
+    bulkUpdateTaskPriority.mockResolvedValue({
+      requestedCount: 2,
+      changedCount: 2,
+      unchangedCount: 0,
+    });
+    bulkAddTaskAssignees.mockResolvedValue({
+      requestedCount: 2,
+      changedCount: 2,
+      unchangedCount: 0,
+      relationChangedCount: 2,
+      relationUnchangedCount: 0,
+    });
+    bulkRemoveTaskAssignees.mockResolvedValue({
+      requestedCount: 2,
+      changedCount: 1,
+      unchangedCount: 1,
+      relationChangedCount: 1,
+      relationUnchangedCount: 1,
+    });
+    bulkDeleteTasks.mockResolvedValue({ requestedCount: 1, changedCount: 1, unchangedCount: 0 });
+  });
+
+  it('shares selection across List, Grid, and Compact without refetching on view switch', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    expectSelectedText('1 task selected');
+    expect(listWorkspaceTasks).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    expect(await firstByLabelText('Select task: Alpha launch task')).toHaveAttribute(
+      'data-state',
+      'checked',
+    );
+    expectSelectedText('1 task selected');
+    expect(listWorkspaceTasks).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compact' }));
+    expect(await firstByLabelText('Select task: Alpha launch task')).toHaveAttribute(
+      'data-state',
+      'checked',
+    );
+    expectSelectedText('1 task selected');
+    expect(listWorkspaceTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('selects, indeterminates, and deselects only the current page', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    expect(screen.getByLabelText('Select all on this page')).toHaveAttribute(
+      'data-state',
+      'indeterminate',
+    );
+    fireEvent.click(screen.getByLabelText('Select all on this page'));
+    expectSelectedText('2 tasks selected');
+    expect(screen.getByLabelText('Select all on this page')).toHaveAttribute(
+      'data-state',
+      'checked',
+    );
+    fireEvent.click(screen.getByLabelText('Select all on this page'));
+    expectNoSelectedText('2 tasks selected');
+  });
+
+  it('bulk status and priority each send one request and clear selection on success', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await screen.findByLabelText('Select all on this page'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change status' }));
+    await selectSelectOption('Status', 'Review');
+    fireEvent.click(screen.getByRole('button', { name: 'Update 2 tasks' }));
+    await waitFor(() => expect(bulkUpdateTaskStatus).toHaveBeenCalledTimes(1));
+    expect(bulkUpdateTaskStatus).toHaveBeenCalledWith('workspace-1', {
+      taskIds: ['task-alpha', 'task-beta'],
+      statusDefinitionId: 'status-review',
+    });
+    expect(toastSuccess).toHaveBeenCalledWith('1 tasks updated. 1 already matched.');
+    await waitFor(() => expectNoSelectedText('2 tasks selected'));
+
+    fireEvent.click(screen.getByLabelText('Select all on this page'));
+    fireEvent.click(screen.getByRole('button', { name: 'Change priority' }));
+    await selectSelectOption('Priority', 'Urgent');
+    fireEvent.click(screen.getByRole('button', { name: 'Update 2 tasks' }));
+    await waitFor(() => expect(bulkUpdateTaskPriority).toHaveBeenCalledTimes(1));
+    expect(bulkUpdateTaskPriority).toHaveBeenCalledWith('workspace-1', {
+      taskIds: ['task-alpha', 'task-beta'],
+      priority: 'URGENT',
+    });
+  });
+
+  it('bulk assignee add/remove each send one request and preserve selection on failure', async () => {
+    bulkRemoveTaskAssignees.mockRejectedValueOnce(
+      Object.assign(new Error('gone'), { status: 404 }),
+    );
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await screen.findByLabelText('Select all on this page'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add assignees' }));
+    fireEvent.click(await screen.findByLabelText('Anya'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to 2 tasks' }));
+    await waitFor(() => expect(bulkAddTaskAssignees).toHaveBeenCalledTimes(1));
+    expect(bulkAddTaskAssignees).toHaveBeenCalledWith('workspace-1', {
+      taskIds: ['task-alpha', 'task-beta'],
+      membershipIds: ['membership-a'],
+    });
+
+    fireEvent.click(screen.getByLabelText('Select all on this page'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove assignees' }));
+    fireEvent.click(await screen.findByLabelText('Chen'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from 2 tasks' }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'One or more selected tasks are no longer available. Refresh and try again.',
+      ),
+    );
+    expect(bulkRemoveTaskAssignees).toHaveBeenCalledTimes(1);
+    expectSelectedText('2 tasks selected');
+  });
+
+  it('clears selection on dataset changes, workspace switch, and session loss', async () => {
+    listWorkspaceTasks.mockResolvedValue({
+      items: [
+        taskFixture({ id: 'task-alpha', title: 'Alpha launch task' }),
+        taskFixture({ id: 'task-beta', title: 'Beta review task' }),
+      ],
+      page: 1,
+      pageSize: 25,
+      total: 50,
+    });
+    const searchRender = renderWithProviders(<WorkspaceTasksPage />);
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    fireEvent.change(screen.getByLabelText('Search tasks'), { target: { value: 'billing' } });
+    await waitFor(() => expectNoSelectedText('1 task selected'));
+    searchRender.unmount();
+
+    const datasetRender = renderWithProviders(<WorkspaceTasksPage />);
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    await selectSelectOption('Priority', 'Urgent');
+    expectNoSelectedText('1 task selected');
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    fireEvent.click(screen.getByRole('button', { name: /Updated/i }));
+    expectNoSelectedText('1 task selected');
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expectNoSelectedText('1 task selected');
+
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+    await waitFor(() => expectNoSelectedText('1 task selected'));
+    datasetRender.unmount();
+
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-1' });
+    });
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    act(() => {
+      useSessionStore.setState({ accessToken: null });
+    });
+    await waitFor(() => expectNoSelectedText('1 task selected'));
+  });
+
+  it('bulk delete requires confirmation and sends one request', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete tasks' }));
+
+    expect(screen.getByText('Delete 1 selected tasks?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 1 tasks' }));
+
+    await waitFor(() => expect(bulkDeleteTasks).toHaveBeenCalledTimes(1));
+    expect(bulkDeleteTasks).toHaveBeenCalledWith('workspace-1', { taskIds: ['task-alpha'] });
+    expectNoSelectedText('1 task selected');
+  });
+
+  it('renders Tamil bulk labels and theme contexts', async () => {
+    const tamilRender = render(
+      <LanguageProvider>
+        <TamilSwitch />
+        <QueryHarness>
+          <WorkspaceTasksPage />
+        </QueryHarness>
+      </LanguageProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'ta' }));
+    const tamilTaskCheckbox = (await screen.findAllByRole('checkbox')).find((node) =>
+      node.getAttribute('aria-label')?.includes('Alpha launch task'),
+    );
+    expect(tamilTaskCheckbox).toBeTruthy();
+    fireEvent.click(tamilTaskCheckbox!);
+    expect(await screen.findByText('மொத்த செயல்கள்')).toBeInTheDocument();
+    tamilRender.unmount();
+    localStorage.setItem('zea-play-locale', 'en');
+
+    for (const theme of ['light', 'dark', 'colorful'] as const) {
+      localStorage.setItem('zea-play-theme', theme);
+      const { unmount } = render(
+        <ThemeProvider>
+          <LanguageProvider>
+            <QueryHarness>
+              <WorkspaceTasksPage />
+            </QueryHarness>
+          </LanguageProvider>
+        </ThemeProvider>,
+      );
+      fireEvent.click(await firstByLabelText('Select task: Alpha launch task'));
+      expect(screen.getByText('Bulk actions')).toBeInTheDocument();
+      unmount();
+    }
+  });
+});
+
 async function fillQuickTask() {
   fireEvent.change(screen.getByLabelText('Title *'), { target: { value: 'Draft brief' } });
   await selectPerson('Anya');
@@ -1272,6 +1555,23 @@ async function selectProject(name: string) {
 async function selectSelectOption(label: string, option: string) {
   fireEvent.click(screen.getByRole('combobox', { name: label }));
   fireEvent.click(await screen.findByRole('option', { name: option }));
+}
+
+async function firstByLabelText(label: string) {
+  const elements = await screen.findAllByLabelText(label);
+  return elements[0] as HTMLElement;
+}
+
+function expectSelectedText(text: string) {
+  expect(screen.getAllByText(text).length).toBeGreaterThan(0);
+}
+
+function expectNoSelectedText(text: string) {
+  expect(screen.queryAllByText(text)).toHaveLength(0);
+}
+
+function taskSurfaceFromOpenButton(button: HTMLElement) {
+  return (button.closest('div.grid') ?? button.parentElement ?? button) as HTMLElement;
 }
 
 function renderWithProviders(ui: React.ReactElement) {

@@ -3,6 +3,8 @@ import { TaskPriority } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   ArrayUnique,
+  ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsDateString,
   IsEnum,
@@ -191,6 +193,38 @@ export class UpdateTaskStatusDto {
   @ApiProperty()
   @IsUUID()
   statusDefinitionId!: string;
+}
+
+export class BulkTaskIdsDto {
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 100 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  taskIds!: string[];
+}
+
+export class BulkTaskStatusDto extends BulkTaskIdsDto {
+  @ApiProperty()
+  @IsUUID()
+  statusDefinitionId!: string;
+}
+
+export class BulkTaskPriorityDto extends BulkTaskIdsDto {
+  @ApiProperty({ enum: TaskPriority })
+  @IsEnum(TaskPriority)
+  priority!: TaskPriority;
+}
+
+export class BulkTaskMembershipsDto extends BulkTaskIdsDto {
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 100 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  membershipIds!: string[];
 }
 
 export class ReplaceTaskMembershipsDto {

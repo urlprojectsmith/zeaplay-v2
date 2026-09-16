@@ -8,6 +8,7 @@ import {
   RoleScope,
   StatusCategory,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { PasswordService } from '../src/common/auth/password.service';
@@ -55,12 +56,15 @@ describe('Phase 7.1 task core backend integration', () => {
   let workspaceA1: string;
   let workspaceA2: string;
   let workspaceB1: string;
+  let ownerAToken: string;
   let adminToken: string;
   let memberToken: string;
   let viewerToken: string;
   let createOnlyToken: string;
   let updateOnlyToken: string;
   let assignOnlyToken: string;
+  let updateAssignToken: string;
+  let assignDeleteToken: string;
   let manageOnlyToken: string;
   let ownerBToken: string;
   let memberMembershipId: string;
@@ -100,12 +104,15 @@ describe('Phase 7.1 task core backend integration', () => {
     app.useGlobalFilters(new AllExceptionsFilter());
     app.useGlobalInterceptors(new ResponseInterceptor());
     await app.init();
+    ownerAToken = await accessTokenFor('owner-a@zeaplay.test');
     adminToken = await accessTokenFor('admin-a@zeaplay.test');
     memberToken = await accessTokenFor('member-a@zeaplay.test');
     viewerToken = await accessTokenFor('viewer-a@zeaplay.test');
     createOnlyToken = await accessTokenFor('task-create-a@zeaplay.test');
     updateOnlyToken = await accessTokenFor('task-update-a@zeaplay.test');
     assignOnlyToken = await accessTokenFor('task-assign-a@zeaplay.test');
+    updateAssignToken = await accessTokenFor('task-update-assign-a@zeaplay.test');
+    assignDeleteToken = await accessTokenFor('task-assign-delete-a@zeaplay.test');
     manageOnlyToken = await accessTokenFor('task-manage-a@zeaplay.test');
     ownerBToken = await accessTokenFor('owner-b@zeaplay.test');
   });
@@ -527,6 +534,745 @@ describe('Phase 7.1 task core backend integration', () => {
     }
   });
 
+  it('bulk changes task status transactionally, idempotently, and only for valid TASK statuses', async () => {
+    const first = await createTask({ title: 'Bulk status one' }).expect(201);
+    const second = await createTask({
+      title: 'Bulk status two',
+      statusDefinitionId: taskReviewStatusId,
+    }).expect(201);
+
+    const auditBefore = await prisma.auditLog.count({
+      where: { workspaceId: workspaceA1, action: 'task.bulk_status_changed' },
+    });
+    const changed = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id, second.body.data.id],
+        statusDefinitionId: taskReviewStatusId,
+      })
+      .expect(200);
+    expect(changed.body.data).toMatchObject({
+      requestedCount: 2,
+      changedCount: 1,
+      unchangedCount: 1,
+    });
+    await expect(
+      prisma.task.count({
+        where: {
+          id: { in: [first.body.data.id, second.body.data.id] },
+          statusDefinitionId: taskReviewStatusId,
+        },
+      }),
+    ).resolves.toBe(2);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id, second.body.data.id],
+        statusDefinitionId: taskReviewStatusId,
+      })
+      .expect(200)
+      .expect((response) => expect(response.body.data.changedCount).toBe(0));
+    await expect(
+      prisma.auditLog.count({
+        where: { workspaceId: workspaceA1, action: 'task.bulk_status_changed' },
+      }),
+    ).resolves.toBe(auditBefore + 1);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [], statusDefinitionId: taskReviewStatusId })
+      .expect(422);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id, first.body.data.id],
+        statusDefinitionId: taskReviewStatusId,
+      })
+      .expect(422);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], statusDefinitionId: projectStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], statusDefinitionId: ticketStatusId })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], statusDefinitionId: inactiveTaskStatusId })
+      .expect(409);
+
+    const foreignStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA2, entityType: 'TASK', isDefault: true },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], statusDefinitionId: foreignStatus.id })
+      .expect(409);
+
+    const rollbackCandidate = await createTask({ title: 'Bulk status rollback' }).expect(201);
+    const foreignTask = await createTaskInWorkspace(workspaceB1, agencyB, ownerBToken, {
+      title: 'Foreign bulk status rollback',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [rollbackCandidate.body.data.id, foreignTask.body.data.id],
+        statusDefinitionId: taskReviewStatusId,
+      })
+      .expect(404);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: rollbackCandidate.body.data.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: taskDefaultStatusId });
+  });
+
+  it('bulk changes priority with enum validation, idempotence, permissions, and rollback', async () => {
+    const first = await createTask({ title: 'Bulk priority one', priority: 'LOW' }).expect(201);
+    const second = await createTask({ title: 'Bulk priority two', priority: 'HIGH' }).expect(201);
+
+    for (const priority of ['LOW', 'MEDIUM', 'HIGH', 'URGENT']) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [first.body.data.id], priority })
+        .expect(200);
+    }
+
+    const mixed = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id, second.body.data.id], priority: 'HIGH' })
+      .expect(200);
+    expect(mixed.body.data).toMatchObject({
+      requestedCount: 2,
+      changedCount: 1,
+      unchangedCount: 1,
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], priority: 'LOW' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], priority: 'BLOCKER' })
+      .expect(422);
+
+    const deleted = await createTask({ title: 'Bulk priority deleted' }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deleted.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id, deleted.body.data.id], priority: 'LOW' })
+      .expect(404);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: first.body.data.id } }),
+    ).resolves.toMatchObject({ priority: 'HIGH' });
+  });
+
+  it('bulk adds and removes assignees idempotently with active membership and permission checks', async () => {
+    const first = await createTask({ title: 'Bulk assignee one' }).expect(201);
+    const second = await createTask({
+      title: 'Bulk assignee two',
+      assigneeMembershipIds: [adminMembershipId],
+    }).expect(201);
+
+    const added = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id, second.body.data.id],
+        membershipIds: [adminMembershipId, memberMembershipId],
+      })
+      .expect(201);
+    expect(added.body.data).toMatchObject({
+      requestedCount: 2,
+      changedCount: 2,
+      relationChangedCount: 3,
+      relationUnchangedCount: 1,
+    });
+    await expectTaskRelationCounts(first.body.data.id, { assignees: 2 });
+    await expectTaskRelationCounts(second.body.data.id, { assignees: 2 });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], membershipIds: [adminMembershipId] })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id],
+        membershipIds: [adminMembershipId, adminMembershipId],
+      })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], membershipIds: [suspendedMembershipId] })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id], membershipIds: [foreignMembershipId] })
+      .expect(404);
+
+    const rollbackCandidate = await createTask({ title: 'Bulk assignee rollback' }).expect(201);
+    const foreignTask = await createTaskInWorkspace(workspaceB1, agencyB, ownerBToken, {
+      title: 'Foreign bulk assignee rollback',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [rollbackCandidate.body.data.id, foreignTask.body.data.id],
+        membershipIds: [adminMembershipId],
+      })
+      .expect(404);
+    await expectTaskRelationCounts(rollbackCandidate.body.data.id, { assignees: 0 });
+
+    const removed = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/remove`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id, second.body.data.id],
+        membershipIds: [memberMembershipId],
+      })
+      .expect(201);
+    expect(removed.body.data).toMatchObject({ changedCount: 2, relationChangedCount: 2 });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/remove`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [first.body.data.id, second.body.data.id],
+        membershipIds: [memberMembershipId],
+      })
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(0));
+  });
+
+  it('bulk soft deletes tasks, hides them from reads, audits once, and rolls back mixed input', async () => {
+    const first = await createTask({ title: 'Bulk delete one' }).expect(201);
+    const second = await createTask({ title: 'Bulk delete two' }).expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id] })
+      .expect(403);
+
+    const deleted = await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id, second.body.data.id] })
+      .expect(200);
+    expect(deleted.body.data).toMatchObject({
+      requestedCount: 2,
+      changedCount: 2,
+      unchangedCount: 0,
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${first.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [first.body.data.id] })
+      .expect(404);
+    await expect(
+      prisma.auditLog.count({ where: { workspaceId: workspaceA1, action: 'task.bulk_deleted' } }),
+    ).resolves.toBeGreaterThanOrEqual(1);
+
+    const rollbackCandidate = await createTask({ title: 'Bulk delete rollback' }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [rollbackCandidate.body.data.id, '00000000-0000-4000-8000-000000000000'],
+      })
+      .expect(404);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: rollbackCandidate.body.data.id } }),
+    ).resolves.toMatchObject({ deletedAt: null });
+  });
+
+  it('validates bulk payload boundaries and keeps bulk routes ahead of task-id routes', async () => {
+    const task = await createTask({ title: 'Bulk payload boundary task' }).expect(201);
+    const hundredUnknownIds = Array.from({ length: 100 }, () => randomUUID());
+    const hundredOneUnknownIds = [...hundredUnknownIds, randomUUID()];
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: hundredUnknownIds, statusDefinitionId: taskReviewStatusId })
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: hundredOneUnknownIds, statusDefinitionId: taskReviewStatusId })
+      .expect(422);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: ['not-a-uuid'], priority: 'HIGH' })
+      .expect(422);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [] })
+      .expect(422);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id, task.body.data.id] })
+      .expect(422);
+  });
+
+  it('updates only changed bulk status and priority rows with the authenticated actor', async () => {
+    const actor = await prisma.user.findUniqueOrThrow({
+      where: { email: 'task-update-a@zeaplay.test' },
+    });
+    const statusAlready = await createTask({
+      title: 'Bulk status already',
+      statusDefinitionId: taskReviewStatusId,
+    }).expect(201);
+    const statusChanged = await createTask({ title: 'Bulk status changed' }).expect(201);
+    const statusAlreadyTwo = await createTask({
+      title: 'Bulk status already two',
+      statusDefinitionId: taskReviewStatusId,
+    }).expect(201);
+    const beforeStatusRows = await prisma.task.findMany({
+      where: {
+        id: {
+          in: [
+            statusAlready.body.data.id,
+            statusChanged.body.data.id,
+            statusAlreadyTwo.body.data.id,
+          ],
+        },
+      },
+      select: { id: true, updatedAt: true, updatedById: true },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const statusResponse = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [
+          statusAlready.body.data.id,
+          statusChanged.body.data.id,
+          statusAlreadyTwo.body.data.id,
+        ],
+        statusDefinitionId: taskReviewStatusId,
+      })
+      .expect(200);
+    expect(statusResponse.body.data).toMatchObject({
+      requestedCount: 3,
+      changedCount: 1,
+      unchangedCount: 2,
+    });
+    const afterStatusRows = await prisma.task.findMany({
+      where: {
+        id: {
+          in: [
+            statusAlready.body.data.id,
+            statusChanged.body.data.id,
+            statusAlreadyTwo.body.data.id,
+          ],
+        },
+      },
+      select: { id: true, updatedAt: true, updatedById: true },
+    });
+    const beforeStatusById = new Map(beforeStatusRows.map((row) => [row.id, row]));
+    const afterStatusById = new Map(afterStatusRows.map((row) => [row.id, row]));
+    expect(afterStatusById.get(statusChanged.body.data.id)?.updatedById).toBe(actor.id);
+    expect(afterStatusById.get(statusChanged.body.data.id)?.updatedAt.getTime()).toBeGreaterThan(
+      beforeStatusById.get(statusChanged.body.data.id)?.updatedAt.getTime() ?? 0,
+    );
+    for (const id of [statusAlready.body.data.id, statusAlreadyTwo.body.data.id]) {
+      expect(afterStatusById.get(id)?.updatedById).toBe(beforeStatusById.get(id)?.updatedById);
+      expect(afterStatusById.get(id)?.updatedAt.toISOString()).toBe(
+        beforeStatusById.get(id)?.updatedAt.toISOString(),
+      );
+    }
+
+    const priorityAlready = await createTask({
+      title: 'Bulk priority already',
+      priority: 'HIGH',
+    }).expect(201);
+    const priorityChanged = await createTask({
+      title: 'Bulk priority changed',
+      priority: 'LOW',
+    }).expect(201);
+    const priorityAlreadyTwo = await createTask({
+      title: 'Bulk priority already two',
+      priority: 'HIGH',
+    }).expect(201);
+    const beforePriorityRows = await prisma.task.findMany({
+      where: {
+        id: {
+          in: [
+            priorityAlready.body.data.id,
+            priorityChanged.body.data.id,
+            priorityAlreadyTwo.body.data.id,
+          ],
+        },
+      },
+      select: { id: true, updatedAt: true, updatedById: true },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [
+          priorityAlready.body.data.id,
+          priorityChanged.body.data.id,
+          priorityAlreadyTwo.body.data.id,
+        ],
+        priority: 'HIGH',
+      })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          requestedCount: 3,
+          changedCount: 1,
+          unchangedCount: 2,
+        });
+      });
+    const afterPriorityRows = await prisma.task.findMany({
+      where: {
+        id: {
+          in: [
+            priorityAlready.body.data.id,
+            priorityChanged.body.data.id,
+            priorityAlreadyTwo.body.data.id,
+          ],
+        },
+      },
+      select: { id: true, updatedAt: true, updatedById: true },
+    });
+    const beforePriorityById = new Map(beforePriorityRows.map((row) => [row.id, row]));
+    const afterPriorityById = new Map(afterPriorityRows.map((row) => [row.id, row]));
+    expect(afterPriorityById.get(priorityChanged.body.data.id)?.updatedById).toBe(actor.id);
+    expect(
+      afterPriorityById.get(priorityChanged.body.data.id)?.updatedAt.getTime(),
+    ).toBeGreaterThan(
+      beforePriorityById.get(priorityChanged.body.data.id)?.updatedAt.getTime() ?? 0,
+    );
+    for (const id of [priorityAlready.body.data.id, priorityAlreadyTwo.body.data.id]) {
+      expect(afterPriorityById.get(id)?.updatedById).toBe(beforePriorityById.get(id)?.updatedById);
+      expect(afterPriorityById.get(id)?.updatedAt.toISOString()).toBe(
+        beforePriorityById.get(id)?.updatedAt.toISOString(),
+      );
+    }
+  });
+
+  it('rejects unsafe priority values without coercion', async () => {
+    const task = await createTask({ title: 'Bulk priority enum safety' }).expect(201);
+    for (const priority of ['low', 'HIGHER', '', 1]) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [task.body.data.id], priority })
+        .expect(422);
+    }
+  });
+
+  it('rejects deleted and cross-tenant tasks transactionally across representative bulk actions', async () => {
+    const active = await createTask({ title: 'Bulk tenant active' }).expect(201);
+    const sameAgencyForeign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Same agency foreign workspace task',
+    }).expect(201);
+    const crossAgencyForeign = await createTaskInWorkspace(workspaceB1, agencyB, ownerBToken, {
+      title: 'Cross agency foreign workspace task',
+    }).expect(201);
+
+    for (const foreignId of [sameAgencyForeign.body.data.id, crossAgencyForeign.body.data.id]) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [active.body.data.id, foreignId], statusDefinitionId: taskReviewStatusId })
+        .expect(404);
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+        .set(auth(assignOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [active.body.data.id, foreignId], membershipIds: [adminMembershipId] })
+        .expect(404);
+      await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [active.body.data.id, foreignId] })
+        .expect(404);
+    }
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: active.body.data.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: taskDefaultStatusId, deletedAt: null });
+    await expectTaskRelationCounts(active.body.data.id, { assignees: 0 });
+
+    const deleted = await createTask({
+      title: 'Bulk deleted member',
+      assigneeMembershipIds: [adminMembershipId],
+    }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deleted.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    for (const [method, path, body] of [
+      [
+        'patch',
+        `/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`,
+        {
+          taskIds: [active.body.data.id, deleted.body.data.id],
+          statusDefinitionId: taskReviewStatusId,
+        },
+      ],
+      [
+        'patch',
+        `/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`,
+        { taskIds: [active.body.data.id, deleted.body.data.id], priority: 'URGENT' },
+      ],
+      [
+        'post',
+        `/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/remove`,
+        {
+          taskIds: [active.body.data.id, deleted.body.data.id],
+          membershipIds: [adminMembershipId],
+        },
+      ],
+      [
+        'delete',
+        `/api/v1/workspaces/${workspaceA1}/tasks/bulk`,
+        { taskIds: [active.body.data.id, deleted.body.data.id] },
+      ],
+    ] as const) {
+      await request(app.getHttpServer())
+        [method](path)
+        .set(
+          auth(
+            method === 'post'
+              ? assignOnlyToken
+              : method === 'delete'
+                ? adminToken
+                : updateOnlyToken,
+          ),
+        )
+        .set(ctx(agencyA, workspaceA1))
+        .send(body)
+        .expect(404);
+    }
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: active.body.data.id } }),
+    ).resolves.toMatchObject({ priority: 'MEDIUM', deletedAt: null });
+  });
+
+  it('enforces bulk header forgery rejection and independent permission combinations', async () => {
+    const task = await createTask({ title: 'Bulk permission matrix' }).expect(201);
+
+    for (const forged of [
+      ctx(agencyA, workspaceA2),
+      ctx(agencyA, workspaceB1),
+      ctx(agencyB, workspaceA1),
+      ctx(agencyA, '00000000-0000-4000-8000-000000000000'),
+    ]) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+        .set(auth(updateOnlyToken))
+        .set(forged)
+        .send({ taskIds: [task.body.data.id], priority: 'HIGH' })
+        .expect(403);
+    }
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateAssignToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id], statusDefinitionId: taskReviewStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+      .set(auth(updateAssignToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id], membershipIds: [adminMembershipId] })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(updateAssignToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id] })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(assignDeleteToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id], priority: 'LOW' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/remove`)
+      .set(auth(assignDeleteToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id], membershipIds: [adminMembershipId] })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(assignDeleteToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id] })
+      .expect(200);
+  });
+
+  it('preserves relations on bulk soft delete and records bounded success audit metadata', async () => {
+    const task = await createTask({
+      title: 'Bulk delete preserve relations',
+      assigneeMembershipIds: [adminMembershipId],
+      followerMembershipIds: [memberMembershipId],
+      projectIds: [activeProjectId],
+    }).expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/bulk`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id] })
+      .expect(200);
+    await expectTaskRelationCounts(task.body.data.id, {
+      assignees: 1,
+      followers: 1,
+      projects: 1,
+    });
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: task.body.data.id } }),
+    ).resolves.toMatchObject({ deletedAt: expect.any(Date) });
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, action: 'task.bulk_deleted' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(audit).toMatchObject({
+      agencyId: agencyA,
+      workspaceId: workspaceA1,
+      action: 'task.bulk_deleted',
+      entityType: 'Task',
+    });
+    expect(audit.metadata).toMatchObject({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+      taskIds: [task.body.data.id],
+    });
+  });
+
+  it('does not audit failed bulk priority transactions and rejects foreign remove memberships', async () => {
+    const task = await createTask({
+      title: 'Bulk failed audit active',
+      assigneeMembershipIds: [adminMembershipId],
+    }).expect(201);
+    const foreignTask = await createTaskInWorkspace(workspaceB1, agencyB, ownerBToken, {
+      title: 'Bulk failed audit foreign',
+    }).expect(201);
+    const beforeAudit = await prisma.auditLog.count({
+      where: { workspaceId: workspaceA1, action: 'task.bulk_priority_changed' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/priority`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id, foreignTask.body.data.id], priority: 'URGENT' })
+      .expect(404);
+    await expect(
+      prisma.auditLog.count({
+        where: { workspaceId: workspaceA1, action: 'task.bulk_priority_changed' },
+      }),
+    ).resolves.toBe(beforeAudit);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/remove`)
+      .set(auth(assignOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [task.body.data.id], membershipIds: [foreignMembershipId] })
+      .expect(404);
+    await expectTaskRelationCounts(task.body.data.id, { assignees: 1 });
+  });
+
+  it('keeps concurrent duplicate bulk assignee add idempotent', async () => {
+    const task = await createTask({ title: 'Bulk concurrent assignee add' }).expect(201);
+    const calls = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+        .set(auth(assignOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [task.body.data.id], membershipIds: [adminMembershipId] }),
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/assignees/add`)
+        .set(auth(assignOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ taskIds: [task.body.data.id], membershipIds: [adminMembershipId] }),
+    ]);
+    expect(calls.map((response) => response.status)).toEqual([201, 201]);
+    await expect(
+      prisma.taskAssignee.count({
+        where: { taskId: task.body.data.id, membershipId: adminMembershipId },
+      }),
+    ).resolves.toBe(1);
+  });
+
   it('rolls back failed create relations and handles default status configuration safely', async () => {
     const beforeFollowerFailure = await prisma.task.count({ where: { workspaceId: workspaceA1 } });
     await createTask({
@@ -720,6 +1466,16 @@ describe('Phase 7.1 task core backend integration', () => {
       ['TASK_CREATE_ONLY', RoleScope.WORKSPACE, ['workspace.read', 'tasks.create']],
       ['TASK_UPDATE_ONLY', RoleScope.WORKSPACE, ['workspace.read', 'tasks.update']],
       ['TASK_ASSIGN_ONLY', RoleScope.WORKSPACE, ['workspace.read', 'tasks.assign']],
+      [
+        'TASK_UPDATE_ASSIGN',
+        RoleScope.WORKSPACE,
+        ['workspace.read', 'tasks.update', 'tasks.assign'],
+      ],
+      [
+        'TASK_ASSIGN_DELETE',
+        RoleScope.WORKSPACE,
+        ['workspace.read', 'tasks.assign', 'tasks.delete'],
+      ],
       ['TASK_MANAGE_ONLY', RoleScope.WORKSPACE, ['workspace.read', 'tasks.manage']],
     ] as const) {
       const role = await prisma.role.create({ data: { key, name: key, scope } });
@@ -743,6 +1499,8 @@ describe('Phase 7.1 task core backend integration', () => {
       createOnlyA,
       updateOnlyA,
       assignOnlyA,
+      updateAssignA,
+      assignDeleteA,
       manageOnlyA,
       ownerB,
     ] = await Promise.all([
@@ -754,6 +1512,8 @@ describe('Phase 7.1 task core backend integration', () => {
       user('task-create-a@zeaplay.test', 'Task Create A'),
       user('task-update-a@zeaplay.test', 'Task Update A'),
       user('task-assign-a@zeaplay.test', 'Task Assign A'),
+      user('task-update-assign-a@zeaplay.test', 'Task Update Assign A'),
+      user('task-assign-delete-a@zeaplay.test', 'Task Assign Delete A'),
       user('task-manage-a@zeaplay.test', 'Task Manage A'),
       user('owner-b@zeaplay.test', 'Owner B'),
     ]);
@@ -803,6 +1563,8 @@ describe('Phase 7.1 task core backend integration', () => {
     await agencyMember(createOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(updateOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(assignOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(updateAssignA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(assignDeleteA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(manageOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(ownerB.id, beta.id, roleId(roles, 'AGENCY_OWNER'));
 
@@ -821,6 +1583,8 @@ describe('Phase 7.1 task core backend integration', () => {
     await workspaceMember(createOnlyA.id, wa.id, roleId(roles, 'TASK_CREATE_ONLY'));
     await workspaceMember(updateOnlyA.id, wa.id, roleId(roles, 'TASK_UPDATE_ONLY'));
     await workspaceMember(assignOnlyA.id, wa.id, roleId(roles, 'TASK_ASSIGN_ONLY'));
+    await workspaceMember(updateAssignA.id, wa.id, roleId(roles, 'TASK_UPDATE_ASSIGN'));
+    await workspaceMember(assignDeleteA.id, wa.id, roleId(roles, 'TASK_ASSIGN_DELETE'));
     await workspaceMember(manageOnlyA.id, wa.id, roleId(roles, 'TASK_MANAGE_ONLY'));
     foreignMembershipId = (await workspaceMember(ownerA.id, wa2.id, roleId(roles, 'OWNER'))).id;
     betaMembershipId = (await workspaceMember(ownerB.id, wb.id, roleId(roles, 'OWNER'))).id;

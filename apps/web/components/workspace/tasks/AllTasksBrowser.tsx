@@ -1,16 +1,23 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   EmptyState,
   Input,
   Pagination,
@@ -25,17 +32,21 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
   Filter,
   Grid2X2,
   List,
   Rows3,
+  Trash2,
   X,
 } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { toast } from 'sonner';
 import { useLanguage } from '../../../contexts/language-provider';
 import {
   listDepartments,
@@ -45,6 +56,11 @@ import {
 } from '../../../services/workspace-management';
 import { listWorkspaceStatuses } from '../../../services/workspace-statuses';
 import {
+  bulkAddTaskAssignees,
+  bulkDeleteTasks,
+  bulkRemoveTaskAssignees,
+  bulkUpdateTaskPriority,
+  bulkUpdateTaskStatus,
   getWorkspaceTask,
   listWorkspaceProjects,
   listWorkspaceTasks,
@@ -58,6 +74,7 @@ import {
   type WorkspaceProject,
   type WorkspaceTask,
 } from '../../../services/workspace-tasks';
+import { useSessionStore } from '../../../stores/session';
 
 const priorities = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 const pageSizes = [10, 25, 50] as const;
@@ -73,17 +90,26 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const accessToken = useSessionStore((state) => state.accessToken);
   const searchParamString = searchParams.toString();
   const previousWorkspaceId = useRef(workspaceId);
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
   const debouncedSearch = useDebouncedValue(searchInput.trim(), 300);
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<SelectedTask | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
+  const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
+  const [bulkStatusId, setBulkStatusId] = useState('');
+  const [bulkPriority, setBulkPriority] = useState<TaskPriority>('MEDIUM');
+  const [bulkAssigneeSearch, setBulkAssigneeSearch] = useState('');
+  const [bulkMembershipIds, setBulkMembershipIds] = useState<string[]>([]);
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
   const [preferredView, setPreferredView] = useState<TaskView>('list');
   const [preferenceReady, setPreferenceReady] = useState(false);
   const debouncedAssigneeSearch = useDebouncedValue(assigneeSearch.trim(), 300);
+  const debouncedBulkAssigneeSearch = useDebouncedValue(bulkAssigneeSearch.trim(), 300);
   const debouncedProjectSearch = useDebouncedValue(projectSearch.trim(), 300);
 
   const urlState = useMemo(() => readTaskUrlState(searchParams), [searchParamString]);
@@ -166,6 +192,62 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     enabled: Boolean(workspaceId),
   });
 
+  const bulkAssigneesQuery = useQuery({
+    queryKey: taskCreationKeys.users(workspaceId, `bulk:${debouncedBulkAssigneeSearch}`),
+    queryFn: () =>
+      listWorkspaceUsers({
+        workspaceId: workspaceId as string,
+        page: 1,
+        pageSize: 10,
+        search: debouncedBulkAssigneeSearch.length >= 2 ? debouncedBulkAssigneeSearch : undefined,
+      }),
+    enabled: Boolean(
+      workspaceId && (bulkAction === 'addAssignees' || bulkAction === 'removeAssignees'),
+    ),
+  });
+
+  const bulkMutation = useMutation({
+    mutationFn: async () => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      const taskIds = Array.from(selectedTaskIds);
+      if (taskIds.length === 0) throw new Error(labels.noTasksSelected);
+      if (taskIds.length > 100) throw new Error(labels.tooManySelected);
+      if (bulkAction === 'status') {
+        if (!bulkStatusId) throw new Error(labels.selectStatus);
+        return bulkUpdateTaskStatus(workspaceId, { taskIds, statusDefinitionId: bulkStatusId });
+      }
+      if (bulkAction === 'priority') {
+        return bulkUpdateTaskPriority(workspaceId, { taskIds, priority: bulkPriority });
+      }
+      if (bulkAction === 'addAssignees') {
+        if (bulkMembershipIds.length === 0) throw new Error(labels.selectAssignees);
+        return bulkAddTaskAssignees(workspaceId, { taskIds, membershipIds: bulkMembershipIds });
+      }
+      if (bulkAction === 'removeAssignees') {
+        if (bulkMembershipIds.length === 0) throw new Error(labels.selectAssignees);
+        return bulkRemoveTaskAssignees(workspaceId, { taskIds, membershipIds: bulkMembershipIds });
+      }
+      if (bulkAction === 'delete') {
+        return bulkDeleteTasks(workspaceId, { taskIds });
+      }
+      throw new Error(labels.bulkActionFailed);
+    },
+    onSuccess: (result) => {
+      const deletedIds = Array.from(selectedTaskIds);
+      toast.success(successMessage(labels, bulkAction, result));
+      if (workspaceId) {
+        void queryClient.invalidateQueries({ queryKey: taskKeys.all(workspaceId) });
+      }
+      if (bulkAction === 'delete' && selectedTaskId && deletedIds.includes(selectedTaskId)) {
+        setSelectedTask(null);
+      }
+      clearBulkState();
+    },
+    onError: (error) => {
+      toast.error(safeBulkError(error, labels));
+    },
+  });
+
   useEffect(() => {
     setSearchInput(searchParams.get('search') ?? '');
   }, [searchParamString, searchParams]);
@@ -179,6 +261,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
   useEffect(() => {
     const current = searchParams.get('search') ?? '';
     if (debouncedSearch !== current) {
+      clearBulkState();
       setUrlState(router, pathname, searchParams, { search: debouncedSearch || null, page: null });
     }
   }, [debouncedSearch, pathname, router, searchParams]);
@@ -189,6 +272,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     setSelectedTask(null);
     setAssigneeSearch('');
     setProjectSearch('');
+    clearBulkState();
     const next = new URLSearchParams(searchParams.toString());
     let changed = false;
     for (const key of tenantFilterParams) {
@@ -210,19 +294,44 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
   const hasSearchOrFilters = Boolean(urlState.search || activeFilterCount);
   const tasks = tasksQuery.data?.items ?? [];
   const selectedTaskId = selectedTask?.workspaceId === workspaceId ? selectedTask.taskId : null;
+  const currentPageTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const currentPageSelectedCount = currentPageTaskIds.filter((id) =>
+    selectedTaskIds.has(id),
+  ).length;
+  const allCurrentPageSelected = tasks.length > 0 && currentPageSelectedCount === tasks.length;
+  const someCurrentPageSelected = currentPageSelectedCount > 0 && !allCurrentPageSelected;
+  const selectionCount = selectedTaskIds.size;
+  const datasetSignature = useMemo(
+    () => JSON.stringify({ workspaceId, listParams }),
+    [workspaceId, listParams],
+  );
 
   useEffect(() => {
     if (!tasksQuery.isSuccess || total === 0 || urlState.page <= totalPages) return;
+    clearBulkState();
     updateState({ page: totalPages });
   }, [tasksQuery.isSuccess, total, totalPages, urlState.page]);
 
+  useEffect(() => {
+    clearBulkState();
+  }, [datasetSignature]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setSelectedTask(null);
+      clearBulkState();
+    }
+  }, [accessToken]);
+
   function updateState(patch: Record<string, string | number | null>) {
+    if (isDatasetPatch(patch)) clearBulkState();
     setUrlState(router, pathname, searchParams, patch);
   }
 
   function clearFilters() {
     const patch: Record<string, null> = { page: null };
     for (const key of [...tenantFilterParams, ...genericFilterParams]) patch[key] = null;
+    clearBulkState();
     setUrlState(router, pathname, searchParams, patch);
   }
 
@@ -230,6 +339,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     const patch: Record<string, null> = { search: null, page: null };
     for (const key of [...tenantFilterParams, ...genericFilterParams]) patch[key] = null;
     setSearchInput('');
+    clearBulkState();
     setUrlState(router, pathname, searchParams, patch);
   }
 
@@ -247,6 +357,48 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     replaceUrl(router, pathname, next);
   }
 
+  function clearBulkState() {
+    setSelectedTaskIds((current) => (current.size > 0 ? new Set() : current));
+    if (bulkAction) setBulkAction(null);
+    if (bulkStatusId) setBulkStatusId('');
+    if (bulkPriority !== 'MEDIUM') setBulkPriority('MEDIUM');
+    if (bulkAssigneeSearch) setBulkAssigneeSearch('');
+    if (bulkMembershipIds.length > 0) setBulkMembershipIds([]);
+  }
+
+  function toggleTaskSelection(taskId: string, checked: boolean) {
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  }
+
+  function toggleCurrentPageSelection() {
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      if (allCurrentPageSelected) {
+        for (const taskId of currentPageTaskIds) next.delete(taskId);
+      } else {
+        for (const taskId of currentPageTaskIds) next.add(taskId);
+      }
+      return next;
+    });
+  }
+
+  function openBulkAction(action: BulkAction) {
+    setBulkAction(action);
+    setBulkStatusId('');
+    setBulkPriority('MEDIUM');
+    setBulkAssigneeSearch('');
+    setBulkMembershipIds([]);
+  }
+
+  function submitBulkAction() {
+    bulkMutation.mutate();
+  }
+
   return (
     <section className="grid gap-4" aria-labelledby="all-tasks-heading">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -262,7 +414,10 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
           <Input
             label={labels.searchTasks}
             value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
+            onChange={(event) => {
+              if (event.target.value !== searchInput) clearBulkState();
+              setSearchInput(event.target.value);
+            }}
             placeholder={labels.searchTasks}
           />
           <Button
@@ -335,6 +490,32 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         onClear={clearFilters}
       />
 
+      {tasks.length > 0 ? (
+        <div className="flex flex-col gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 md:flex-row md:items-center md:justify-between">
+          <Checkbox
+            label={allCurrentPageSelected ? labels.deselectCurrentPage : labels.selectCurrentPage}
+            checked={
+              allCurrentPageSelected ? true : someCurrentPageSelected ? 'indeterminate' : false
+            }
+            onCheckedChange={toggleCurrentPageSelection}
+            aria-label={labels.selectCurrentPage}
+          />
+          <span className="text-sm font-semibold text-[hsl(var(--muted-foreground))]">
+            {selectedCountLabel(selectionCount, labels)}
+          </span>
+        </div>
+      ) : null}
+
+      {selectionCount > 0 ? (
+        <BulkActionToolbar
+          labels={labels}
+          selectedCount={selectionCount}
+          loading={bulkMutation.isPending}
+          onAction={openBulkAction}
+          onClear={clearBulkState}
+        />
+      ) : null}
+
       <Card>
         <CardContent className="p-0">
           {tasksQuery.isLoading ? (
@@ -370,7 +551,9 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
               view={activeView}
               sortBy={urlState.sortBy}
               sortDirection={urlState.sortDirection}
+              selectedTaskIds={selectedTaskIds}
               onSort={changeSort}
+              onToggleSelection={toggleTaskSelection}
               onOpenDetail={(taskId) =>
                 workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
               }
@@ -397,7 +580,118 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
           if (!open) setSelectedTask(null);
         }}
       />
+
+      <BulkActionDialog
+        labels={labels}
+        action={bulkAction}
+        selectedCount={selectionCount}
+        statuses={statusesQuery.data ?? []}
+        users={bulkAssigneesQuery.data?.items ?? []}
+        assigneeSearch={bulkAssigneeSearch}
+        selectedMembershipIds={bulkMembershipIds}
+        selectedStatusId={bulkStatusId}
+        selectedPriority={bulkPriority}
+        loading={bulkMutation.isPending}
+        onAssigneeSearch={setBulkAssigneeSearch}
+        onMembershipToggle={(membershipId) =>
+          setBulkMembershipIds((current) =>
+            current.includes(membershipId)
+              ? current.filter((id) => id !== membershipId)
+              : [...current, membershipId],
+          )
+        }
+        onStatusChange={setBulkStatusId}
+        onPriorityChange={setBulkPriority}
+        onSubmit={submitBulkAction}
+        onOpenChange={(open) => {
+          if (!open && !bulkMutation.isPending) setBulkAction(null);
+        }}
+      />
     </section>
+  );
+}
+
+function BulkActionToolbar({
+  labels,
+  selectedCount,
+  loading,
+  onAction,
+  onClear,
+}: {
+  labels: AllTaskLabels;
+  selectedCount: number;
+  loading: boolean;
+  onAction: (action: BulkAction) => void;
+  onClear: () => void;
+}) {
+  const actions = [
+    { id: 'status' as const, label: labels.changeStatus },
+    { id: 'priority' as const, label: labels.changePriority },
+    { id: 'addAssignees' as const, label: labels.addAssignees },
+    { id: 'removeAssignees' as const, label: labels.removeAssignees },
+  ];
+  return (
+    <div
+      className="sticky top-2 z-10 flex flex-col gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] p-3 shadow-sm md:flex-row md:items-center md:justify-between"
+      aria-label={labels.bulkActions}
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <CheckSquare aria-hidden="true" className="h-4 w-4" />
+        {selectedCountLabel(selectedCount, labels)}
+      </div>
+      <div className="hidden flex-wrap items-center gap-2 md:flex">
+        {actions.map((action) => (
+          <Button
+            key={action.id}
+            type="button"
+            variant="secondary"
+            disabled={loading}
+            onClick={() => onAction(action.id)}
+          >
+            {action.label}
+          </Button>
+        ))}
+        <Button
+          type="button"
+          variant="danger"
+          disabled={loading}
+          onClick={() => onAction('delete')}
+        >
+          <Trash2 aria-hidden="true" className="h-4 w-4" />
+          {labels.deleteTasks}
+        </Button>
+        <Button type="button" variant="ghost" disabled={loading} onClick={onClear}>
+          {labels.clearSelection}
+        </Button>
+      </div>
+      <div className="flex items-center gap-2 md:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="secondary" disabled={loading}>
+              <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+              {labels.bulkActions}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {actions.map((action) => (
+              <DropdownMenuItem key={action.id} onSelect={() => onAction(action.id)}>
+                {action.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-[hsl(var(--danger))]"
+              onSelect={() => onAction('delete')}
+            >
+              {labels.deleteTasks}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button type="button" variant="ghost" disabled={loading} onClick={onClear}>
+          {labels.clearSelection}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -705,7 +999,9 @@ function TaskResults({
   view,
   sortBy,
   sortDirection,
+  selectedTaskIds,
   onSort,
+  onToggleSelection,
   onOpenDetail,
 }: {
   labels: AllTaskLabels;
@@ -713,14 +1009,32 @@ function TaskResults({
   view: TaskView;
   sortBy: TaskSortBy;
   sortDirection: TaskSortDirection;
+  selectedTaskIds: Set<string>;
   onSort: (sortBy: TaskSortBy) => void;
+  onToggleSelection: (taskId: string, checked: boolean) => void;
   onOpenDetail: (taskId: string) => void;
 }) {
   if (view === 'grid') {
-    return <TaskGridView labels={labels} tasks={tasks} onOpenDetail={onOpenDetail} />;
+    return (
+      <TaskGridView
+        labels={labels}
+        tasks={tasks}
+        selectedTaskIds={selectedTaskIds}
+        onToggleSelection={onToggleSelection}
+        onOpenDetail={onOpenDetail}
+      />
+    );
   }
   if (view === 'compact') {
-    return <TaskCompactView labels={labels} tasks={tasks} onOpenDetail={onOpenDetail} />;
+    return (
+      <TaskCompactView
+        labels={labels}
+        tasks={tasks}
+        selectedTaskIds={selectedTaskIds}
+        onToggleSelection={onToggleSelection}
+        onOpenDetail={onOpenDetail}
+      />
+    );
   }
   return (
     <>
@@ -728,6 +1042,9 @@ function TaskResults({
         <table className="w-full min-w-[960px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-[hsl(var(--border))] text-left text-xs uppercase text-[hsl(var(--muted-foreground))]">
+              <th className="w-12 px-4 py-3">
+                <span className="sr-only">{labels.selectTask}</span>
+              </th>
               <SortableHeader
                 label={labels.task}
                 field="title"
@@ -757,60 +1074,87 @@ function TaskResults({
             </tr>
           </thead>
           <tbody>
-            {tasks.map((task) => (
-              <tr
-                key={task.id}
-                className="border-b border-[hsl(var(--border))] last:border-0 hover:bg-[hsl(var(--surface-muted))]"
-              >
-                <td className="max-w-72 px-4 py-4">
-                  <button
-                    type="button"
-                    className="block max-w-full truncate text-left font-semibold underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-                    onClick={() => onOpenDetail(task.id)}
-                    title={task.title}
-                  >
-                    {task.title}
-                  </button>
-                  {task.description ? (
-                    <p
-                      className="truncate text-xs text-[hsl(var(--muted-foreground))]"
-                      title={task.description}
+            {tasks.map((task) => {
+              const selected = selectedTaskIds.has(task.id);
+              return (
+                <tr
+                  key={task.id}
+                  data-selected={selected ? 'true' : undefined}
+                  className="border-b border-[hsl(var(--border))] last:border-0 hover:bg-[hsl(var(--surface-muted))] data-[selected=true]:bg-[hsl(var(--primary)/0.08)]"
+                >
+                  <td className="px-4 py-4">
+                    <SelectionCheckbox
+                      labels={labels}
+                      task={task}
+                      selected={selected}
+                      onToggle={onToggleSelection}
+                    />
+                  </td>
+                  <td className="max-w-72 px-4 py-4">
+                    <button
+                      type="button"
+                      className="block max-w-full truncate text-left font-semibold underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                      onClick={() => onOpenDetail(task.id)}
+                      title={task.title}
                     >
-                      {task.description}
-                    </p>
-                  ) : null}
-                </td>
-                <td className="px-4 py-4">
-                  <StatusBadge task={task} />
-                </td>
-                <td className="px-4 py-4">
-                  <Badge variant={priorityBadge(task.priority)}>
-                    {priorityLabel(task.priority, labels)}
-                  </Badge>
-                </td>
-                <td className="px-4 py-4">{assigneeSummary(task, labels)}</td>
-                <td className="px-4 py-4">{task.department?.name ?? labels.emptyDash}</td>
-                <td className="px-4 py-4">{projectSummary(task, labels)}</td>
-                <td className="px-4 py-4">
-                  <DueDateCell task={task} labels={labels} />
-                </td>
-                <td className="px-4 py-4">{formatDateTime(task.updatedAt)}</td>
-              </tr>
-            ))}
+                      {task.title}
+                    </button>
+                    {task.description ? (
+                      <p
+                        className="truncate text-xs text-[hsl(var(--muted-foreground))]"
+                        title={task.description}
+                      >
+                        {task.description}
+                      </p>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-4">
+                    <StatusBadge task={task} />
+                  </td>
+                  <td className="px-4 py-4">
+                    <Badge variant={priorityBadge(task.priority)}>
+                      {priorityLabel(task.priority, labels)}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-4">{assigneeSummary(task, labels)}</td>
+                  <td className="px-4 py-4">{task.department?.name ?? labels.emptyDash}</td>
+                  <td className="px-4 py-4">{projectSummary(task, labels)}</td>
+                  <td className="px-4 py-4">
+                    <DueDateCell task={task} labels={labels} />
+                  </td>
+                  <td className="px-4 py-4">{formatDateTime(task.updatedAt)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="grid gap-3 p-3 xl:hidden">
-        {tasks.map((task) => (
-          <button
-            key={task.id}
-            type="button"
-            className="grid gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-            onClick={() => onOpenDetail(task.id)}
-          >
-            <span className="min-w-0">
-              <span className="block truncate font-semibold" title={task.title}>
-                {task.title}
+        {tasks.map((task) => {
+          const selected = selectedTaskIds.has(task.id);
+          return (
+            <div
+              key={task.id}
+              data-selected={selected ? 'true' : undefined}
+              className="grid gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4 text-left data-[selected=true]:border-[hsl(var(--primary))] data-[selected=true]:bg-[hsl(var(--primary)/0.08)]"
+            >
+              <span className="flex min-w-0 items-start justify-between gap-3">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                  onClick={() => onOpenDetail(task.id)}
+                  aria-label={`${labels.openTaskDetails}: ${task.title}`}
+                >
+                  <span className="block truncate font-semibold" title={task.title}>
+                    {task.title}
+                  </span>
+                </button>
+                <SelectionCheckbox
+                  labels={labels}
+                  task={task}
+                  selected={selected}
+                  onToggle={onToggleSelection}
+                />
               </span>
               <span className="mt-1 flex flex-wrap gap-2">
                 <StatusBadge task={task} />
@@ -818,20 +1162,20 @@ function TaskResults({
                   {priorityLabel(task.priority, labels)}
                 </Badge>
               </span>
-            </span>
-            <span className="grid gap-1 text-sm text-[hsl(var(--muted-foreground))]">
-              <span>
-                {labels.dueDate}: <DueDateText task={task} labels={labels} />
+              <span className="grid gap-1 text-sm text-[hsl(var(--muted-foreground))]">
+                <span>
+                  {labels.dueDate}: <DueDateText task={task} labels={labels} />
+                </span>
+                <span>
+                  {labels.assignees}: {assigneeSummary(task, labels)}
+                </span>
+                <span>
+                  {labels.projects}: {projectSummary(task, labels)}
+                </span>
               </span>
-              <span>
-                {labels.assignees}: {assigneeSummary(task, labels)}
-              </span>
-              <span>
-                {labels.projects}: {projectSummary(task, labels)}
-              </span>
-            </span>
-          </button>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </>
   );
@@ -840,25 +1184,46 @@ function TaskResults({
 function TaskGridView({
   labels,
   tasks,
+  selectedTaskIds,
+  onToggleSelection,
   onOpenDetail,
 }: {
   labels: AllTaskLabels;
   tasks: WorkspaceTask[];
+  selectedTaskIds: Set<string>;
+  onToggleSelection: (taskId: string, checked: boolean) => void;
   onOpenDetail: (taskId: string) => void;
 }) {
   return (
     <div className="grid gap-3 p-3 sm:grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
-      {tasks.map((task) => (
-        <button
-          key={task.id}
-          type="button"
-          className="grid min-h-56 content-start gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4 text-left outline-none transition-colors hover:bg-[hsl(var(--surface-muted))] focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
-          onClick={() => onOpenDetail(task.id)}
-          aria-label={`${labels.openTaskDetails}: ${task.title}`}
-        >
-          <span className="grid min-w-0 gap-2">
-            <span className="line-clamp-2 text-base font-semibold leading-snug" title={task.title}>
-              {task.title}
+      {tasks.map((task) => {
+        const selected = selectedTaskIds.has(task.id);
+        return (
+          <div
+            key={task.id}
+            data-selected={selected ? 'true' : undefined}
+            className="grid min-h-56 content-start gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4 text-left transition-colors data-[selected=true]:border-[hsl(var(--primary))] data-[selected=true]:bg-[hsl(var(--primary)/0.08)]"
+          >
+            <span className="flex min-w-0 items-start justify-between gap-3">
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                onClick={() => onOpenDetail(task.id)}
+                aria-label={`${labels.openTaskDetails}: ${task.title}`}
+              >
+                <span
+                  className="line-clamp-2 text-base font-semibold leading-snug"
+                  title={task.title}
+                >
+                  {task.title}
+                </span>
+              </button>
+              <SelectionCheckbox
+                labels={labels}
+                task={task}
+                selected={selected}
+                onToggle={onToggleSelection}
+              />
             </span>
             <span className="flex flex-wrap gap-2">
               <StatusBadge task={task} />
@@ -866,32 +1231,32 @@ function TaskGridView({
                 {priorityLabel(task.priority, labels)}
               </Badge>
             </span>
-          </span>
-          {task.description ? (
-            <span
-              className="line-clamp-2 text-sm text-[hsl(var(--muted-foreground))]"
-              title={task.description}
-            >
-              {task.description}
+            {task.description ? (
+              <span
+                className="line-clamp-2 text-sm text-[hsl(var(--muted-foreground))]"
+                title={task.description}
+              >
+                {task.description}
+              </span>
+            ) : null}
+            <span className="grid gap-2 text-sm text-[hsl(var(--muted-foreground))]">
+              <TaskMetaLine
+                label={labels.dueDate}
+                value={<DueDateText task={task} labels={labels} />}
+              />
+              <span className="flex flex-wrap gap-2">
+                <DueStateBadge task={task} labels={labels} />
+              </span>
+              <TaskMetaLine label={labels.assignees} value={assigneeSummary(task, labels)} />
+              <TaskMetaLine
+                label={labels.department}
+                value={task.department?.name ?? labels.emptyDash}
+              />
+              <TaskMetaLine label={labels.projects} value={projectSummary(task, labels)} />
             </span>
-          ) : null}
-          <span className="grid gap-2 text-sm text-[hsl(var(--muted-foreground))]">
-            <TaskMetaLine
-              label={labels.dueDate}
-              value={<DueDateText task={task} labels={labels} />}
-            />
-            <span className="flex flex-wrap gap-2">
-              <DueStateBadge task={task} labels={labels} />
-            </span>
-            <TaskMetaLine label={labels.assignees} value={assigneeSummary(task, labels)} />
-            <TaskMetaLine
-              label={labels.department}
-              value={task.department?.name ?? labels.emptyDash}
-            />
-            <TaskMetaLine label={labels.projects} value={projectSummary(task, labels)} />
-          </span>
-        </button>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -899,53 +1264,236 @@ function TaskGridView({
 function TaskCompactView({
   labels,
   tasks,
+  selectedTaskIds,
+  onToggleSelection,
   onOpenDetail,
 }: {
   labels: AllTaskLabels;
   tasks: WorkspaceTask[];
+  selectedTaskIds: Set<string>;
+  onToggleSelection: (taskId: string, checked: boolean) => void;
   onOpenDetail: (taskId: string) => void;
 }) {
   return (
     <div className="divide-y divide-[hsl(var(--border))]">
-      {tasks.map((task) => (
-        <button
-          key={task.id}
-          type="button"
-          className="grid w-full gap-2 px-3 py-2.5 text-left outline-none transition-colors hover:bg-[hsl(var(--surface-muted))] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--ring))] sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center"
-          onClick={() => onOpenDetail(task.id)}
-          aria-label={`${labels.openTaskDetails}: ${task.title}`}
-        >
-          <span className="flex min-w-0 flex-wrap items-center gap-2">
-            <StatusBadge task={task} />
-            <span className="min-w-0 flex-1 truncate font-semibold" title={task.title}>
-              {task.title}
+      {tasks.map((task) => {
+        const selected = selectedTaskIds.has(task.id);
+        return (
+          <div
+            key={task.id}
+            data-selected={selected ? 'true' : undefined}
+            className="grid w-full gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-muted))] data-[selected=true]:bg-[hsl(var(--primary)/0.08)] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] sm:items-center"
+          >
+            <SelectionCheckbox
+              labels={labels}
+              task={task}
+              selected={selected}
+              onToggle={onToggleSelection}
+            />
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <StatusBadge task={task} />
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                title={task.title}
+                onClick={() => onOpenDetail(task.id)}
+                aria-label={`${labels.openTaskDetails}: ${task.title}`}
+              >
+                {task.title}
+              </button>
             </span>
-          </span>
-          <span className="flex items-center gap-2 text-sm">
-            <Badge variant={priorityBadge(task.priority)}>
-              {priorityLabel(task.priority, labels)}
-            </Badge>
-          </span>
-          <span
-            className="truncate text-sm text-[hsl(var(--muted-foreground))]"
-            title={assigneeSummary(task, labels)}
-          >
-            {assigneeSummary(task, labels)}
-          </span>
-          <span className="flex flex-wrap items-center gap-2 text-sm text-[hsl(var(--muted-foreground))]">
-            <DueDateText task={task} labels={labels} />
-            <DueStateBadge task={task} labels={labels} />
-          </span>
-          <span
-            className="min-w-0 truncate text-xs text-[hsl(var(--muted-foreground))] sm:col-span-4"
-            title={`${labels.department}: ${task.department?.name ?? labels.emptyDash} · ${labels.projects}: ${projectSummary(task, labels)}`}
-          >
-            {labels.department}: {task.department?.name ?? labels.emptyDash} · {labels.projects}:{' '}
-            {projectSummary(task, labels)}
-          </span>
-        </button>
-      ))}
+            <span className="flex items-center gap-2 text-sm">
+              <Badge variant={priorityBadge(task.priority)}>
+                {priorityLabel(task.priority, labels)}
+              </Badge>
+            </span>
+            <span
+              className="truncate text-sm text-[hsl(var(--muted-foreground))]"
+              title={assigneeSummary(task, labels)}
+            >
+              {assigneeSummary(task, labels)}
+            </span>
+            <span className="flex flex-wrap items-center gap-2 text-sm text-[hsl(var(--muted-foreground))]">
+              <DueDateText task={task} labels={labels} />
+              <DueStateBadge task={task} labels={labels} />
+            </span>
+            <span
+              className="min-w-0 truncate text-xs text-[hsl(var(--muted-foreground))] sm:col-span-5"
+              title={`${labels.department}: ${task.department?.name ?? labels.emptyDash} · ${labels.projects}: ${projectSummary(task, labels)}`}
+            >
+              {labels.department}: {task.department?.name ?? labels.emptyDash} · {labels.projects}:{' '}
+              {projectSummary(task, labels)}
+            </span>
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+function SelectionCheckbox({
+  labels,
+  task,
+  selected,
+  onToggle,
+}: {
+  labels: AllTaskLabels;
+  task: WorkspaceTask;
+  selected: boolean;
+  onToggle: (taskId: string, checked: boolean) => void;
+}) {
+  return (
+    <Checkbox
+      className="h-5 w-5 shrink-0"
+      checked={selected}
+      aria-label={`${labels.selectTask}: ${task.title}`}
+      onClick={(event) => event.stopPropagation()}
+      onCheckedChange={(checked) => onToggle(task.id, checked === true)}
+    />
+  );
+}
+
+function BulkActionDialog({
+  labels,
+  action,
+  selectedCount,
+  statuses,
+  users,
+  assigneeSearch,
+  selectedMembershipIds,
+  selectedStatusId,
+  selectedPriority,
+  loading,
+  onAssigneeSearch,
+  onMembershipToggle,
+  onStatusChange,
+  onPriorityChange,
+  onSubmit,
+  onOpenChange,
+}: {
+  labels: AllTaskLabels;
+  action: BulkAction | null;
+  selectedCount: number;
+  statuses: { id: string; name: string }[];
+  users: WorkspaceUser[];
+  assigneeSearch: string;
+  selectedMembershipIds: string[];
+  selectedStatusId: string;
+  selectedPriority: TaskPriority;
+  loading: boolean;
+  onAssigneeSearch: (value: string) => void;
+  onMembershipToggle: (membershipId: string) => void;
+  onStatusChange: (value: string) => void;
+  onPriorityChange: (value: TaskPriority) => void;
+  onSubmit: () => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const open = action !== null;
+  const submitDisabled =
+    loading ||
+    selectedCount === 0 ||
+    (action === 'status' && !selectedStatusId) ||
+    ((action === 'addAssignees' || action === 'removeAssignees') &&
+      selectedMembershipIds.length === 0);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{bulkDialogTitle(action, selectedCount, labels)}</DialogTitle>
+          <DialogDescription>{bulkDialogDescription(action, labels)}</DialogDescription>
+        </DialogHeader>
+        {action === 'status' ? (
+          <Select
+            value={selectedStatusId || noneValue}
+            onValueChange={(value) => onStatusChange(value === noneValue ? '' : value)}
+          >
+            <SelectTrigger label={labels.status}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={noneValue}>{labels.selectStatus}</SelectItem>
+              {statuses.map((status) => (
+                <SelectItem key={status.id} value={status.id}>
+                  {status.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+        {action === 'priority' ? (
+          <Select
+            value={selectedPriority}
+            onValueChange={(value) => onPriorityChange(value as TaskPriority)}
+          >
+            <SelectTrigger label={labels.priority}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {priorities.map((priority) => (
+                <SelectItem key={priority} value={priority}>
+                  {priorityLabel(priority, labels)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+        {action === 'addAssignees' || action === 'removeAssignees' ? (
+          <div className="grid gap-3">
+            {action === 'removeAssignees' ? (
+              <p className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-muted))] p-3 text-sm text-[hsl(var(--muted-foreground))]">
+                {labels.unassignedWarning}
+              </p>
+            ) : null}
+            <Input
+              label={labels.searchPeople}
+              value={assigneeSearch}
+              onChange={(event) => onAssigneeSearch(event.target.value)}
+              placeholder={labels.searchPeople}
+            />
+            <div className="grid max-h-64 gap-2 overflow-y-auto rounded-md border border-[hsl(var(--border))] p-2">
+              {users.length ? (
+                users.map((user) => (
+                  <Checkbox
+                    key={user.membershipId}
+                    label={displayUser(user)}
+                    checked={selectedMembershipIds.includes(user.membershipId)}
+                    onCheckedChange={() => onMembershipToggle(user.membershipId)}
+                  />
+                ))
+              ) : (
+                <p className="p-2 text-sm text-[hsl(var(--muted-foreground))]">
+                  {labels.noEligibleUsers}
+                </p>
+              )}
+            </div>
+          </div>
+        ) : null}
+        {action === 'delete' ? (
+          <p className="rounded-md border border-[hsl(var(--danger))] bg-[hsl(var(--danger)/0.08)] p-3 text-sm">
+            {labels.deleteConfirmationDescription}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={loading}
+            onClick={() => onOpenChange(false)}
+          >
+            {labels.cancel}
+          </Button>
+          <Button
+            type="button"
+            variant={action === 'delete' ? 'danger' : 'primary'}
+            loading={loading}
+            disabled={submitDisabled}
+            onClick={onSubmit}
+          >
+            {bulkSubmitLabel(action, selectedCount, labels)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1330,6 +1878,85 @@ function safeTaskError(error: unknown, labels: AllTaskLabels) {
   return labels.taskLoadFailed;
 }
 
+function safeBulkError(error: unknown, labels: AllTaskLabels) {
+  const status =
+    typeof error === 'object' && error && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  if (status === 401 || status === 403) return labels.permissionDenied;
+  if (status === 404) return labels.selectedTasksUnavailable;
+  if (status === 409) return labels.statusConfigChanged;
+  if (status === 400 || status === 422) return labels.bulkActionInvalid;
+  if (error instanceof TypeError) return labels.networkError;
+  if (error instanceof Error && error.message) return error.message;
+  return labels.bulkActionFailed;
+}
+
+function selectedCountLabel(count: number, labels: AllTaskLabels) {
+  return count === 1
+    ? labels.oneTaskSelected
+    : labels.tasksSelected.replace('{count}', String(count));
+}
+
+function successMessage(labels: AllTaskLabels, action: BulkAction | null, result: BulkResultLike) {
+  if (action === 'addAssignees') {
+    return labels.assignmentsAdded.replace('{count}', String(result.relationChangedCount ?? 0));
+  }
+  if (action === 'removeAssignees') {
+    return labels.assignmentsRemoved.replace('{count}', String(result.relationChangedCount ?? 0));
+  }
+  const base = labels.tasksUpdated.replace('{count}', String(result.changedCount));
+  return result.unchangedCount > 0
+    ? `${base} ${labels.alreadyMatched.replace('{count}', String(result.unchangedCount))}`
+    : base;
+}
+
+function bulkDialogTitle(action: BulkAction | null, selectedCount: number, labels: AllTaskLabels) {
+  const count = String(selectedCount);
+  if (action === 'status') return labels.changeStatusForTasks.replace('{count}', count);
+  if (action === 'priority') return labels.changePriorityForTasks.replace('{count}', count);
+  if (action === 'addAssignees') return labels.addAssigneesForTasks.replace('{count}', count);
+  if (action === 'removeAssignees') return labels.removeAssigneesForTasks.replace('{count}', count);
+  if (action === 'delete') return labels.deleteTasksConfirmation.replace('{count}', count);
+  return labels.bulkActions;
+}
+
+function bulkDialogDescription(action: BulkAction | null, labels: AllTaskLabels) {
+  if (action === 'addAssignees') return labels.addAssigneesDescription;
+  if (action === 'removeAssignees') return labels.removeAssigneesDescription;
+  if (action === 'delete') return labels.deleteConfirmationDescription;
+  return labels.bulkDialogDescription;
+}
+
+function bulkSubmitLabel(action: BulkAction | null, selectedCount: number, labels: AllTaskLabels) {
+  const count = String(selectedCount);
+  if (action === 'addAssignees') return labels.addToTasks.replace('{count}', count);
+  if (action === 'removeAssignees') return labels.removeFromTasks.replace('{count}', count);
+  if (action === 'delete') return labels.deleteTasksCount.replace('{count}', count);
+  return labels.updateTasks.replace('{count}', count);
+}
+
+function isDatasetPatch(patch: Record<string, string | number | null>) {
+  return Object.keys(patch).some(
+    (key) =>
+      key !== 'view' &&
+      [
+        'search',
+        'status',
+        'priority',
+        'assignee',
+        'department',
+        'project',
+        'dueFrom',
+        'dueTo',
+        'sortBy',
+        'sortDirection',
+        'page',
+        'pageSize',
+      ].includes(key),
+  );
+}
+
 function activeFilters(state: TaskUrlState) {
   return [...tenantFilterParams, ...genericFilterParams].filter((key) =>
     Boolean(state[key as keyof TaskUrlState]),
@@ -1473,6 +2100,12 @@ interface SelectedTask {
 }
 
 type TaskView = 'list' | 'grid' | 'compact';
+type BulkAction = 'status' | 'priority' | 'addAssignees' | 'removeAssignees' | 'delete';
+type BulkResultLike = {
+  changedCount: number;
+  unchangedCount: number;
+  relationChangedCount?: number;
+};
 
 type AllTaskLabels = ReturnType<typeof allTaskLabels>;
 
@@ -1548,6 +2181,49 @@ function allTaskLabels(
     'invalidFilters',
     'permissionDenied',
     'networkError',
+    'cancel',
+    'noEligibleUsers',
+    'selectCurrentPage',
+    'deselectCurrentPage',
+    'selectTask',
+    'oneTaskSelected',
+    'tasksSelected',
+    'bulkActions',
+    'changeStatus',
+    'changePriority',
+    'addAssignees',
+    'removeAssignees',
+    'deleteTasks',
+    'clearSelection',
+    'apply',
+    'updateTasks',
+    'addToTasks',
+    'removeFromTasks',
+    'deleteTasksCount',
+    'changeStatusForTasks',
+    'changePriorityForTasks',
+    'addAssigneesForTasks',
+    'removeAssigneesForTasks',
+    'deleteTasksConfirmation',
+    'bulkDialogDescription',
+    'addAssigneesDescription',
+    'removeAssigneesDescription',
+    'deleteConfirmationDescription',
+    'alreadyMatched',
+    'assignmentsAdded',
+    'assignmentsRemoved',
+    'tasksUpdated',
+    'bulkActionFailed',
+    'bulkActionInvalid',
+    'selectedTasksUnavailable',
+    'statusConfigChanged',
+    'staleMembership',
+    'unassignedWarning',
+    'selectStatus',
+    'selectAssignees',
+    'noTasksSelected',
+    'tooManySelected',
+    'noWorkspace',
   ] as const;
   return Object.fromEntries(keys.map((key) => [key, t(locale, `workspaceTasks.${key}`)])) as Record<
     (typeof keys)[number],

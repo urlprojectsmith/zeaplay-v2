@@ -16,6 +16,10 @@ import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import {
+  BulkTaskIdsDto,
+  BulkTaskMembershipsDto,
+  BulkTaskPriorityDto,
+  BulkTaskStatusDto,
   CreateTaskDto,
   ReplaceTaskMembershipsDto,
   ReplaceTaskProjectsDto,
@@ -119,6 +123,233 @@ export class TasksService {
       pageSize: query.pageSize,
       total,
     };
+  }
+
+  async bulkUpdateStatus(tenant: WorkspaceTenantContext, dto: BulkTaskStatusDto) {
+    const status = await this.taskStatus(tenant.workspaceId, dto.statusDefinitionId);
+    const tasks = await this.assertBulkTasks(tenant.workspaceId, dto.taskIds);
+    const changedTaskIds = tasks
+      .filter((task) => task.statusDefinitionId !== status.id)
+      .map((task) => task.id);
+    if (changedTaskIds.length === 0) {
+      return bulkResult(dto.taskIds.length, 0);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const update = await tx.task.updateMany({
+        where: { id: { in: changedTaskIds }, workspaceId: tenant.workspaceId, deletedAt: null },
+        data: { statusDefinitionId: status.id, updatedById: tenant.userId },
+      });
+      if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
+      await tx.auditLog.create({
+        data: {
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action: 'task.bulk_status_changed',
+          entityType: 'Task',
+          metadata: {
+            requestedCount: dto.taskIds.length,
+            changedCount: changedTaskIds.length,
+            unchangedCount: dto.taskIds.length - changedTaskIds.length,
+            statusDefinitionId: status.id,
+            taskIds: changedTaskIds,
+          },
+        },
+      });
+    });
+    return bulkResult(dto.taskIds.length, changedTaskIds.length);
+  }
+
+  async bulkUpdatePriority(tenant: WorkspaceTenantContext, dto: BulkTaskPriorityDto) {
+    const tasks = await this.assertBulkTasks(tenant.workspaceId, dto.taskIds);
+    const changedTaskIds = tasks
+      .filter((task) => task.priority !== dto.priority)
+      .map((task) => task.id);
+    if (changedTaskIds.length === 0) {
+      return bulkResult(dto.taskIds.length, 0);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const update = await tx.task.updateMany({
+        where: { id: { in: changedTaskIds }, workspaceId: tenant.workspaceId, deletedAt: null },
+        data: { priority: dto.priority, updatedById: tenant.userId },
+      });
+      if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
+      await tx.auditLog.create({
+        data: {
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action: 'task.bulk_priority_changed',
+          entityType: 'Task',
+          metadata: {
+            requestedCount: dto.taskIds.length,
+            changedCount: changedTaskIds.length,
+            unchangedCount: dto.taskIds.length - changedTaskIds.length,
+            priority: dto.priority,
+            taskIds: changedTaskIds,
+          },
+        },
+      });
+    });
+    return bulkResult(dto.taskIds.length, changedTaskIds.length);
+  }
+
+  async bulkAddAssignees(tenant: WorkspaceTenantContext, dto: BulkTaskMembershipsDto) {
+    await this.assertBulkTasks(tenant.workspaceId, dto.taskIds);
+    const membershipIds = await this.activeMembershipIds(tenant.workspaceId, dto.membershipIds);
+    const existing = await this.prisma.taskAssignee.findMany({
+      where: {
+        workspaceId: tenant.workspaceId,
+        taskId: { in: dto.taskIds },
+        membershipId: { in: membershipIds },
+      },
+      select: { taskId: true, membershipId: true },
+    });
+    const existingKeys = new Set(
+      existing.map((assignee) => relationKey(assignee.taskId, assignee.membershipId)),
+    );
+    const rows = dto.taskIds.flatMap((taskId) =>
+      membershipIds
+        .filter((membershipId) => !existingKeys.has(relationKey(taskId, membershipId)))
+        .map((membershipId) => ({ taskId, workspaceId: tenant.workspaceId, membershipId })),
+    );
+    if (rows.length === 0) {
+      return bulkRelationResult(
+        dto.taskIds.length,
+        0,
+        0,
+        dto.taskIds.length * membershipIds.length,
+      );
+    }
+
+    const changedTaskIds = [...new Set(rows.map((row) => row.taskId))];
+    const createdCount = await this.prisma.$transaction(async (tx) => {
+      await this.assertBulkTasks(tenant.workspaceId, dto.taskIds, tx);
+      const created = await tx.taskAssignee.createMany({ data: rows, skipDuplicates: true });
+      const update = await tx.task.updateMany({
+        where: { id: { in: changedTaskIds }, workspaceId: tenant.workspaceId, deletedAt: null },
+        data: { updatedById: tenant.userId },
+      });
+      if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
+      await tx.auditLog.create({
+        data: {
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action: 'task.bulk_assignees_added',
+          entityType: 'Task',
+          metadata: {
+            requestedCount: dto.taskIds.length,
+            changedCount: changedTaskIds.length,
+            unchangedCount: dto.taskIds.length - changedTaskIds.length,
+            relationChangedCount: created.count,
+            relationUnchangedCount: dto.taskIds.length * membershipIds.length - created.count,
+            membershipIds,
+            taskIds: changedTaskIds,
+          },
+        },
+      });
+      return created.count;
+    });
+    return bulkRelationResult(
+      dto.taskIds.length,
+      changedTaskIds.length,
+      createdCount,
+      dto.taskIds.length * membershipIds.length - createdCount,
+    );
+  }
+
+  async bulkRemoveAssignees(tenant: WorkspaceTenantContext, dto: BulkTaskMembershipsDto) {
+    await this.assertBulkTasks(tenant.workspaceId, dto.taskIds);
+    const membershipIds = await this.activeMembershipIds(tenant.workspaceId, dto.membershipIds);
+    const existing = await this.prisma.taskAssignee.findMany({
+      where: {
+        workspaceId: tenant.workspaceId,
+        taskId: { in: dto.taskIds },
+        membershipId: { in: membershipIds },
+      },
+      select: { taskId: true, membershipId: true },
+    });
+    const changedTaskIds = [...new Set(existing.map((assignee) => assignee.taskId))];
+    if (existing.length === 0) {
+      return bulkRelationResult(
+        dto.taskIds.length,
+        0,
+        0,
+        dto.taskIds.length * membershipIds.length,
+      );
+    }
+
+    const deletedCount = await this.prisma.$transaction(async (tx) => {
+      await this.assertBulkTasks(tenant.workspaceId, dto.taskIds, tx);
+      const deleted = await tx.taskAssignee.deleteMany({
+        where: {
+          workspaceId: tenant.workspaceId,
+          taskId: { in: dto.taskIds },
+          membershipId: { in: membershipIds },
+        },
+      });
+      const update = await tx.task.updateMany({
+        where: { id: { in: changedTaskIds }, workspaceId: tenant.workspaceId, deletedAt: null },
+        data: { updatedById: tenant.userId },
+      });
+      if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
+      await tx.auditLog.create({
+        data: {
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action: 'task.bulk_assignees_removed',
+          entityType: 'Task',
+          metadata: {
+            requestedCount: dto.taskIds.length,
+            changedCount: changedTaskIds.length,
+            unchangedCount: dto.taskIds.length - changedTaskIds.length,
+            relationChangedCount: deleted.count,
+            relationUnchangedCount: dto.taskIds.length * membershipIds.length - deleted.count,
+            membershipIds,
+            taskIds: changedTaskIds,
+          },
+        },
+      });
+      return deleted.count;
+    });
+    return bulkRelationResult(
+      dto.taskIds.length,
+      changedTaskIds.length,
+      deletedCount,
+      dto.taskIds.length * membershipIds.length - deletedCount,
+    );
+  }
+
+  async bulkRemove(tenant: WorkspaceTenantContext, dto: BulkTaskIdsDto) {
+    await this.assertBulkTasks(tenant.workspaceId, dto.taskIds);
+    const deletedAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      const update = await tx.task.updateMany({
+        where: { id: { in: dto.taskIds }, workspaceId: tenant.workspaceId, deletedAt: null },
+        data: { deletedAt, updatedById: tenant.userId },
+      });
+      if (update.count !== dto.taskIds.length) throw new NotFoundException('Task not found.');
+      await tx.auditLog.create({
+        data: {
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action: 'task.bulk_deleted',
+          entityType: 'Task',
+          metadata: {
+            requestedCount: dto.taskIds.length,
+            changedCount: update.count,
+            unchangedCount: 0,
+            taskIds: dto.taskIds,
+          },
+        },
+      });
+    });
+    return bulkResult(dto.taskIds.length, dto.taskIds.length);
   }
 
   async get(tenant: WorkspaceTenantContext, taskId: string) {
@@ -342,6 +573,21 @@ export class TasksService {
     });
     if (!task) throw new NotFoundException('Task not found.');
     return task;
+  }
+
+  private async assertBulkTasks(
+    workspaceId: string,
+    taskIds: string[],
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const tasks = await tx.task.findMany({
+      where: { id: { in: taskIds }, workspaceId, deletedAt: null },
+      select: { id: true, statusDefinitionId: true, priority: true },
+    });
+    if (tasks.length !== taskIds.length) {
+      throw new NotFoundException('One or more tasks were not found.');
+    }
+    return tasks;
   }
 
   private async findTask(workspaceId: string, taskId: string) {
@@ -572,5 +818,30 @@ function relationCounts(assigneeIds: string[], followerIds: string[], projectIds
     assigneeCount: assigneeIds.length,
     followerCount: followerIds.length,
     projectCount: projectIds.length,
+  };
+}
+
+function relationKey(taskId: string, membershipId: string) {
+  return `${taskId}:${membershipId}`;
+}
+
+function bulkResult(requestedCount: number, changedCount: number) {
+  return {
+    requestedCount,
+    changedCount,
+    unchangedCount: requestedCount - changedCount,
+  };
+}
+
+function bulkRelationResult(
+  requestedCount: number,
+  changedCount: number,
+  relationChangedCount: number,
+  relationUnchangedCount: number,
+) {
+  return {
+    ...bulkResult(requestedCount, changedCount),
+    relationChangedCount,
+    relationUnchangedCount,
   };
 }

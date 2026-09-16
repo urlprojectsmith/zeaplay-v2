@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.3B - COMPLETE / PASS
-Next: Phase 7.3C - Bulk Selection & Actions
+Current: Phase 7.3C2 - COMPLETE / PASS
+Next: Phase 7.3C2 Refinement - Focused Bulk Selection UX polish/audit
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -486,6 +486,82 @@ Known deferred Task features:
 
 - No Bulk Actions, Kanban, inline editing, comments, attachments, tags, subtasks, dependencies, recurrence, templates, approvals, time tracking, workload, Calendar, Gantt, gamification, or automation.
 
+### Phase 7.3C1 - COMPLETE / PASS
+
+Task Bulk Action Backend Engine.
+
+Implemented:
+
+- Workspace-scoped bulk Task status API: `PATCH /api/v1/workspaces/:workspaceId/tasks/bulk/status`.
+- Workspace-scoped bulk Task priority API: `PATCH /api/v1/workspaces/:workspaceId/tasks/bulk/priority`.
+- Workspace-scoped bulk Task assignee add API: `POST /api/v1/workspaces/:workspaceId/tasks/bulk/assignees/add`.
+- Workspace-scoped bulk Task assignee remove API: `POST /api/v1/workspaces/:workspaceId/tasks/bulk/assignees/remove`.
+- Workspace-scoped bulk Task soft-delete API: `DELETE /api/v1/workspaces/:workspaceId/tasks/bulk`.
+- Bulk APIs accept explicit, bounded `taskIds[]` only, with minimum 1, maximum 100, UUID validation, and duplicate rejection.
+- Bulk assignee APIs accept explicit, bounded `membershipIds[]` only, with minimum 1, maximum 100, UUID validation, and duplicate rejection.
+- Bulk status and priority updates are idempotent and avoid redundant Task updates or audit rows when every requested Task is already unchanged.
+- Bulk assignee add skips already-assigned relations; bulk assignee remove skips missing relations.
+- Bulk delete uses Task soft deletion through `deletedAt`; relation rows are not hard-deleted.
+
+Security and transaction invariants:
+
+- Bulk routes use existing JWT, Workspace tenant, and permission guards.
+- Bulk status and priority require `tasks.update`.
+- Bulk assignee add/remove require `tasks.assign`.
+- Bulk delete requires `tasks.delete`.
+- `tasks.view`, `tasks.update`, `tasks.assign`, `tasks.delete`, and reserved `tasks.manage` remain separated; `tasks.manage` is not a wildcard.
+- Combined permission roles remain independent: update+assign does not imply delete, and assign+delete does not imply update.
+- All bulk operations are all-or-nothing for unknown, foreign, cross-Workspace, cross-Agency, or already-deleted Tasks.
+- Bulk status accepts only active same-Workspace `TASK` statuses and rejects `PROJECT`, `TICKET`, inactive, unknown, or foreign statuses.
+- Bulk assignee add/remove accept only active memberships in the same Workspace and reject unknown, suspended, foreign, or duplicate membership input.
+- Current Task assignee invariant is preserved: assignee replacement already permits zero assignees, so bulk remove also permits zero assignees.
+- Tenant isolation remains enforced by route/header matching plus Workspace-scoped service filters.
+- Bulk mutations use bounded, set-based validation and mutation patterns instead of an N PATCH loop.
+- Critical mutation queries include Workspace/deleted-state predicates and success audit is written only after mutation counts are verified.
+
+Audit:
+
+- Bulk audit actions: `task.bulk_status_changed`, `task.bulk_priority_changed`, `task.bulk_assignees_added`, `task.bulk_assignees_removed`, and `task.bulk_deleted`.
+- Audit metadata records requested count, changed count, unchanged count, relation counts where relevant, bounded changed Task IDs, and target status/priority/memberships where relevant.
+- Failed validation or failed all-or-nothing transactions do not emit misleading success audit rows.
+
+Known deferred Task features:
+
+- No frontend bulk selection, toolbar, dialogs, Kanban, inline editing, comments, attachments, tags, subtasks, dependencies, recurrence, templates, approvals, time tracking, workload, Calendar, Gantt, gamification, or automation.
+
+### Phase 7.3C2 - COMPLETE / PASS
+
+Task Bulk Selection UX.
+
+Implemented:
+
+- Current-page-only selection on `/workspace/tasks`, capped by the existing frontend page-size maximum of 50.
+- One shared in-memory selection state across List, Grid, and Compact views; switching views preserves selection and does not refetch.
+- Selection is intentionally not stored in URL, localStorage, or global stores.
+- Selection clears on search/filter/sort/page/page-size dataset changes, Workspace switch, and session loss.
+- Bulk toolbar with status, priority, add assignees, remove assignees, delete, and clear-selection actions.
+- Bulk dialogs call the Phase 7.3C1 backend endpoints with one request per action; no per-task frontend mutation loop.
+- Successful bulk actions clear selection and invalidate current Workspace task queries; failed bulk actions preserve selection.
+- Bulk delete closes selected task detail when the deleted task was open.
+- Responsive desktop inline toolbar and mobile action menu, with accessible checkbox labels and dialog controls.
+- English and Tamil labels for bulk selection/actions/messages.
+- Focused React/Vitest coverage for shared selection, current-page select-all, bulk status/priority/assignee/delete flows, failure preservation, reset behavior, i18n, and themes.
+- Playwright coverage for current-page bulk priority and bulk delete using the workspace-scoped C1 bulk endpoints.
+
+Security and UX invariants:
+
+- Backend tenant authorization, permission checks, all-or-nothing validation, and audit/event behavior remain authoritative from Phase 7.3C1.
+- The UI sends explicit selected Task IDs only, never filter-based "all matching" bulk payloads.
+- Current-page select-all never selects tasks outside the rendered page.
+- Bulk assignee selection uses Workspace-scoped membership lookup and lets the backend reject stale/foreign membership IDs.
+- Bulk status selection uses active Workspace TASK statuses and lets the backend reject stale/foreign status IDs.
+
+Known deferred Task features:
+
+- No select-all-across-all-pages behavior.
+- No Kanban, inline editing, comments, attachments, tags, subtasks, dependencies, recurrence, templates, approvals, time tracking, workload, Calendar, Gantt, gamification, or automation.
+- Phase 7.3C is not marked complete until the requested Phase 7.3C2 refinement/final audit is complete.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -567,6 +643,8 @@ Do not infer or invent model fields from this list.
 | Phase 7.2     | PASS   | Not tagged                       |
 | Phase 7.3A    | PASS   | Not tagged                       |
 | Phase 7.3B    | PASS   | Not tagged                       |
+| Phase 7.3C1   | PASS   | Not tagged                       |
+| Phase 7.3C2   | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -589,6 +667,7 @@ Confirmed current warnings:
 - Phase 6.4A acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, and whitespace diff checks.
 - Phase 6.4B acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
 - Phase 6.4C acceptance passed with formatting, lint, typecheck, unit tests, integration tests, E2E tests, production build, Prisma validation, high-threshold audit, Storybook build, and whitespace diff checks.
-- Phase 7.3B All Tasks Grid + Compact Views and focused refinement are complete/pass; the next phase is Phase 7.3C Bulk Selection & Actions.
+- Phase 7.3C1 Task Bulk Action Backend Engine and focused refinement are complete/pass.
+- Phase 7.3C2 Task Bulk Selection UX is complete/pass; the next phase is Phase 7.3C2 Refinement, not Phase 7.3C3.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

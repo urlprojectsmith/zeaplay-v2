@@ -23,6 +23,10 @@ import {
 } from '../../common/tenant/tenant-context.decorator';
 import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
 import {
+  BulkTaskIdsDto,
+  BulkTaskMembershipsDto,
+  BulkTaskPriorityDto,
+  BulkTaskStatusDto,
   CreateTaskDto,
   ReplaceTaskMembershipsDto,
   ReplaceTaskProjectsDto,
@@ -52,6 +56,51 @@ export class TasksController {
   @RequirePermissions(PermissionKeys.tasksView)
   list(@CurrentWorkspaceTenant() tenant: WorkspaceTenantContext, @Query() query: TaskQueryDto) {
     return this.tasks.list(tenant, query);
+  }
+
+  @Patch('bulk/status')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  bulkUpdateStatus(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: BulkTaskStatusDto,
+  ) {
+    return this.tasks.bulkUpdateStatus(tenant, dto);
+  }
+
+  @Patch('bulk/priority')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  bulkUpdatePriority(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: BulkTaskPriorityDto,
+  ) {
+    return this.tasks.bulkUpdatePriority(tenant, dto);
+  }
+
+  @Post('bulk/assignees/add')
+  @RequirePermissions(PermissionKeys.tasksAssign)
+  bulkAddAssignees(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: BulkTaskMembershipsDto,
+  ) {
+    return this.tasks.bulkAddAssignees(tenant, dto);
+  }
+
+  @Post('bulk/assignees/remove')
+  @RequirePermissions(PermissionKeys.tasksAssign)
+  bulkRemoveAssignees(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: BulkTaskMembershipsDto,
+  ) {
+    return this.tasks.bulkRemoveAssignees(tenant, dto);
+  }
+
+  @Delete('bulk')
+  @RequirePermissions(PermissionKeys.tasksDelete)
+  bulkRemove(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: BulkTaskIdsDto,
+  ) {
+    return this.tasks.bulkRemove(tenant, dto);
   }
 
   @Get(':taskId')

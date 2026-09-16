@@ -56,6 +56,14 @@ export interface CreateTaskPayload {
   projectIds?: string[];
 }
 
+export interface BulkTaskResult {
+  requestedCount: number;
+  changedCount: number;
+  unchangedCount: number;
+  relationChangedCount?: number;
+  relationUnchangedCount?: number;
+}
+
 export interface ListWorkspaceTasksParams {
   page?: number;
   pageSize?: number;
@@ -138,6 +146,58 @@ export async function listWorkspaceTasks(workspaceId: string, params: ListWorksp
 export async function getWorkspaceTask(workspaceId: string, taskId: string) {
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}`,
+  );
+  return response.data;
+}
+
+export async function bulkUpdateTaskStatus(
+  workspaceId: string,
+  body: { taskIds: string[]; statusDefinitionId: string },
+) {
+  const response = await apiClient.request<BulkTaskResult>(
+    `/workspaces/${workspaceId}/tasks/bulk/status`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function bulkUpdateTaskPriority(
+  workspaceId: string,
+  body: { taskIds: string[]; priority: TaskPriority },
+) {
+  const response = await apiClient.request<BulkTaskResult>(
+    `/workspaces/${workspaceId}/tasks/bulk/priority`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function bulkAddTaskAssignees(
+  workspaceId: string,
+  body: { taskIds: string[]; membershipIds: string[] },
+) {
+  const response = await apiClient.request<BulkTaskResult>(
+    `/workspaces/${workspaceId}/tasks/bulk/assignees/add`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function bulkRemoveTaskAssignees(
+  workspaceId: string,
+  body: { taskIds: string[]; membershipIds: string[] },
+) {
+  const response = await apiClient.request<BulkTaskResult>(
+    `/workspaces/${workspaceId}/tasks/bulk/assignees/remove`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function bulkDeleteTasks(workspaceId: string, body: { taskIds: string[] }) {
+  const response = await apiClient.request<BulkTaskResult>(
+    `/workspaces/${workspaceId}/tasks/bulk`,
+    { method: 'DELETE', body: JSON.stringify(body) },
   );
   return response.data;
 }

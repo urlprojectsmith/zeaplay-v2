@@ -387,7 +387,40 @@ async function mockTaskCreationApi(page: Page) {
     createdAt: now,
     updatedAt: now,
   };
-  const tasks: Array<Record<string, unknown>> = [];
+  const tasks: Array<Record<string, unknown>> = [
+    {
+      id: 'task-seed-alpha',
+      workspaceId: 'workspace-1',
+      title: 'Seed alpha task',
+      description: null,
+      priority: 'MEDIUM',
+      status: taskStatus,
+      department: null,
+      dueAt: '2026-09-30T00:00:00.000Z',
+      assignees: [],
+      followers: [],
+      projects: [],
+      counts: { assignees: 0, followers: 0, projects: 0 },
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'task-seed-beta',
+      workspaceId: 'workspace-1',
+      title: 'Seed beta task',
+      description: null,
+      priority: 'LOW',
+      status: taskStatus,
+      department: null,
+      dueAt: '2026-10-01T00:00:00.000Z',
+      assignees: [],
+      followers: [],
+      projects: [],
+      counts: { assignees: 0, followers: 0, projects: 0 },
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
 
   await page.route(/.*\/workspaces\/workspace-1\/users(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: users, page: 1, pageSize: 10, total: users.length });
@@ -410,7 +443,115 @@ async function mockTaskCreationApi(page: Page) {
   await page.route(/.*\/projects(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: [], page: 1, pageSize: 10, total: 0 });
   });
-  await page.route(/.*\/workspaces\/workspace-1\/tasks\/[^/]+$/, async (route) => {
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/bulk\/priority$/, async (route) => {
+    const body = route.request().postDataJSON() as { taskIds: string[]; priority: string };
+    let changedCount = 0;
+    for (const task of tasks) {
+      if (!body.taskIds.includes(String(task.id))) continue;
+      if (task.priority !== body.priority) {
+        task.priority = body.priority;
+        task.updatedAt = now;
+        changedCount += 1;
+      }
+    }
+    await fulfillApi(route, {
+      requestedCount: body.taskIds.length,
+      changedCount,
+      unchangedCount: body.taskIds.length - changedCount,
+    });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/bulk\/status$/, async (route) => {
+    const body = route.request().postDataJSON() as {
+      taskIds: string[];
+      statusDefinitionId: string;
+    };
+    let changedCount = 0;
+    for (const task of tasks) {
+      if (!body.taskIds.includes(String(task.id))) continue;
+      if ((task.status as { id?: string }).id !== body.statusDefinitionId) {
+        task.status = taskStatus;
+        task.updatedAt = now;
+        changedCount += 1;
+      }
+    }
+    await fulfillApi(route, {
+      requestedCount: body.taskIds.length,
+      changedCount,
+      unchangedCount: body.taskIds.length - changedCount,
+    });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/bulk\/assignees\/add$/, async (route) => {
+    const body = route.request().postDataJSON() as { taskIds: string[]; membershipIds: string[] };
+    let relationChangedCount = 0;
+    for (const task of tasks) {
+      if (!body.taskIds.includes(String(task.id))) continue;
+      const assignees = task.assignees as Array<{ id: string; user: unknown }>;
+      for (const membershipId of body.membershipIds) {
+        if (assignees.some((assignee) => assignee.id === membershipId)) continue;
+        const user = users.find((item) => item.membershipId === membershipId);
+        if (!user) continue;
+        assignees.push({
+          id: user.membershipId,
+          user: { id: user.id, email: user.email, name: user.name },
+        });
+        relationChangedCount += 1;
+      }
+      task.counts = { ...(task.counts as Record<string, number>), assignees: assignees.length };
+      task.updatedAt = now;
+    }
+    const requestedRelations = body.taskIds.length * body.membershipIds.length;
+    await fulfillApi(route, {
+      requestedCount: body.taskIds.length,
+      changedCount: relationChangedCount > 0 ? body.taskIds.length : 0,
+      unchangedCount: relationChangedCount > 0 ? 0 : body.taskIds.length,
+      relationChangedCount,
+      relationUnchangedCount: requestedRelations - relationChangedCount,
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/bulk\/assignees\/remove$/,
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        taskIds: string[];
+        membershipIds: string[];
+      };
+      let relationChangedCount = 0;
+      for (const task of tasks) {
+        if (!body.taskIds.includes(String(task.id))) continue;
+        const assignees = task.assignees as Array<{ id: string; user: unknown }>;
+        const before = assignees.length;
+        task.assignees = assignees.filter((assignee) => !body.membershipIds.includes(assignee.id));
+        relationChangedCount += before - (task.assignees as unknown[]).length;
+        task.counts = {
+          ...(task.counts as Record<string, number>),
+          assignees: (task.assignees as unknown[]).length,
+        };
+        task.updatedAt = now;
+      }
+      const requestedRelations = body.taskIds.length * body.membershipIds.length;
+      await fulfillApi(route, {
+        requestedCount: body.taskIds.length,
+        changedCount: relationChangedCount > 0 ? body.taskIds.length : 0,
+        unchangedCount: relationChangedCount > 0 ? 0 : body.taskIds.length,
+        relationChangedCount,
+        relationUnchangedCount: requestedRelations - relationChangedCount,
+      });
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/bulk$/, async (route) => {
+    const body = route.request().postDataJSON() as { taskIds: string[] };
+    const before = tasks.length;
+    for (let index = tasks.length - 1; index >= 0; index -= 1) {
+      if (body.taskIds.includes(String(tasks[index].id))) tasks.splice(index, 1);
+    }
+    const changedCount = before - tasks.length;
+    await fulfillApi(route, {
+      requestedCount: body.taskIds.length,
+      changedCount,
+      unchangedCount: body.taskIds.length - changedCount,
+    });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/(?!bulk$)[^/]+$/, async (route) => {
     const taskId = route.request().url().split('/').pop();
     const task = tasks.find((item) => item.id === taskId);
     if (!task) {
@@ -674,6 +815,95 @@ test('authenticated task creation supports the quick-create flow', async ({ page
   await expect(page.getByText('Workspace Two').first()).toBeVisible();
   await expect(page.getByText('E2E quick task')).toBeHidden();
   await expect(page.getByText('No matching tasks')).toBeVisible();
+});
+
+test('authenticated task browser supports current-page bulk actions', async ({ page }) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  let statusRequests = 0;
+  let priorityRequests = 0;
+  let addAssigneeRequests = 0;
+  let removeAssigneeRequests = 0;
+  let deleteRequests = 0;
+  page.on('request', (request) => {
+    const url = request.url();
+    if (url.includes('/workspaces/workspace-1/tasks/bulk/status')) statusRequests += 1;
+    if (url.includes('/workspaces/workspace-1/tasks/bulk/priority')) priorityRequests += 1;
+    if (url.includes('/workspaces/workspace-1/tasks/bulk/assignees/add')) {
+      addAssigneeRequests += 1;
+    }
+    if (url.includes('/workspaces/workspace-1/tasks/bulk/assignees/remove')) {
+      removeAssigneeRequests += 1;
+    }
+    if (url.match(/\/workspaces\/workspace-1\/tasks\/bulk$/)) deleteRequests += 1;
+  });
+
+  await page.goto('/workspace/tasks');
+  await expect(page.getByText('Seed alpha task').first()).toBeVisible();
+  await page.getByLabel('Select all on this page').click();
+  await expect(page.getByText('2 tasks selected').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Grid' }).click();
+  await expect(page.getByText('2 tasks selected').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Compact' }).click();
+  await expect(page.getByText('2 tasks selected').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Change priority' }).click();
+  await page.getByRole('button', { name: 'Update 2 tasks' }).click();
+  await expect(page.getByText('2 tasks selected')).toHaveCount(0);
+  expect(priorityRequests).toBe(1);
+  await expect(page.getByText('Medium').first()).toBeVisible();
+
+  await page.getByLabel('Select task: Seed alpha task').click();
+  await page.getByRole('button', { name: 'Change status' }).click();
+  await page.getByRole('combobox', { name: 'Status' }).click();
+  await page
+    .getByRole('option', { name: 'To Do' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Update 1 tasks' }).click();
+  await expect(page.getByText('1 task selected')).toHaveCount(0);
+  expect(statusRequests).toBe(1);
+
+  await page.getByLabel('Select task: Seed alpha task').click();
+  await page.getByRole('button', { name: 'Add assignees' }).click();
+  await page.getByLabel('Anya').click();
+  await page.getByRole('button', { name: 'Add to 1 tasks' }).click();
+  await expect(page.getByText('1 task selected')).toHaveCount(0);
+  expect(addAssigneeRequests).toBe(1);
+  await expect(page.getByText('Anya').first()).toBeVisible();
+
+  await page.getByLabel('Select task: Seed alpha task').click();
+  await page.getByRole('button', { name: 'Remove assignees' }).click();
+  await page.getByLabel('Anya').click();
+  await page.getByRole('button', { name: 'Remove from 1 tasks' }).click();
+  await expect(page.getByText('1 task selected')).toHaveCount(0);
+  expect(removeAssigneeRequests).toBe(1);
+
+  await expect(page.getByText('Select all on this page')).toBeVisible();
+  await page.getByLabel('Select all on this page').click();
+  await expect(page.getByText('2 tasks selected').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Delete tasks' }).click();
+  await expect(page.getByText('Delete 2 selected tasks?')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete 2 tasks' }).click();
+  await expect(page.getByText('Seed alpha task')).toHaveCount(0);
+  await expect(page.getByText('Seed beta task')).toHaveCount(0);
+  expect(deleteRequests).toBe(1);
+});
+
+test('authenticated task browser clears bulk selection on workspace change', async ({ page }) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  await page.goto('/workspace/tasks');
+  await expect(page.getByText('Seed alpha task').first()).toBeVisible();
+  await page.getByLabel('Select task: Seed alpha task').first().click();
+  await expect(page.getByText('1 task selected').first()).toBeVisible();
+
+  await page.getByText('Agency One').first().click();
+  await page.getByRole('option', { name: 'Agency Two' }).click();
+
+  await expect(page.getByText('Workspace Two').first()).toBeVisible();
+  await expect(page.getByText('1 task selected')).toHaveCount(0);
 });
 
 test('workspace roles page remains responsive across supported widths', async ({ page }) => {
