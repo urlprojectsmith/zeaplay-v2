@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.4B2 - Dependencies + Related Tasks UX - COMPLETE / PASS
-Next: Phase 7.4B3 - Task Relationships UX Final Audit
+Current: Phase 7.4B - Task Relationships UX - COMPLETE / PASS
+Next: Phase 7.4C - Comments, Mentions & Tags
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -786,8 +786,37 @@ Focused refinement verified:
 
 Known deferred Task features:
 
-- Phase 7.4B3 Task Relationships UX final audit remains next.
 - Comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, automation, visual dependency graph, and drag/drop relationship editing remain deferred.
+
+### Phase 7.4B3 - Final Task Relationships UX Audit - COMPLETE / PASS
+
+Final audit verified the B1/B2 Task detail relationship experience as production-safe.
+
+Verified invariants:
+
+- One Task detail shell serves Overview, Subtasks, Dependencies, and Related.
+- Overview remains the default on Task/Workspace switch and does not eager-load relationship data.
+- Subtasks load direct children on demand; nested expansion loads only that node's children.
+- Subtask tree pagination, repeated-ID defense, explicit Create Subtask, reparent, and detach-to-root remain bounded and targeted.
+- Dependencies and Related tabs lazy-load independently; relationship lists remain backend-paginated.
+- Blocked By / Blocks direction is proven across labels, service calls, payloads, remove actions, success feedback, and Tamil copy.
+- Related Tasks remain symmetric and avoid dependency/status semantics.
+- Add/remove blocker and add/remove related mutations use one backend request per mutation with duplicate-submit protection.
+- Backend remains hierarchy and graph authority for cycles, terminal-state rules, stale candidates, tenant ownership, idempotency, concurrency, and RBAC.
+- All relationship queries include Workspace, Task, pagination, and search identity as applicable.
+- Relationship mutations use targeted cache invalidation for affected details, lists, parents, and counterparts.
+- Task, Workspace, and session changes clear temporary relationship state, dialogs, searches, selected candidates, drafts, and expansion state.
+- Normal All Tasks list/grid/compact hot paths do not hydrate subtask trees, dependency graphs, related graphs, or per-row relationship counts.
+- Mobile, accessibility, English/Tamil i18n, Light/Dark/Colorful themes, and Playwright relationship flows were verified.
+
+### Phase 7.4B - TASK RELATIONSHIPS UX - COMPLETE / PASS
+
+Task Relationships UX is complete across Overview, Subtasks, nested lazy tree, Create Subtask, Move/Detach, Dependencies, Blocked By, Blocks, Related, relationship search, mutations, pagination, tenant safety, responsive/accessibility, i18n, themes, and performance.
+
+Known deferred Task features:
+
+- Phase 7.4C Comments, Mentions & Tags remains next.
+- Attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, automation, visual dependency graph, and drag/drop relationship editing remain deferred.
 
 ## Architecture Invariants
 
@@ -881,6 +910,8 @@ Do not infer or invent model fields from this list.
 | Phase 7.4A    | PASS   | Not tagged                       |
 | Phase 7.4B1   | PASS   | Not tagged                       |
 | Phase 7.4B2   | PASS   | Not tagged                       |
+| Phase 7.4B3   | PASS   | Not tagged                       |
+| Phase 7.4B    | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -909,6 +940,8 @@ Confirmed current warnings:
 - Phase 7.3 All Tasks is complete/pass.
 - Phase 7.4A Relationship Backend is complete/pass.
 - Phase 7.4B1 Task Detail Relationship Shell + Subtask Tree UX is complete/pass.
-- Phase 7.4B2 Dependencies + Related Tasks UX and focused refinement are complete/pass; the next phase is Phase 7.4B3 Task Relationships UX Final Audit.
+- Phase 7.4B2 Dependencies + Related Tasks UX and focused refinement are complete/pass.
+- Phase 7.4B3 Final Task Relationships UX security/performance/integration audit is complete/pass.
+- Phase 7.4B Task Relationships UX is complete/pass; the next phase is Phase 7.4C Comments, Mentions & Tags.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

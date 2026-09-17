@@ -2533,6 +2533,7 @@ function RelationshipTaskRow({
       <div className="min-w-0">
         <button
           type="button"
+          aria-label={`${labels.openTaskDetails}: ${task.title}`}
           className="break-words text-left text-sm font-semibold underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
           onClick={() => onSelectTask(task.id)}
         >

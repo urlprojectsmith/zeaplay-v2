@@ -411,6 +411,11 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       followers: [],
       projects: [],
       counts: { assignees: 0, followers: 0, projects: 0 },
+      parentTaskId: null,
+      directSubtaskCount: 0,
+      blockedByCount: 0,
+      blocksCount: 0,
+      relatedTaskCount: 0,
       createdAt: now,
       updatedAt: now,
     },
@@ -427,6 +432,11 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       followers: [],
       projects: [],
       counts: { assignees: 0, followers: 0, projects: 0 },
+      parentTaskId: null,
+      directSubtaskCount: 0,
+      blockedByCount: 0,
+      blocksCount: 0,
+      relatedTaskCount: 0,
       createdAt: now,
       updatedAt: now,
     },
@@ -445,10 +455,57 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       followers: [],
       projects: [],
       counts: { assignees: 0, followers: 0, projects: 0 },
+      parentTaskId: null,
+      directSubtaskCount: 0,
+      blockedByCount: 0,
+      blocksCount: 0,
+      relatedTaskCount: 0,
       createdAt: now,
       updatedAt: now,
     });
   }
+  const dependencies = new Map<string, Set<string>>();
+  const relatedPairs = new Set<string>();
+  const canonicalRelatedKey = (left: string, right: string) =>
+    [left, right].sort((a, b) => a.localeCompare(b)).join(':');
+  const findTask = (taskId: string) => tasks.find((item) => item.id === taskId);
+  const taskWithCounts = (task: Record<string, unknown>) => {
+    const taskId = String(task.id);
+    const blockedByCount = dependencies.get(taskId)?.size ?? 0;
+    let blocksCount = 0;
+    for (const blockers of dependencies.values()) {
+      if (blockers.has(taskId)) blocksCount += 1;
+    }
+    let relatedTaskCount = 0;
+    for (const key of relatedPairs) {
+      if (key.split(':').includes(taskId)) relatedTaskCount += 1;
+    }
+    return {
+      ...task,
+      directSubtaskCount: tasks.filter((item) => item.parentTaskId === taskId).length,
+      blockedByCount,
+      blocksCount,
+      relatedTaskCount,
+      parent:
+        task.parentTaskId && findTask(String(task.parentTaskId))
+          ? {
+              id: task.parentTaskId,
+              title: findTask(String(task.parentTaskId))?.title,
+            }
+          : null,
+    };
+  };
+  const pageResult = (items: Record<string, unknown>[], url: string) => {
+    const params = new URL(url).searchParams;
+    const pageNumber = Number(params.get('page') ?? 1);
+    const pageSize = Number(params.get('pageSize') ?? 10);
+    return {
+      items: items.slice((pageNumber - 1) * pageSize, pageNumber * pageSize).map(taskWithCounts),
+      page: pageNumber,
+      pageSize,
+      total: items.length,
+    };
+  };
 
   await page.route(/.*\/workspaces\/workspace-1\/users(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: users, page: 1, pageSize: 10, total: users.length });
@@ -585,6 +642,162 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       unchangedCount: body.taskIds.length - changedCount,
     });
   });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/subtasks(\?.*)?$/,
+    async (route) => {
+      const url = new URL(route.request().url());
+      const parentTaskId = url.pathname.split('/').at(-2) ?? '';
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON() as {
+          title: string;
+          dueAt: string;
+          assigneeMembershipIds?: string[];
+        };
+        const parent = findTask(parentTaskId);
+        if (!parent) {
+          await fulfillApi(route, { message: 'Not found' }, 404);
+          return;
+        }
+        const task = {
+          id: `task-subtask-${tasks.length + 1}`,
+          workspaceId: 'workspace-1',
+          title: body.title,
+          description: null,
+          priority: 'MEDIUM',
+          status: taskStatus,
+          department: null,
+          dueAt: body.dueAt,
+          assignees: users
+            .filter((user) => body.assigneeMembershipIds?.includes(user.membershipId))
+            .map((user) => ({
+              id: user.membershipId,
+              user: { id: user.id, email: user.email, name: user.name },
+            })),
+          followers: [],
+          projects: [],
+          counts: {
+            assignees: body.assigneeMembershipIds?.length ?? 0,
+            followers: 0,
+            projects: 0,
+          },
+          parentTaskId,
+          directSubtaskCount: 0,
+          blockedByCount: 0,
+          blocksCount: 0,
+          relatedTaskCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+        tasks.push(task);
+        await fulfillApi(route, taskWithCounts(task));
+        return;
+      }
+      await fulfillApi(
+        route,
+        pageResult(
+          tasks.filter((task) => task.parentTaskId === parentTaskId),
+          route.request().url(),
+        ),
+      );
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/parent$/, async (route) => {
+    const url = new URL(route.request().url());
+    const taskId = url.pathname.split('/').at(-2) ?? '';
+    const body = route.request().postDataJSON() as { parentTaskId: string | null };
+    const task = findTask(taskId);
+    if (!task) {
+      await fulfillApi(route, { message: 'Not found' }, 404);
+      return;
+    }
+    task.parentTaskId = body.parentTaskId;
+    task.updatedAt = now;
+    await fulfillApi(route, taskWithCounts(task));
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/blocked-by(\/remove)?(\?.*)?$/,
+    async (route) => {
+      const url = new URL(route.request().url());
+      const parts = url.pathname.split('/');
+      const taskId = parts.at(-1) === 'remove' ? (parts.at(-3) ?? '') : (parts.at(-2) ?? '');
+      const blockers = dependencies.get(taskId) ?? new Set<string>();
+      dependencies.set(taskId, blockers);
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON() as { taskIds: string[] };
+        let changedCount = 0;
+        if (body.taskIds.includes('task-seed-alpha')) {
+          await route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            headers: apiHeaders,
+            body: JSON.stringify({
+              code: 'TASK_DEPENDENCY_CYCLE',
+              message: 'Dependency cycle detected.',
+              requestId: 'e2e-cycle',
+            }),
+          });
+          return;
+        }
+        for (const blockerId of body.taskIds) {
+          if (url.pathname.endsWith('/remove')) {
+            if (blockers.delete(blockerId)) changedCount += 1;
+          } else if (!blockers.has(blockerId)) {
+            blockers.add(blockerId);
+            changedCount += 1;
+          }
+        }
+        await fulfillApi(route, {
+          requestedCount: body.taskIds.length,
+          changedCount,
+          unchangedCount: body.taskIds.length - changedCount,
+        });
+        return;
+      }
+      const items = [...blockers]
+        .map((blockerId) => findTask(blockerId))
+        .filter((task): task is Record<string, unknown> => Boolean(task));
+      await fulfillApi(route, pageResult(items, route.request().url()));
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/blocks(\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const blockerTaskId = url.pathname.split('/').at(-2) ?? '';
+    const items = tasks.filter((task) => dependencies.get(String(task.id))?.has(blockerTaskId));
+    await fulfillApi(route, pageResult(items, route.request().url()));
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/related(\/remove)?(\?.*)?$/,
+    async (route) => {
+      const url = new URL(route.request().url());
+      const parts = url.pathname.split('/');
+      const taskId = parts.at(-1) === 'remove' ? (parts.at(-3) ?? '') : (parts.at(-2) ?? '');
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON() as { taskIds: string[] };
+        let changedCount = 0;
+        for (const relatedTaskId of body.taskIds) {
+          const key = canonicalRelatedKey(taskId, relatedTaskId);
+          if (url.pathname.endsWith('/remove')) {
+            if (relatedPairs.delete(key)) changedCount += 1;
+          } else if (!relatedPairs.has(key)) {
+            relatedPairs.add(key);
+            changedCount += 1;
+          }
+        }
+        await fulfillApi(route, {
+          requestedCount: body.taskIds.length,
+          changedCount,
+          unchangedCount: body.taskIds.length - changedCount,
+        });
+        return;
+      }
+      const items = [...relatedPairs]
+        .map((key) => key.split(':'))
+        .filter((pair) => pair.includes(taskId))
+        .map((pair) => findTask(pair.find((id) => id !== taskId) ?? ''))
+        .filter((task): task is Record<string, unknown> => Boolean(task));
+      await fulfillApi(route, pageResult(items, route.request().url()));
+    },
+  );
   await page.route(/.*\/workspaces\/workspace-1\/tasks\/(?!bulk$)[^/]+$/, async (route) => {
     const taskId = route.request().url().split('/').pop();
     const task = tasks.find((item) => item.id === taskId);
@@ -593,7 +806,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       return;
     }
     await fulfillApi(route, {
-      ...task,
+      ...taskWithCounts(task),
       createdBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
       updatedBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
     });
@@ -849,6 +1062,190 @@ test('authenticated task creation supports the quick-create flow', async ({ page
   await expect(page.getByText('Workspace Two').first()).toBeVisible();
   await expect(page.getByText('E2E quick task')).toBeHidden();
   await expect(page.getByText('No matching tasks')).toBeVisible();
+});
+
+test('authenticated task detail tabs lazy-load only the active relationship surface', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  let subtaskRequests = 0;
+  let blockedByRequests = 0;
+  let blocksRequests = 0;
+  let relatedRequests = 0;
+  page.on('request', (request) => {
+    const url = request.url();
+    if (url.includes('/workspaces/workspace-1/tasks/task-seed-alpha/subtasks')) {
+      subtaskRequests += 1;
+    }
+    if (url.includes('/workspaces/workspace-1/tasks/task-seed-alpha/blocked-by')) {
+      blockedByRequests += 1;
+    }
+    if (url.includes('/workspaces/workspace-1/tasks/task-seed-alpha/blocks')) {
+      blocksRequests += 1;
+    }
+    if (url.includes('/workspaces/workspace-1/tasks/task-seed-alpha/related')) {
+      relatedRequests += 1;
+    }
+  });
+
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Task details');
+  await expect
+    .poll(() => subtaskRequests + blockedByRequests + blocksRequests + relatedRequests)
+    .toBe(0);
+
+  await page.getByRole('tab', { name: 'Subtasks' }).click();
+  await expect(page.getByText('No subtasks')).toBeVisible();
+  expect(subtaskRequests).toBe(1);
+  expect(blockedByRequests + blocksRequests + relatedRequests).toBe(0);
+
+  await page.getByRole('tab', { name: 'Dependencies' }).click();
+  await expect(page.getByText('Blocked By')).toBeVisible();
+  await expect(page.getByText('Blocks')).toBeVisible();
+  expect(blockedByRequests).toBe(1);
+  expect(blocksRequests).toBe(1);
+  expect(relatedRequests).toBe(0);
+
+  await page.getByRole('tab', { name: 'Related' }).click();
+  await expect(page.getByRole('heading', { name: 'Related Tasks', exact: true })).toBeVisible();
+  expect(relatedRequests).toBe(1);
+});
+
+test('authenticated task detail supports subtask create, reparent, detach, and mobile widths', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  await page.setViewportSize({ width: 375, height: 760 });
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  await page.getByRole('tab', { name: 'Subtasks' }).click();
+  await page.getByRole('button', { name: 'Create Subtask' }).first().click();
+  await expect(page.getByLabel('Description')).toHaveCount(0);
+  await page.getByLabel('Title *').fill('E2E child task');
+  await page.getByLabel('Anya').click();
+  await page.getByLabel('Due Date *').fill('2026-10-10');
+  await page.getByRole('button', { name: 'Create Subtask' }).click();
+  await expect(page.getByText('Subtask created')).toBeVisible();
+  await expect(page.getByText('E2E child task')).toBeVisible();
+  let overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+
+  await page.getByRole('button', { name: 'Move / Change Parent' }).click();
+  await page.getByLabel('New Parent').fill('Seed beta');
+  await page.getByRole('button', { name: 'Seed beta task' }).click();
+  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(page.getByText('Task moved')).toBeVisible();
+  await expect(page.getByText('E2E child task')).toHaveCount(0);
+
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.getByRole('button', { name: 'Seed beta task' }).click();
+  await page.getByRole('tab', { name: 'Subtasks' }).click();
+  await expect(page.getByText('E2E child task')).toBeVisible();
+  await page.getByRole('button', { name: 'Move / Change Parent' }).click();
+  await page.getByText('Move to Root').click();
+  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(page.getByText('Task moved')).toBeVisible();
+  await expect(page.getByText('E2E child task')).toHaveCount(0);
+});
+
+test('authenticated task detail supports dependency and related mutations safely', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  let addBlockerRequests = 0;
+  let removeBlockerRequests = 0;
+  let addRelatedRequests = 0;
+  let removeRelatedRequests = 0;
+  page.on('request', (request) => {
+    const url = request.url();
+    if (url.endsWith('/workspaces/workspace-1/tasks/task-seed-alpha/blocked-by')) {
+      addBlockerRequests += 1;
+    }
+    if (url.endsWith('/workspaces/workspace-1/tasks/task-seed-alpha/blocked-by/remove')) {
+      removeBlockerRequests += 1;
+    }
+    if (url.endsWith('/workspaces/workspace-1/tasks/task-seed-alpha/related')) {
+      addRelatedRequests += 1;
+    }
+    if (url.endsWith('/workspaces/workspace-1/tasks/task-seed-alpha/related/remove')) {
+      removeRelatedRequests += 1;
+    }
+  });
+
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  await page.getByRole('tab', { name: 'Dependencies' }).click();
+  await page.getByRole('button', { name: 'Add Blocker' }).first().click();
+  const blockerDialog = page.getByRole('dialog').filter({ hasText: 'Add Blocker' });
+  await blockerDialog.getByLabel('Search tasks').fill('Seed beta');
+  await blockerDialog.getByRole('button', { name: /^Seed beta task/ }).click();
+  await blockerDialog.getByRole('button', { name: 'Add Blocker' }).click();
+  await expect(page.getByText('1 blockers added.')).toBeVisible();
+  expect(addBlockerRequests).toBe(1);
+  await expect(
+    page.getByRole('button', { name: 'Open task details: Seed beta task' }),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Open task details: Seed beta task' }).click();
+  await page.getByRole('tab', { name: 'Dependencies' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Open task details: Seed alpha task' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Open task details: Seed alpha task' }).click();
+  await page.getByRole('tab', { name: 'Dependencies' }).click();
+  await page.getByRole('button', { name: /Remove Blocker:/ }).click();
+  await expect(page.getByText('1 blockers removed.')).toBeVisible();
+  expect(removeBlockerRequests).toBe(1);
+
+  await page.getByRole('tab', { name: 'Related' }).click();
+  await page.getByRole('button', { name: 'Add Related Task' }).first().click();
+  const relatedDialog = page.getByRole('dialog').filter({ hasText: 'Add Related Task' });
+  await relatedDialog.getByLabel('Search tasks').fill('Seed beta');
+  await relatedDialog.getByRole('button', { name: /^Seed beta task/ }).click();
+  await relatedDialog.getByRole('button', { name: 'Add Related Task' }).click();
+  await expect(page.getByText('1 related tasks added.')).toBeVisible();
+  expect(addRelatedRequests).toBe(1);
+  await expect(
+    page.getByRole('button', { name: 'Open task details: Seed beta task' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: /Remove Related Task:/ }).click();
+  await expect(page.getByText('1 related tasks removed.')).toBeVisible();
+  expect(removeRelatedRequests).toBe(1);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await page.getByRole('button', { name: 'Seed beta task' }).click();
+  await page.getByRole('tab', { name: 'Dependencies' }).click();
+  await page.getByRole('button', { name: 'Add Blocker' }).first().click();
+  const cycleDialog = page.getByRole('dialog').filter({ hasText: 'Add Blocker' });
+  await cycleDialog.getByLabel('Search tasks').fill('Seed alpha');
+  await cycleDialog.getByRole('button', { name: /^Seed alpha task/ }).click();
+  await cycleDialog.getByRole('button', { name: 'Add Blocker' }).click();
+  await expect(page.getByText('This dependency would create a cycle.')).toBeVisible();
+
+  await cycleDialog.getByLabel('Search tasks').fill('Seed beta');
+  await expect(
+    cycleDialog.getByRole('button', { name: 'Remove selected task: Seed alpha task' }),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Add Blocker' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await page.getByText('Agency One').first().click();
+  await page.getByRole('option', { name: 'Agency Two' }).click();
+  await expect(page.getByText('Workspace Two').first()).toBeVisible();
+  await expect(page.getByText('Add Blocker')).toHaveCount(0);
+  await expect(page.getByText('Seed alpha task')).toHaveCount(0);
 });
 
 test('authenticated task browser supports current-page bulk actions', async ({ page }) => {
