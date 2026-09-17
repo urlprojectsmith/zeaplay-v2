@@ -20,10 +20,12 @@ export interface WorkspaceProject {
 export interface WorkspaceTask {
   id: string;
   workspaceId: string;
+  parentTaskId?: string | null;
   title: string;
   description?: string | null;
   priority: TaskPriority;
   status: WorkspaceStatusDefinition;
+  parent?: { id: string; title: string; status: WorkspaceStatusDefinition } | null;
   department: Department | null;
   dueAt: string | null;
   assignees: {
@@ -38,6 +40,10 @@ export interface WorkspaceTask {
   }[];
   projects: WorkspaceProject[];
   counts?: { assignees: number; followers: number; projects: number };
+  directSubtaskCount?: number;
+  blockedByCount?: number;
+  blocksCount?: number;
+  relatedTaskCount?: number;
   createdBy?: { id: string; email: string; name: string | null };
   updatedBy?: { id: string; email: string; name: string | null };
   createdAt: string;
@@ -63,6 +69,17 @@ export interface BulkTaskResult {
   relationChangedCount?: number;
   relationUnchangedCount?: number;
 }
+
+export interface TaskRelationshipResult {
+  requestedCount: number;
+  changedCount: number;
+  unchangedCount: number;
+}
+
+export type WorkspaceTaskRelationship = Pick<
+  WorkspaceTask,
+  'id' | 'title' | 'priority' | 'status' | 'dueAt' | 'assignees'
+>;
 
 export interface ListWorkspaceTasksParams {
   page?: number;
@@ -104,6 +121,40 @@ export const taskKeys = {
     ['workspace', workspaceId, 'tasks', 'list', params] as const,
   detail: (workspaceId: string | null, taskId: string | null) =>
     ['workspace', workspaceId, 'tasks', 'detail', taskId] as const,
+  subtasksBase: (workspaceId: string | null, taskId: string | null) =>
+    ['workspace', workspaceId, 'tasks', 'detail', taskId, 'subtasks'] as const,
+  subtasks: (
+    workspaceId: string | null,
+    taskId: string | null,
+    params: Pick<NormalizedTaskListParams, 'page' | 'pageSize'>,
+  ) => [...taskKeys.subtasksBase(workspaceId, taskId), params] as const,
+  blockedByBase: (workspaceId: string | null, taskId: string | null) =>
+    ['workspace', workspaceId, 'tasks', 'detail', taskId, 'blocked-by'] as const,
+  blockedBy: (
+    workspaceId: string | null,
+    taskId: string | null,
+    params: Pick<NormalizedTaskListParams, 'page' | 'pageSize'>,
+  ) => [...taskKeys.blockedByBase(workspaceId, taskId), params] as const,
+  blocksBase: (workspaceId: string | null, taskId: string | null) =>
+    ['workspace', workspaceId, 'tasks', 'detail', taskId, 'blocks'] as const,
+  blocks: (
+    workspaceId: string | null,
+    taskId: string | null,
+    params: Pick<NormalizedTaskListParams, 'page' | 'pageSize'>,
+  ) => [...taskKeys.blocksBase(workspaceId, taskId), params] as const,
+  relatedBase: (workspaceId: string | null, taskId: string | null) =>
+    ['workspace', workspaceId, 'tasks', 'detail', taskId, 'related'] as const,
+  related: (
+    workspaceId: string | null,
+    taskId: string | null,
+    params: Pick<NormalizedTaskListParams, 'page' | 'pageSize'>,
+  ) => [...taskKeys.relatedBase(workspaceId, taskId), params] as const,
+  relationshipSearch: (
+    workspaceId: string | null,
+    taskId: string | null,
+    search: string,
+    params: Pick<NormalizedTaskListParams, 'page' | 'pageSize'>,
+  ) => ['workspace', workspaceId, 'tasks', 'relationship-search', taskId, search, params] as const,
 };
 
 export const taskCreationKeys = {
@@ -122,6 +173,21 @@ export async function createWorkspaceTask(workspaceId: string, body: CreateTaskP
     method: 'POST',
     body: JSON.stringify(compactTaskPayload(body)),
   });
+  return response.data;
+}
+
+export async function createWorkspaceSubtask(
+  workspaceId: string,
+  parentTaskId: string,
+  body: CreateTaskPayload,
+) {
+  const response = await apiClient.request<WorkspaceTask>(
+    `/workspaces/${workspaceId}/tasks/${parentTaskId}/subtasks`,
+    {
+      method: 'POST',
+      body: JSON.stringify(compactTaskPayload(body)),
+    },
+  );
   return response.data;
 }
 
@@ -146,6 +212,109 @@ export async function listWorkspaceTasks(workspaceId: string, params: ListWorksp
 export async function getWorkspaceTask(workspaceId: string, taskId: string) {
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}`,
+  );
+  return response.data;
+}
+
+export async function listWorkspaceSubtasks(
+  workspaceId: string,
+  taskId: string,
+  params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>,
+) {
+  const normalized = normalizeSubtaskPagination(params);
+  const query = new URLSearchParams({
+    page: String(normalized.page),
+    pageSize: String(normalized.pageSize),
+  });
+  const response = await apiClient.request<PageResult<WorkspaceTask>>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/subtasks?${query}`,
+  );
+  return response.data;
+}
+
+export async function updateWorkspaceTaskParent(
+  workspaceId: string,
+  taskId: string,
+  parentTaskId: string | null,
+) {
+  const response = await apiClient.request<WorkspaceTask>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/parent`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ parentTaskId }),
+    },
+  );
+  return response.data;
+}
+
+export async function listWorkspaceTaskBlockedBy(
+  workspaceId: string,
+  taskId: string,
+  params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>,
+) {
+  return listWorkspaceTaskRelationship(workspaceId, taskId, 'blocked-by', params);
+}
+
+export async function listWorkspaceTaskBlocks(
+  workspaceId: string,
+  taskId: string,
+  params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>,
+) {
+  return listWorkspaceTaskRelationship(workspaceId, taskId, 'blocks', params);
+}
+
+export async function listWorkspaceTaskRelated(
+  workspaceId: string,
+  taskId: string,
+  params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>,
+) {
+  return listWorkspaceTaskRelationship(workspaceId, taskId, 'related', params);
+}
+
+export async function addWorkspaceTaskBlockedBy(
+  workspaceId: string,
+  taskId: string,
+  taskIds: string[],
+) {
+  const response = await apiClient.request<TaskRelationshipResult>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/blocked-by`,
+    { method: 'POST', body: JSON.stringify({ taskIds: uniqueIds(taskIds) }) },
+  );
+  return response.data;
+}
+
+export async function removeWorkspaceTaskBlockedBy(
+  workspaceId: string,
+  taskId: string,
+  taskIds: string[],
+) {
+  const response = await apiClient.request<TaskRelationshipResult>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/blocked-by/remove`,
+    { method: 'POST', body: JSON.stringify({ taskIds: uniqueIds(taskIds) }) },
+  );
+  return response.data;
+}
+
+export async function addWorkspaceTaskRelated(
+  workspaceId: string,
+  taskId: string,
+  taskIds: string[],
+) {
+  const response = await apiClient.request<TaskRelationshipResult>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/related`,
+    { method: 'POST', body: JSON.stringify({ taskIds: uniqueIds(taskIds) }) },
+  );
+  return response.data;
+}
+
+export async function removeWorkspaceTaskRelated(
+  workspaceId: string,
+  taskId: string,
+  taskIds: string[],
+) {
+  const response = await apiClient.request<TaskRelationshipResult>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/related/remove`,
+    { method: 'POST', body: JSON.stringify({ taskIds: uniqueIds(taskIds) }) },
   );
   return response.data;
 }
@@ -261,6 +430,39 @@ export function normalizeTaskListParams(
   };
 }
 
+function normalizeSubtaskPagination(params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>) {
+  return {
+    page: clampNumber(params.page, 1, Number.MAX_SAFE_INTEGER, 1),
+    pageSize: [5, 10, 25, 50].includes(Number(params.pageSize)) ? Number(params.pageSize) : 10,
+  };
+}
+
+async function listWorkspaceTaskRelationship(
+  workspaceId: string,
+  taskId: string,
+  relation: 'blocked-by' | 'blocks' | 'related',
+  params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>,
+) {
+  const normalized = normalizeRelationshipPagination(params);
+  const query = new URLSearchParams({
+    page: String(normalized.page),
+    pageSize: String(normalized.pageSize),
+  });
+  const response = await apiClient.request<PageResult<WorkspaceTaskRelationship>>(
+    `/workspaces/${workspaceId}/tasks/${taskId}/${relation}?${query}`,
+  );
+  return response.data;
+}
+
+function normalizeRelationshipPagination(
+  params: Pick<ListWorkspaceTasksParams, 'page' | 'pageSize'>,
+) {
+  return {
+    page: clampNumber(params.page, 1, Number.MAX_SAFE_INTEGER, 1),
+    pageSize: [5, 10, 25, 50].includes(Number(params.pageSize)) ? Number(params.pageSize) : 10,
+  };
+}
+
 function compactTaskPayload(body: CreateTaskPayload) {
   return {
     title: body.title.trim(),
@@ -275,6 +477,10 @@ function compactTaskPayload(body: CreateTaskPayload) {
       : {}),
     ...(body.projectIds?.length ? { projectIds: body.projectIds } : {}),
   };
+}
+
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids.filter(Boolean))];
 }
 
 function taskListQueryString(params: NormalizedTaskListParams) {

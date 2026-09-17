@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.4A - Relationship Backend - COMPLETE / PASS
-Next: Phase 7.4B - Task Relationships UX
+Current: Phase 7.4B2 - Dependencies + Related Tasks UX - COMPLETE / PASS
+Next: Phase 7.4B3 - Task Relationships UX Final Audit
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -723,6 +723,72 @@ Known deferred Task features:
 - No Task Relationships frontend yet.
 - No comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
 
+### Phase 7.4B1 - Task Detail Relationship Shell + Subtask Tree UX - COMPLETE / PASS
+
+Task relationship UX foundation is in place on the existing All Tasks detail dialog.
+
+Implemented:
+
+- One Task detail shell is reused for parent, child, and parent-summary navigation.
+- Overview is the default tab whenever a Task detail opens or switches to a different Task.
+- Task detail tabs for Overview, Subtasks, Dependencies, and Related.
+- Overview preserves existing Task detail fields and adds parent summary plus direct subtask count.
+- Subtasks tab lazy-loads direct children only; nested expansion fetches only the requested node.
+- Direct child lists are paginated and keyed by Workspace, parent Task, and pagination params.
+- Quick Create-style subtask form starts with title, assignee, and due date; backend remains default-status authority.
+- Move / Change Parent is explicit, supports detach to root, prevents detectable no-op moves, and does not add drag/drop reparenting.
+- Hierarchy mutations use targeted invalidation for moved/parent/new-parent direct child queries and details.
+- Workspace switch and session loss clear selected detail, drafts, move state, expansion state, and usable relationship IDs.
+- Dependency and Related tabs are placeholders only; their management UI remains deferred.
+- B1 does not fetch dependency or related relationship data.
+- English and Tamil copy added for relationship shell, subtask tree, move, and hierarchy error states.
+- Playwright timeout increase from the initial B1 pass was removed; E2E now runs without full parallelism because failures were caused by existing parallel contention against one Next dev server, not legitimate per-test workload.
+
+Known deferred Task features:
+
+- Dependencies UI and Related Tasks UI remain deferred.
+- Comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, and automation remain deferred.
+
+### Phase 7.4B2 - Dependencies + Related Tasks UX - COMPLETE / PASS
+
+Task dependency and related-task UX is implemented inside the existing Task detail tabs.
+
+Implemented:
+
+- Dependencies tab replaces the placeholder with real Blocked By and Blocks sections.
+- Blocked By and Blocks remain directional: A blocks B; B shows A under Blocked By, and A shows B under Blocks.
+- Related tab replaces the placeholder with symmetric Related Tasks management and no directional language.
+- Relationship tab data lazy-loads only when the relevant tab opens: Overview/Subtasks do not fetch dependency or related data.
+- Blocked By, Blocks, and Related lists stay backend paginated with independent page state.
+- Add Blocker and Add Related Task use bounded server-side Task search/selectors with current Task exclusion where easy.
+- Remove Blocker and Remove Related Task call explicit relationship removal endpoints and never delete Tasks.
+- Backend remains authoritative for dependency cycles, terminal blocker rules, tenant isolation, deleted/stale Tasks, idempotency, and concurrency.
+- Relationship mutation success feedback uses actual changed/unchanged counts.
+- Query keys include Workspace, Task, and pagination/search identity.
+- Successful mutations use targeted invalidation for current/counterpart relationship lists and task detail counts instead of invalidating all Workspace Tasks.
+- Workspace switch and task switch reset relationship dialogs, candidate search, and selected candidate state.
+- English/Tamil labels cover dependency, related, search, empty, loading, success, no-op, and safe error states.
+- Relationship rows and dialogs are responsive and theme-token based for Light, Dark, and Colorful themes.
+
+Focused refinement verified:
+
+- Dependency direction is end-to-end stable: `Blocked By` means another Task blocks the current Task, while `Blocks` means the current Task blocks another Task.
+- Dependencies and Related tabs lazy-load independently, keep independent pagination, and do not fetch relationship data from Overview or Subtasks.
+- Related relationships remain symmetric and use neutral copy, neutral success/no-op messaging, and explicit remove actions.
+- Relationship search remains bounded and server-side; selected chips preserve Task titles across search changes.
+- Relationship selection is capped at 100 Tasks and cannot exceed backend bulk limits.
+- Backend relationship APIs remain graph authority for cycles, terminal restrictions, tenant ownership, stale candidates, idempotency, and concurrency.
+- Mutations use submit/remove locks to avoid duplicate rapid requests and clear stale dialog state on Workspace, Task, or session changes.
+- Successful mutations use targeted invalidation for current lists, counterpart relationship lists, and detail counts without per-row fan-out or global Workspace Task invalidation.
+- Safe permission/business errors are mapped for stale Tasks, cycle rejection, terminal blocker restrictions, and retryable conflicts.
+- English and Tamil labels preserve dependency direction semantics.
+- No Playwright global timeout or fixed-wait workaround was added for this refinement.
+
+Known deferred Task features:
+
+- Phase 7.4B3 Task Relationships UX final audit remains next.
+- Comments, mentions, tags, attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, automation, visual dependency graph, and drag/drop relationship editing remain deferred.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -813,6 +879,8 @@ Do not infer or invent model fields from this list.
 | Phase 7.4A2   | PASS   | Not tagged                       |
 | Phase 7.4A3   | PASS   | Not tagged                       |
 | Phase 7.4A    | PASS   | Not tagged                       |
+| Phase 7.4B1   | PASS   | Not tagged                       |
+| Phase 7.4B2   | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -839,6 +907,8 @@ Confirmed current warnings:
 - Phase 7.3C2 Task Bulk Selection UX is complete/pass.
 - Phase 7.3C3 Final Bulk + All Tasks security/performance/integration audit is complete/pass.
 - Phase 7.3 All Tasks is complete/pass.
-- Phase 7.4A Relationship Backend is complete/pass; the next phase is Phase 7.4B Task Relationships UX.
+- Phase 7.4A Relationship Backend is complete/pass.
+- Phase 7.4B1 Task Detail Relationship Shell + Subtask Tree UX is complete/pass.
+- Phase 7.4B2 Dependencies + Related Tasks UX and focused refinement are complete/pass; the next phase is Phase 7.4B3 Task Relationships UX Final Audit.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

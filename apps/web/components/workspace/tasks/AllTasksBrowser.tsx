@@ -27,18 +27,27 @@ import {
   SelectTrigger,
   SelectValue,
   Skeleton,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Textarea,
 } from '@zea-play/ui';
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
   CheckSquare,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CornerDownRight,
   MoreHorizontal,
   Filter,
   Grid2X2,
   List,
+  MoveRight,
+  Plus,
   Rows3,
   Trash2,
   X,
@@ -56,23 +65,37 @@ import {
 } from '../../../services/workspace-management';
 import { listWorkspaceStatuses } from '../../../services/workspace-statuses';
 import {
+  addWorkspaceTaskBlockedBy,
+  addWorkspaceTaskRelated,
   bulkAddTaskAssignees,
   bulkDeleteTasks,
   bulkRemoveTaskAssignees,
   bulkUpdateTaskPriority,
   bulkUpdateTaskStatus,
+  createWorkspaceSubtask,
   getWorkspaceTask,
+  listWorkspaceTaskBlockedBy,
+  listWorkspaceTaskBlocks,
+  listWorkspaceTaskRelated,
+  listWorkspaceSubtasks,
   listWorkspaceProjects,
   listWorkspaceTasks,
   normalizeTaskListParams,
+  removeWorkspaceTaskBlockedBy,
+  removeWorkspaceTaskRelated,
   taskCreationKeys,
+  taskDueAtFromLocalDate,
   taskDueBoundaryFromLocalDate,
   taskKeys,
+  updateWorkspaceTaskParent,
+  type CreateTaskPayload,
   type TaskPriority,
+  type TaskRelationshipResult,
   type TaskSortBy,
   type TaskSortDirection,
   type WorkspaceProject,
   type WorkspaceTask,
+  type WorkspaceTaskRelationship,
 } from '../../../services/workspace-tasks';
 import { useSessionStore } from '../../../stores/session';
 
@@ -83,6 +106,18 @@ const noneValue = '__none__';
 const viewPreferenceKey = 'zea-play-all-tasks-view';
 const tenantFilterParams = ['status', 'assignee', 'department', 'project', 'createdBy'];
 const genericFilterParams = ['priority', 'dueFrom', 'dueTo'];
+
+export function toggleRelationshipSelection(
+  current: WorkspaceTaskRelationship[],
+  candidate: WorkspaceTaskRelationship,
+  maxSelected = 100,
+) {
+  if (current.some((item) => item.id === candidate.id)) {
+    return current.filter((item) => item.id !== candidate.id);
+  }
+  if (current.length >= maxSelected) return current;
+  return [...current, candidate];
+}
 
 export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null }) {
   const { locale, t } = useLanguage();
@@ -576,6 +611,9 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         labels={labels}
         workspaceId={workspaceId}
         taskId={selectedTaskId}
+        onSelectTask={(taskId) =>
+          workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
+        }
         onOpenChange={(open) => {
           if (!open) setSelectedTask(null);
         }}
@@ -1614,22 +1652,30 @@ function TaskDetailDialog({
   labels,
   workspaceId,
   taskId,
+  onSelectTask,
   onOpenChange,
 }: {
   labels: AllTaskLabels;
   workspaceId: string | null;
   taskId: string | null;
+  onSelectTask: (taskId: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [activeTab, setActiveTab] = useState('overview');
   const detailQuery = useQuery({
     queryKey: taskKeys.detail(workspaceId, taskId),
     queryFn: () => getWorkspaceTask(workspaceId as string, taskId as string),
     enabled: Boolean(workspaceId && taskId),
   });
   const task = detailQuery.data;
+
+  useEffect(() => {
+    setActiveTab('overview');
+  }, [taskId, workspaceId]);
+
   return (
     <Dialog open={Boolean(taskId)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{labels.taskDetails}</DialogTitle>
           <DialogDescription>{labels.taskDetailsDescription}</DialogDescription>
@@ -1646,68 +1692,1545 @@ function TaskDetailDialog({
             description={safeTaskError(detailQuery.error, labels)}
           />
         ) : task ? (
-          <div className="grid gap-5">
-            <div className="grid gap-2">
-              <h3 className="break-words text-xl font-semibold">{task.title}</h3>
-              <div className="flex flex-wrap gap-2">
-                <StatusBadge task={task} />
-                <Badge variant={priorityBadge(task.priority)}>
-                  {priorityLabel(task.priority, labels)}
-                </Badge>
-                <DueStateBadge task={task} labels={labels} />
-              </div>
-            </div>
-            {task.description ? (
-              <section className="grid gap-1">
-                <h4 className="text-sm font-semibold">{labels.descriptionField}</h4>
-                <p className="whitespace-pre-wrap break-words text-sm text-[hsl(var(--muted-foreground))]">
-                  {task.description}
-                </p>
-              </section>
-            ) : null}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <DetailRow
-                label={labels.dueDate}
-                value={task.dueAt ? formatDateTime(task.dueAt) : labels.noDueDate}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList
+              aria-label={labels.taskRelationshipTabs}
+              className="grid w-full grid-cols-2 sm:grid-cols-4"
+            >
+              <TabsTrigger value="overview">{labels.overview}</TabsTrigger>
+              <TabsTrigger value="subtasks">{labels.subtasks}</TabsTrigger>
+              <TabsTrigger value="dependencies">{labels.dependencies}</TabsTrigger>
+              <TabsTrigger value="related">{labels.related}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview">
+              <TaskOverview
+                labels={labels}
+                task={task}
+                onShowSubtasks={() => setActiveTab('subtasks')}
+                onSelectTask={onSelectTask}
               />
-              <DetailRow
-                label={labels.department}
-                value={task.department?.name ?? labels.emptyDash}
+            </TabsContent>
+            <TabsContent value="subtasks">
+              <SubtasksTab
+                labels={labels}
+                workspaceId={workspaceId}
+                task={task}
+                active={activeTab === 'subtasks'}
+                onSelectTask={onSelectTask}
               />
-              <DetailRow
-                label={labels.creator}
-                value={task.createdBy ? displayPerson(task.createdBy) : labels.emptyDash}
+            </TabsContent>
+            <TabsContent value="dependencies">
+              <DependenciesTab
+                labels={labels}
+                workspaceId={workspaceId}
+                task={task}
+                active={activeTab === 'dependencies'}
+                onSelectTask={onSelectTask}
               />
-              <DetailRow label={labels.createdAtLabel} value={formatDateTime(task.createdAt)} />
-              <DetailRow label={labels.updated} value={formatDateTime(task.updatedAt)} />
-            </div>
-            <RelationList
-              label={labels.assignees}
-              values={task.assignees.map((item) => displayPerson(item.user))}
-              empty={labels.emptyDash}
-            />
-            <RelationList
-              label={labels.followers}
-              values={(task.followers ?? []).map((item) => displayPerson(item.user))}
-              empty={labels.emptyDash}
-            />
-            <RelationList
-              label={labels.projects}
-              values={task.projects.map((project) => project.name)}
-              empty={labels.emptyDash}
-            />
-          </div>
+            </TabsContent>
+            <TabsContent value="related">
+              <RelatedTasksTab
+                labels={labels}
+                workspaceId={workspaceId}
+                task={task}
+                active={activeTab === 'related'}
+                onSelectTask={onSelectTask}
+              />
+            </TabsContent>
+          </Tabs>
         ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function TaskOverview({
+  labels,
+  task,
+  onShowSubtasks,
+  onSelectTask,
+}: {
+  labels: AllTaskLabels;
+  task: WorkspaceTask;
+  onShowSubtasks: () => void;
+  onSelectTask: (taskId: string) => void;
+}) {
+  return (
+    <div className="grid gap-5">
+      <div className="grid gap-2">
+        <h3 className="break-words text-xl font-semibold">{task.title}</h3>
+        <div className="flex flex-wrap gap-2">
+          <StatusBadge task={task} />
+          <Badge variant={priorityBadge(task.priority)}>
+            {priorityLabel(task.priority, labels)}
+          </Badge>
+          <DueStateBadge task={task} labels={labels} />
+        </div>
+      </div>
+      {task.parent ? (
+        <div className="flex flex-col gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase text-[hsl(var(--muted-foreground))]">
+              {labels.parentTask}
+            </p>
+            <p className="break-words text-sm font-semibold">{task.parent.title}</p>
+          </div>
+          <Button type="button" variant="secondary" onClick={() => onSelectTask(task.parent!.id)}>
+            {labels.viewParent}
+          </Button>
+        </div>
+      ) : null}
+      {task.description ? (
+        <section className="grid gap-1">
+          <h4 className="text-sm font-semibold">{labels.descriptionField}</h4>
+          <p className="whitespace-pre-wrap break-words text-sm text-[hsl(var(--muted-foreground))]">
+            {task.description}
+          </p>
+        </section>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DetailRow
+          label={labels.dueDate}
+          value={task.dueAt ? formatDateTime(task.dueAt) : labels.noDueDate}
+        />
+        <DetailRow label={labels.department} value={task.department?.name ?? labels.emptyDash} />
+        <DetailRow
+          label={labels.directSubtasks}
+          value={String(task.directSubtaskCount ?? 0)}
+          actionLabel={labels.viewSubtasks}
+          onAction={onShowSubtasks}
+        />
+        <DetailRow
+          label={labels.creator}
+          value={task.createdBy ? displayPerson(task.createdBy) : labels.emptyDash}
+        />
+        <DetailRow label={labels.createdAtLabel} value={formatDateTime(task.createdAt)} />
+        <DetailRow label={labels.updated} value={formatDateTime(task.updatedAt)} />
+      </div>
+      <RelationList
+        label={labels.assignees}
+        values={task.assignees.map((item) => displayPerson(item.user))}
+        empty={labels.emptyDash}
+      />
+      <RelationList
+        label={labels.followers}
+        values={(task.followers ?? []).map((item) => displayPerson(item.user))}
+        empty={labels.emptyDash}
+      />
+      <RelationList
+        label={labels.projects}
+        values={task.projects.map((project) => project.name)}
+        empty={labels.emptyDash}
+      />
+    </div>
+  );
+}
+
+function SubtasksTab({
+  labels,
+  workspaceId,
+  task,
+  active,
+  onSelectTask,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask;
+  active: boolean;
+  onSelectTask: (taskId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [createParent, setCreateParent] = useState<WorkspaceTask | null>(null);
+  const [moveTask, setMoveTask] = useState<WorkspaceTask | null>(null);
+  const params = useMemo(() => ({ page, pageSize }), [page, pageSize]);
+  const subtasksQuery = useQuery({
+    queryKey: taskKeys.subtasks(workspaceId, task.id, params),
+    queryFn: () => listWorkspaceSubtasks(workspaceId as string, task.id, params),
+    enabled: Boolean(active && workspaceId),
+  });
+  const items = subtasksQuery.data?.items ?? [];
+  const total = subtasksQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / params.pageSize));
+
+  useEffect(() => {
+    setPage(1);
+    setExpandedIds(new Set());
+    setCreateParent(null);
+    setMoveTask(null);
+  }, [task.id, workspaceId]);
+
+  function invalidateParent(parentId: string | null | undefined) {
+    if (!workspaceId || !parentId) return Promise.resolve();
+    return queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, parentId) });
+  }
+
+  function invalidateSubtasks(parentId: string | null | undefined) {
+    if (!workspaceId || !parentId) return Promise.resolve();
+    return queryClient.invalidateQueries({
+      queryKey: taskKeys.subtasksBase(workspaceId, parentId),
+    });
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold">{labels.subtasks}</h3>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.directChildrenOnly}</p>
+        </div>
+        <Button type="button" onClick={() => setCreateParent(task)}>
+          <Plus aria-hidden="true" className="h-4 w-4" />
+          {labels.createSubtask}
+        </Button>
+      </div>
+
+      {subtasksQuery.isLoading ? (
+        <div className="grid gap-2">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} className="h-16 w-full" />
+          ))}
+        </div>
+      ) : subtasksQuery.isError ? (
+        <EmptyState
+          title={labels.errorTitle}
+          description={safeHierarchyError(subtasksQuery.error, labels)}
+          action={
+            <Button type="button" variant="secondary" onClick={() => void subtasksQuery.refetch()}>
+              {labels.retry}
+            </Button>
+          }
+        />
+      ) : items.length === 0 ? (
+        <EmptyState
+          title={labels.noSubtasks}
+          description={labels.noSubtasksDescription}
+          action={
+            <Button type="button" onClick={() => setCreateParent(task)}>
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              {labels.createSubtask}
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid gap-2" role="tree" aria-label={labels.subtasks}>
+          {items.map((child) => (
+            <SubtaskTreeNode
+              key={child.id}
+              labels={labels}
+              workspaceId={workspaceId}
+              task={child}
+              depth={0}
+              ancestorIds={new Set([task.id])}
+              expandedIds={expandedIds}
+              onExpandedChange={setExpandedIds}
+              onSelectTask={onSelectTask}
+              onCreateSubtask={setCreateParent}
+              onMoveTask={setMoveTask}
+            />
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 ? (
+        <TaskPagination
+          labels={labels}
+          page={page}
+          pageSize={params.pageSize}
+          total={total}
+          totalPages={totalPages}
+          onPage={setPage}
+          onPageSize={(nextPageSize) => {
+            setPageSize(nextPageSize);
+            setPage(1);
+          }}
+        />
+      ) : null}
+
+      <CreateSubtaskDialog
+        labels={labels}
+        workspaceId={workspaceId}
+        parent={createParent}
+        onOpenChange={(open) => {
+          if (!open) setCreateParent(null);
+        }}
+        onCreated={async (parentId, createdTaskId) => {
+          if (!workspaceId) return;
+          await Promise.all([
+            invalidateSubtasks(parentId),
+            queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, parentId) }),
+            queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, task.id) }),
+            queryClient.invalidateQueries({
+              queryKey: taskKeys.detail(workspaceId, createdTaskId),
+            }),
+          ]);
+        }}
+      />
+
+      <MoveTaskDialog
+        labels={labels}
+        workspaceId={workspaceId}
+        task={moveTask}
+        onOpenChange={(open) => {
+          if (!open) setMoveTask(null);
+        }}
+        onMoved={async (moved, oldParentId, newParentId) => {
+          if (!workspaceId) return;
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, moved.id) }),
+            invalidateParent(oldParentId),
+            invalidateParent(newParentId),
+            invalidateSubtasks(oldParentId),
+            invalidateSubtasks(newParentId),
+            invalidateSubtasks(task.id),
+          ]);
+        }}
+      />
+    </div>
+  );
+}
+
+function SubtaskTreeNode({
+  labels,
+  workspaceId,
+  task,
+  depth,
+  ancestorIds,
+  expandedIds,
+  onExpandedChange,
+  onSelectTask,
+  onCreateSubtask,
+  onMoveTask,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask;
+  depth: number;
+  ancestorIds: Set<string>;
+  expandedIds: Set<string>;
+  onExpandedChange: (updater: (current: Set<string>) => Set<string>) => void;
+  onSelectTask: (taskId: string) => void;
+  onCreateSubtask: (task: WorkspaceTask) => void;
+  onMoveTask: (task: WorkspaceTask) => void;
+}) {
+  const expanded = expandedIds.has(task.id);
+  const [page, setPage] = useState(1);
+  const params = useMemo(() => ({ page, pageSize: 5 }), [page]);
+  const hasPotentialChildren = (task.directSubtaskCount ?? 0) > 0;
+  const repeatedInPath = ancestorIds.has(task.id);
+  const childQuery = useQuery({
+    queryKey: taskKeys.subtasks(workspaceId, task.id, params),
+    queryFn: () => listWorkspaceSubtasks(workspaceId as string, task.id, params),
+    enabled: Boolean(workspaceId && expanded && !repeatedInPath),
+  });
+  const children = childQuery.data?.items ?? [];
+  const total = childQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / params.pageSize));
+  const indent = Math.min(depth, 6) * 14;
+  const nextAncestorIds = useMemo(() => new Set([...ancestorIds, task.id]), [ancestorIds, task.id]);
+
+  function toggle() {
+    onExpandedChange((current) => {
+      const next = new Set(current);
+      if (next.has(task.id)) next.delete(task.id);
+      else next.add(task.id);
+      return next;
+    });
+  }
+
+  if (repeatedInPath) {
+    return (
+      <div
+        role="treeitem"
+        className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 text-sm text-[hsl(var(--muted-foreground))]"
+        style={{ marginLeft: indent }}
+      >
+        {labels.hierarchyCycleDetected}
+      </div>
+    );
+  }
+
+  return (
+    <div role="treeitem" aria-expanded={hasPotentialChildren ? expanded : undefined}>
+      <div
+        className="grid gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 transition-colors hover:bg-[hsl(var(--surface-muted))]"
+        style={{ marginLeft: indent }}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 w-8 shrink-0 p-0"
+              aria-label={expanded ? labels.collapse : labels.expand}
+              aria-expanded={hasPotentialChildren ? expanded : undefined}
+              disabled={!hasPotentialChildren}
+              onClick={toggle}
+            >
+              {expanded ? (
+                <ChevronDown aria-hidden="true" className="h-4 w-4" />
+              ) : (
+                <ChevronRight aria-hidden="true" className="h-4 w-4" />
+              )}
+            </Button>
+            <div className="min-w-0">
+              <button
+                type="button"
+                className="break-words text-left text-sm font-semibold underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                onClick={() => onSelectTask(task.id)}
+              >
+                {task.title}
+              </button>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <StatusBadge task={task} />
+                <Badge variant={priorityBadge(task.priority)}>
+                  {priorityLabel(task.priority, labels)}
+                </Badge>
+                <DueStateBadge task={task} labels={labels} />
+                <Badge variant="neutral">
+                  {labels.subtasks}: {task.directSubtaskCount ?? 0}
+                </Badge>
+              </div>
+              <p className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
+                {assigneeSummary(task, labels)}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Button type="button" variant="secondary" onClick={() => onMoveTask(task)}>
+              <MoveRight aria-hidden="true" className="h-4 w-4" />
+              {labels.changeParent}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={`${labels.actions}: ${task.title}`}
+                >
+                  <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
+                  {labels.actions}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => onSelectTask(task.id)}>
+                  {labels.viewTask}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onCreateSubtask(task)}>
+                  {labels.createSubtask}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onMoveTask(task)}>
+                  {labels.changeParent}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </div>
+      {expanded ? (
+        <div className="mt-2 grid gap-2" role="group">
+          {childQuery.isLoading ? (
+            <Skeleton className="h-14 w-full" />
+          ) : childQuery.isError ? (
+            <div
+              className="rounded-md border border-[hsl(var(--border))] p-3"
+              style={{ marginLeft: indent + 14 }}
+            >
+              <p className="text-sm text-[hsl(var(--danger))]">
+                {safeHierarchyError(childQuery.error, labels)}
+              </p>
+              <Button type="button" variant="secondary" onClick={() => void childQuery.refetch()}>
+                {labels.retry}
+              </Button>
+            </div>
+          ) : (
+            <>
+              {children.map((child) => (
+                <SubtaskTreeNode
+                  key={child.id}
+                  labels={labels}
+                  workspaceId={workspaceId}
+                  task={child}
+                  depth={depth + 1}
+                  ancestorIds={nextAncestorIds}
+                  expandedIds={expandedIds}
+                  onExpandedChange={onExpandedChange}
+                  onSelectTask={onSelectTask}
+                  onCreateSubtask={onCreateSubtask}
+                  onMoveTask={onMoveTask}
+                />
+              ))}
+              {totalPages > 1 ? (
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  style={{ marginLeft: indent + 14 }}
+                >
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={page <= 1}
+                    onClick={() => setPage((value) => Math.max(1, value - 1))}
+                  >
+                    {labels.previous}
+                  </Button>
+                  <span className="text-sm text-[hsl(var(--muted-foreground))]">
+                    {labels.page} {page} / {totalPages}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((value) => value + 1)}
+                  >
+                    {labels.next}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DependenciesTab({
+  labels,
+  workspaceId,
+  task,
+  active,
+  onSelectTask,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask;
+  active: boolean;
+  onSelectTask: (taskId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [blockedByPage, setBlockedByPage] = useState(1);
+  const [blocksPage, setBlocksPage] = useState(1);
+  const [addOpen, setAddOpen] = useState(false);
+  const removeLockedRef = useRef(false);
+  const blockedByParams = useMemo(() => ({ page: blockedByPage, pageSize: 10 }), [blockedByPage]);
+  const blocksParams = useMemo(() => ({ page: blocksPage, pageSize: 10 }), [blocksPage]);
+  const blockedByQuery = useQuery({
+    queryKey: taskKeys.blockedBy(workspaceId, task.id, blockedByParams),
+    queryFn: () => listWorkspaceTaskBlockedBy(workspaceId as string, task.id, blockedByParams),
+    enabled: Boolean(active && workspaceId),
+  });
+  const blocksQuery = useQuery({
+    queryKey: taskKeys.blocks(workspaceId, task.id, blocksParams),
+    queryFn: () => listWorkspaceTaskBlocks(workspaceId as string, task.id, blocksParams),
+    enabled: Boolean(active && workspaceId),
+  });
+  const removeMutation = useMutation({
+    mutationFn: (blockerTaskId: string) => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      return removeWorkspaceTaskBlockedBy(workspaceId, task.id, [blockerTaskId]);
+    },
+    onSuccess: async (result, blockerTaskId) => {
+      await invalidateDependencyQueries(queryClient, workspaceId, task.id, blockerTaskId);
+      toast.success(relationshipSuccessMessage(labels, result, labels.blockerRemoved));
+    },
+    onError: (error) => toast.error(safeRelationshipError(error, labels)),
+    onSettled: () => {
+      removeLockedRef.current = false;
+    },
+  });
+
+  useEffect(() => {
+    setBlockedByPage(1);
+    setBlocksPage(1);
+    setAddOpen(false);
+    removeLockedRef.current = false;
+  }, [task.id, workspaceId]);
+
+  function removeBlocker(blockerTaskId: string) {
+    if (removeMutation.isPending || removeLockedRef.current) return;
+    removeLockedRef.current = true;
+    removeMutation.mutate(blockerTaskId);
+  }
+
+  return (
+    <div className="grid gap-4">
+      <RelationshipSection
+        labels={labels}
+        title={labels.blockedBy}
+        description={labels.blockedByDescription}
+        emptyTitle={labels.noActiveBlockers}
+        query={blockedByQuery}
+        page={blockedByPage}
+        pageSize={blockedByParams.pageSize}
+        onPage={setBlockedByPage}
+        onSelectTask={onSelectTask}
+        action={
+          <Button type="button" onClick={() => setAddOpen(true)}>
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            {labels.addBlocker}
+          </Button>
+        }
+        rowAction={(item) => (
+          <Button
+            type="button"
+            variant="secondary"
+            aria-label={`${labels.removeBlocker}: ${item.title}`}
+            disabled={removeMutation.isPending}
+            onClick={() => removeBlocker(item.id)}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+            {labels.removeBlocker}
+          </Button>
+        )}
+      />
+      <RelationshipSection
+        labels={labels}
+        title={labels.blocks}
+        description={labels.blocksDescription}
+        emptyTitle={labels.notBlockingTasks}
+        query={blocksQuery}
+        page={blocksPage}
+        pageSize={blocksParams.pageSize}
+        onPage={setBlocksPage}
+        onSelectTask={onSelectTask}
+      />
+      <TaskRelationshipDialog
+        labels={labels}
+        workspaceId={workspaceId}
+        task={task}
+        open={addOpen}
+        mode="blocker"
+        onOpenChange={setAddOpen}
+        onSaved={async (result, selectedIds) => {
+          await Promise.all([
+            invalidateDependencyQueries(queryClient, workspaceId, task.id),
+            ...selectedIds.map((id) =>
+              invalidateDependencyCounterpartQueries(queryClient, workspaceId, id),
+            ),
+          ]);
+          toast.success(relationshipSuccessMessage(labels, result, labels.blockersAdded));
+        }}
+      />
+    </div>
+  );
+}
+
+function RelatedTasksTab({
+  labels,
+  workspaceId,
+  task,
+  active,
+  onSelectTask,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask;
+  active: boolean;
+  onSelectTask: (taskId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [addOpen, setAddOpen] = useState(false);
+  const removeLockedRef = useRef(false);
+  const params = useMemo(() => ({ page, pageSize: 10 }), [page]);
+  const relatedQuery = useQuery({
+    queryKey: taskKeys.related(workspaceId, task.id, params),
+    queryFn: () => listWorkspaceTaskRelated(workspaceId as string, task.id, params),
+    enabled: Boolean(active && workspaceId),
+  });
+  const removeMutation = useMutation({
+    mutationFn: (relatedTaskId: string) => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      return removeWorkspaceTaskRelated(workspaceId, task.id, [relatedTaskId]);
+    },
+    onSuccess: async (result, relatedTaskId) => {
+      await invalidateRelatedQueries(queryClient, workspaceId, task.id, [relatedTaskId]);
+      toast.success(relationshipSuccessMessage(labels, result, labels.relatedRemoved));
+    },
+    onError: (error) => toast.error(safeRelationshipError(error, labels)),
+    onSettled: () => {
+      removeLockedRef.current = false;
+    },
+  });
+
+  useEffect(() => {
+    setPage(1);
+    setAddOpen(false);
+    removeLockedRef.current = false;
+  }, [task.id, workspaceId]);
+
+  function removeRelatedTask(relatedTaskId: string) {
+    if (removeMutation.isPending || removeLockedRef.current) return;
+    removeLockedRef.current = true;
+    removeMutation.mutate(relatedTaskId);
+  }
+
+  return (
+    <div className="grid gap-4">
+      <RelationshipSection
+        labels={labels}
+        title={labels.relatedTasks}
+        description={labels.relatedDescription}
+        emptyTitle={labels.noRelatedTasks}
+        query={relatedQuery}
+        page={page}
+        pageSize={params.pageSize}
+        onPage={setPage}
+        onSelectTask={onSelectTask}
+        action={
+          <Button type="button" onClick={() => setAddOpen(true)}>
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            {labels.addRelatedTask}
+          </Button>
+        }
+        rowAction={(item) => (
+          <Button
+            type="button"
+            variant="secondary"
+            aria-label={`${labels.removeRelatedTask}: ${item.title}`}
+            disabled={removeMutation.isPending}
+            onClick={() => removeRelatedTask(item.id)}
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+            {labels.removeRelatedTask}
+          </Button>
+        )}
+      />
+      <TaskRelationshipDialog
+        labels={labels}
+        workspaceId={workspaceId}
+        task={task}
+        open={addOpen}
+        mode="related"
+        onOpenChange={setAddOpen}
+        onSaved={async (result, selectedIds) => {
+          await invalidateRelatedQueries(queryClient, workspaceId, task.id, selectedIds);
+          toast.success(relationshipSuccessMessage(labels, result, labels.relatedAdded));
+        }}
+      />
+    </div>
+  );
+}
+
+function RelationshipSection({
+  labels,
+  title,
+  description,
+  emptyTitle,
+  query,
+  page,
+  pageSize,
+  action,
+  rowAction,
+  onPage,
+  onSelectTask,
+}: {
+  labels: AllTaskLabels;
+  title: string;
+  description: string;
+  emptyTitle: string;
+  query: ReturnType<typeof useQuery<PageResultLike<WorkspaceTaskRelationship>>>;
+  page: number;
+  pageSize: number;
+  action?: ReactNode;
+  rowAction?: (task: WorkspaceTaskRelationship) => ReactNode;
+  onPage: (page: number) => void;
+  onSelectTask: (taskId: string) => void;
+}) {
+  const items = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  useEffect(() => {
+    if (query.isSuccess && page > totalPages) onPage(totalPages);
+  }, [onPage, page, query.isSuccess, totalPages]);
+
+  return (
+    <section className="grid gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold">{title}</h3>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">{description}</p>
+        </div>
+        {action}
+      </div>
+      {query.isLoading ? (
+        <div className="grid gap-2" aria-label={labels.loadingRelationships}>
+          {Array.from({ length: 3 }, (_, index) => (
+            <Skeleton key={index} className="h-20 w-full" />
+          ))}
+        </div>
+      ) : query.isError ? (
+        <EmptyState
+          title={labels.errorTitle}
+          description={safeRelationshipError(query.error, labels)}
+          action={
+            <Button type="button" variant="secondary" onClick={() => void query.refetch()}>
+              {labels.retry}
+            </Button>
+          }
+        />
+      ) : items.length === 0 ? (
+        <EmptyState title={emptyTitle} description={description} action={action} />
+      ) : (
+        <div className="grid gap-2" role="list" aria-label={title}>
+          {items.map((item) => (
+            <RelationshipTaskRow
+              key={item.id}
+              labels={labels}
+              task={item}
+              action={rowAction?.(item)}
+              onSelectTask={onSelectTask}
+            />
+          ))}
+        </div>
+      )}
+      {totalPages > 1 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={page <= 1}
+            onClick={() => onPage(Math.max(1, page - 1))}
+          >
+            {labels.previous}
+          </Button>
+          <span className="text-sm text-[hsl(var(--muted-foreground))]">
+            {labels.page} {page} / {totalPages}
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={page >= totalPages}
+            onClick={() => onPage(page + 1)}
+          >
+            {labels.next}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RelationshipTaskRow({
+  labels,
+  task,
+  action,
+  onSelectTask,
+}: {
+  labels: AllTaskLabels;
+  task: WorkspaceTaskRelationship;
+  action?: ReactNode;
+  onSelectTask: (taskId: string) => void;
+}) {
+  return (
+    <div
+      role="listitem"
+      className="flex flex-col gap-3 rounded-md border border-[hsl(var(--border))] p-3 sm:flex-row sm:items-start sm:justify-between"
+    >
+      <div className="min-w-0">
+        <button
+          type="button"
+          className="break-words text-left text-sm font-semibold underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+          onClick={() => onSelectTask(task.id)}
+        >
+          {task.title}
+        </button>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <StatusBadge task={task as WorkspaceTask} />
+          <Badge variant={task.status.isTerminal ? 'success' : 'info'}>
+            {task.status.isTerminal ? labels.terminalTask : labels.activeTask}
+          </Badge>
+          <Badge variant={priorityBadge(task.priority)}>
+            {priorityLabel(task.priority, labels)}
+          </Badge>
+          <span className="text-xs text-[hsl(var(--muted-foreground))]">
+            {task.dueAt ? formatDateTime(task.dueAt) : labels.noDueDate}
+          </span>
+        </div>
+        <p className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
+          {assigneeSummary(task as WorkspaceTask, labels)}
+        </p>
+      </div>
+      {action ? <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">{action}</div> : null}
+    </div>
+  );
+}
+
+function TaskRelationshipDialog({
+  labels,
+  workspaceId,
+  task,
+  open,
+  mode,
+  onOpenChange,
+  onSaved,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask;
+  open: boolean;
+  mode: 'blocker' | 'related';
+  onOpenChange: (open: boolean) => void;
+  onSaved: (result: TaskRelationshipResult, selectedIds: string[]) => Promise<void>;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedTasks, setSelectedTasks] = useState<WorkspaceTaskRelationship[]>([]);
+  const submitLockedRef = useRef(false);
+  const contextKeyRef = useRef(`${workspaceId ?? 'none'}:${task.id}`);
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const params = useMemo(() => ({ page: 1, pageSize: 10 }), []);
+  const selectedIds = useMemo(() => selectedTasks.map((item) => item.id), [selectedTasks]);
+  const candidatesQuery = useQuery({
+    queryKey: taskKeys.relationshipSearch(workspaceId, task.id, debouncedSearch, params),
+    queryFn: () =>
+      listWorkspaceTasks(workspaceId as string, {
+        ...params,
+        search: debouncedSearch.length >= 2 ? debouncedSearch : undefined,
+        sortBy: 'title',
+        sortDirection: 'asc',
+      }),
+    enabled: Boolean(workspaceId && open),
+  });
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      if (selectedIds.length === 0) throw new Error(labels.selectRelationshipTasks);
+      if (selectedIds.length > 100) throw new Error(labels.relationshipSelectionLimit);
+      return mode === 'blocker'
+        ? addWorkspaceTaskBlockedBy(workspaceId, task.id, selectedIds)
+        : addWorkspaceTaskRelated(workspaceId, task.id, selectedIds);
+    },
+    onSuccess: async (result) => {
+      await onSaved(result, selectedIds);
+      submitLockedRef.current = false;
+      setSelectedTasks([]);
+      setSearch('');
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      submitLockedRef.current = false;
+      toast.error(safeRelationshipError(error, labels));
+    },
+  });
+  const candidates = (candidatesQuery.data?.items ?? []).filter(
+    (candidate) => candidate.id !== task.id,
+  );
+  const title = mode === 'blocker' ? labels.addBlocker : labels.addRelatedTask;
+  const description =
+    mode === 'blocker' ? labels.addBlockerDescription : labels.addRelatedDescription;
+  const selectionLimitReached = selectedIds.length >= 100;
+
+  useEffect(() => {
+    const contextKey = `${workspaceId ?? 'none'}:${task.id}`;
+    if (open && contextKeyRef.current !== contextKey) {
+      submitLockedRef.current = false;
+      setSearch('');
+      setSelectedTasks([]);
+      onOpenChange(false);
+    }
+    contextKeyRef.current = contextKey;
+  }, [onOpenChange, open, task.id, workspaceId]);
+
+  useEffect(() => {
+    if (!open) {
+      submitLockedRef.current = false;
+      setSearch('');
+      setSelectedTasks([]);
+    }
+  }, [open]);
+
+  function toggleCandidate(candidate: WorkspaceTaskRelationship) {
+    setSelectedTasks((current) => toggleRelationshipSelection(current, candidate));
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!mutation.isPending && !submitLockedRef.current) {
+              submitLockedRef.current = true;
+              mutation.mutate();
+            }
+          }}
+        >
+          <Input
+            label={labels.searchTasks}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={labels.searchTasks}
+          />
+          <div className="grid gap-2">
+            <p className="text-sm font-semibold">{labels.selectedTasks}</p>
+            <div className="flex min-h-9 flex-wrap gap-2 rounded-md border border-[hsl(var(--border))] p-2">
+              {selectedIds.length === 0 ? (
+                <span className="text-sm text-[hsl(var(--muted-foreground))]">
+                  {labels.noTasksSelected}
+                </span>
+              ) : (
+                selectedTasks.map((selectedTask) => {
+                  return (
+                    <button
+                      key={selectedTask.id}
+                      type="button"
+                      aria-label={`${labels.removeSelectedTask}: ${selectedTask.title}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--border))] px-2 py-1 text-xs font-semibold"
+                      onClick={() =>
+                        setSelectedTasks((current) =>
+                          current.filter((item) => item.id !== selectedTask.id),
+                        )
+                      }
+                    >
+                      {selectedTask.title}
+                      <X aria-hidden="true" className="h-3 w-3" />
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            {selectionLimitReached ? (
+              <p className="text-xs font-semibold text-[hsl(var(--danger))]">
+                {labels.relationshipSelectionLimit}
+              </p>
+            ) : null}
+          </div>
+          <div className="grid max-h-72 gap-2 overflow-y-auto rounded-md border border-[hsl(var(--border))] p-2">
+            {candidatesQuery.isLoading ? <Skeleton className="h-16 w-full" /> : null}
+            {candidatesQuery.isError ? (
+              <p className="text-sm text-[hsl(var(--danger))]">
+                {safeRelationshipError(candidatesQuery.error, labels)}
+              </p>
+            ) : null}
+            {!candidatesQuery.isLoading && !candidatesQuery.isError && candidates.length === 0 ? (
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                {labels.noMatchingTasks}
+              </p>
+            ) : null}
+            {candidates.map((candidate) => {
+              const checked = selectedIds.includes(candidate.id);
+              const disabled = !checked && selectionLimitReached;
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  className={[
+                    'grid gap-2 rounded-md border p-3 text-left',
+                    checked
+                      ? 'border-[hsl(var(--primary))] bg-[hsl(var(--surface-muted))]'
+                      : 'border-[hsl(var(--border))]',
+                  ].join(' ')}
+                  aria-pressed={checked}
+                  disabled={disabled}
+                  onClick={() => toggleCandidate(candidate)}
+                >
+                  <span className="font-semibold">{candidate.title}</span>
+                  <span className="flex flex-wrap gap-2">
+                    <StatusBadge task={candidate} />
+                    <Badge variant={candidate.status.isTerminal ? 'success' : 'info'}>
+                      {candidate.status.isTerminal ? labels.terminalTask : labels.activeTask}
+                    </Badge>
+                    <Badge variant={priorityBadge(candidate.priority)}>
+                      {priorityLabel(candidate.priority, labels)}
+                    </Badge>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {candidate.dueAt ? formatDateTime(candidate.dueAt) : labels.noDueDate}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+              {labels.cancel}
+            </Button>
+            <Button type="submit" disabled={mutation.isPending || selectedIds.length === 0}>
+              {mutation.isPending ? labels.applying : title}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateSubtaskDialog({
+  labels,
+  workspaceId,
+  parent,
+  onOpenChange,
+  onCreated,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  parent: WorkspaceTask | null;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (parentTaskId: string, createdTaskId: string) => Promise<void>;
+}) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [form, setForm] = useState(() => defaultSubtaskForm());
+  const [assigneeSearch, setAssigneeSearch] = useState('');
+  const [projectSearch, setProjectSearch] = useState('');
+  const submitLockedRef = useRef(false);
+  const debouncedAssigneeSearch = useDebouncedValue(assigneeSearch.trim(), 300);
+  const debouncedProjectSearch = useDebouncedValue(projectSearch.trim(), 300);
+  const usersQuery = useQuery({
+    queryKey: taskCreationKeys.users(workspaceId, `subtask:${debouncedAssigneeSearch}`),
+    queryFn: () =>
+      listWorkspaceUsers({
+        workspaceId: workspaceId as string,
+        page: 1,
+        pageSize: 10,
+        search: debouncedAssigneeSearch.length >= 2 ? debouncedAssigneeSearch : undefined,
+      }),
+    enabled: Boolean(workspaceId && parent),
+  });
+  const statusesQuery = useQuery({
+    queryKey: taskCreationKeys.statuses(workspaceId),
+    queryFn: () => listWorkspaceStatuses(workspaceId as string, 'TASK', 'ACTIVE'),
+    enabled: Boolean(workspaceId && parent && advancedOpen),
+    staleTime: 30_000,
+  });
+  const departmentsQuery = useQuery({
+    queryKey: taskCreationKeys.departments(workspaceId),
+    queryFn: () =>
+      listDepartments({ workspaceId: workspaceId as string, pageSize: 100, status: 'ACTIVE' }),
+    enabled: Boolean(workspaceId && parent && advancedOpen),
+    staleTime: 30_000,
+  });
+  const projectsQuery = useQuery({
+    queryKey: taskCreationKeys.projects(workspaceId, `subtask:${debouncedProjectSearch}`),
+    queryFn: () =>
+      listWorkspaceProjects({
+        workspaceId: workspaceId as string,
+        page: 1,
+        pageSize: 10,
+        search: debouncedProjectSearch.length >= 2 ? debouncedProjectSearch : undefined,
+      }),
+    enabled: Boolean(workspaceId && parent && advancedOpen),
+  });
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      if (!workspaceId || !parent) throw new Error(labels.noWorkspace);
+      if (!form.title.trim()) throw new Error(labels.titleRequired);
+      if (!form.assigneeMembershipId) throw new Error(labels.selectAssignees);
+      if (!form.dueDate) throw new Error(labels.dueDateRequired);
+      const payload: CreateTaskPayload = {
+        title: form.title,
+        dueAt: taskDueAtFromLocalDate(form.dueDate, form.dueTime),
+        assigneeMembershipIds: uniqueIds([
+          form.assigneeMembershipId,
+          ...form.additionalAssigneeMembershipIds,
+        ]),
+        ...(form.description.trim() ? { description: form.description.trim() } : {}),
+        ...(form.priority === 'MEDIUM' ? {} : { priority: form.priority }),
+        ...(form.statusDefinitionId ? { statusDefinitionId: form.statusDefinitionId } : {}),
+        ...(form.departmentId ? { departmentId: form.departmentId } : {}),
+        ...(form.followerMembershipIds.length
+          ? { followerMembershipIds: form.followerMembershipIds }
+          : {}),
+        ...(form.projectIds.length ? { projectIds: form.projectIds } : {}),
+      };
+      return createWorkspaceSubtask(workspaceId, parent.id, payload);
+    },
+    onSuccess: async (created) => {
+      if (parent) await onCreated(parent.id, created.id);
+      toast.success(labels.subtaskCreated);
+      submitLockedRef.current = false;
+      setForm(defaultSubtaskForm());
+      setAdvancedOpen(false);
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      submitLockedRef.current = false;
+      toast.error(safeHierarchyError(error, labels));
+    },
+  });
+  const users = usersQuery.data?.items ?? [];
+  const statuses = statusesQuery.data ?? [];
+  const departments = departmentsQuery.data?.items ?? [];
+  const projects = projectsQuery.data?.items ?? [];
+
+  useEffect(() => {
+    if (!parent) {
+      submitLockedRef.current = false;
+      setForm(defaultSubtaskForm());
+      setAdvancedOpen(false);
+      setAssigneeSearch('');
+      setProjectSearch('');
+    }
+  }, [parent]);
+
+  return (
+    <Dialog open={Boolean(parent)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{labels.createSubtask}</DialogTitle>
+          <DialogDescription>
+            {parent ? `${labels.parentTask}: ${parent.title}` : labels.directChildrenOnly}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!createMutation.isPending && !submitLockedRef.current) {
+              submitLockedRef.current = true;
+              createMutation.mutate();
+            }
+          }}
+        >
+          <Input
+            label={labels.titleLabel}
+            required
+            value={form.title}
+            onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+          />
+          <SimpleUserSelector
+            labels={labels}
+            label={labels.assignee}
+            users={users}
+            search={assigneeSearch}
+            selectedIds={form.assigneeMembershipId ? [form.assigneeMembershipId] : []}
+            onSearch={setAssigneeSearch}
+            onToggle={(membershipId) =>
+              setForm((current) => ({ ...current, assigneeMembershipId: membershipId }))
+            }
+            single
+          />
+          <Input
+            label={labels.dueDate}
+            required
+            type="date"
+            value={form.dueDate}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, dueDate: event.target.value }))
+            }
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            className="justify-start"
+            aria-expanded={advancedOpen}
+            onClick={() => setAdvancedOpen((value) => !value)}
+          >
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            {labels.addMoreDetails}
+          </Button>
+          {advancedOpen ? (
+            <div className="grid gap-4 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4">
+              <Textarea
+                label={labels.descriptionField}
+                value={form.description}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, description: event.target.value }))
+                }
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Select
+                  value={form.priority}
+                  onValueChange={(priority) =>
+                    setForm((current) => ({ ...current, priority: priority as TaskPriority }))
+                  }
+                >
+                  <SelectTrigger label={labels.priority}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {priorities.map((priority) => (
+                      <SelectItem key={priority} value={priority}>
+                        {priorityLabel(priority, labels)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  label={labels.dueTime}
+                  type="time"
+                  value={form.dueTime}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, dueTime: event.target.value }))
+                  }
+                />
+                <Select
+                  value={form.statusDefinitionId || noneValue}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      statusDefinitionId: value === noneValue ? '' : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger label={labels.status}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={noneValue}>{labels.backendDefault}</SelectItem>
+                    {statuses.map((status) => (
+                      <SelectItem key={status.id} value={status.id}>
+                        {status.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={form.departmentId || noneValue}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      departmentId: value === noneValue ? '' : value,
+                    }))
+                  }
+                >
+                  <SelectTrigger label={labels.department}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={noneValue}>{labels.none}</SelectItem>
+                    {departments.map((department) => (
+                      <SelectItem key={department.id} value={department.id}>
+                        {department.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <SimpleUserSelector
+                labels={labels}
+                label={labels.additionalAssignees}
+                users={users}
+                search={assigneeSearch}
+                selectedIds={form.additionalAssigneeMembershipIds}
+                onSearch={setAssigneeSearch}
+                onToggle={(membershipId) =>
+                  setForm((current) => ({
+                    ...current,
+                    additionalAssigneeMembershipIds: toggleId(
+                      current.additionalAssigneeMembershipIds,
+                      membershipId,
+                    ),
+                  }))
+                }
+              />
+              <SimpleUserSelector
+                labels={labels}
+                label={labels.followers}
+                users={users}
+                search={assigneeSearch}
+                selectedIds={form.followerMembershipIds}
+                onSearch={setAssigneeSearch}
+                onToggle={(membershipId) =>
+                  setForm((current) => ({
+                    ...current,
+                    followerMembershipIds: toggleId(current.followerMembershipIds, membershipId),
+                  }))
+                }
+              />
+              <ProjectSelector
+                labels={labels}
+                projects={projects}
+                search={projectSearch}
+                selectedIds={form.projectIds}
+                onSearch={setProjectSearch}
+                onToggle={(projectId) =>
+                  setForm((current) => ({
+                    ...current,
+                    projectIds: toggleId(current.projectIds, projectId),
+                  }))
+                }
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+              {labels.cancel}
+            </Button>
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? labels.creating : labels.createSubtask}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function MoveTaskDialog({
+  labels,
+  workspaceId,
+  task,
+  onOpenChange,
+  onMoved,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask | null;
+  onOpenChange: (open: boolean) => void;
+  onMoved: (
+    moved: WorkspaceTask,
+    oldParentId: string | null | undefined,
+    newParentId: string | null,
+  ) => Promise<void>;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedParentId, setSelectedParentId] = useState<string | null | undefined>(undefined);
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const currentParentId = task?.parentTaskId ?? null;
+  const hasMoveSelection = selectedParentId !== undefined;
+  const unchangedMove = hasMoveSelection && selectedParentId === currentParentId;
+  const candidatesQuery = useQuery({
+    queryKey: taskKeys.list(
+      workspaceId,
+      normalizeTaskListParams({
+        page: 1,
+        pageSize: 10,
+        search: debouncedSearch.length >= 2 ? debouncedSearch : undefined,
+        sortBy: 'title',
+        sortDirection: 'asc',
+      }),
+    ),
+    queryFn: () =>
+      listWorkspaceTasks(workspaceId as string, {
+        page: 1,
+        pageSize: 10,
+        search: debouncedSearch.length >= 2 ? debouncedSearch : undefined,
+        sortBy: 'title',
+        sortDirection: 'asc',
+      }),
+    enabled: Boolean(workspaceId && task),
+  });
+  const moveMutation = useMutation({
+    mutationFn: async () => {
+      if (!workspaceId || !task || selectedParentId === undefined)
+        throw new Error(labels.selectParent);
+      if (selectedParentId === currentParentId) throw new Error(labels.unchangedParent);
+      return updateWorkspaceTaskParent(workspaceId, task.id, selectedParentId);
+    },
+    onSuccess: async (moved) => {
+      await onMoved(moved, task?.parentTaskId, selectedParentId ?? null);
+      toast.success(labels.taskMoved);
+      onOpenChange(false);
+    },
+    onError: (error) => toast.error(safeMoveError(error, labels)),
+  });
+  const candidates = (candidatesQuery.data?.items ?? []).filter(
+    (candidate) => candidate.id !== task?.id,
+  );
+
+  useEffect(() => {
+    setSearch('');
+    setSelectedParentId(undefined);
+  }, [task?.id, workspaceId]);
+
+  return (
+    <Dialog open={Boolean(task)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{labels.moveTask}</DialogTitle>
+          <DialogDescription>{task?.title}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <DetailRow label={labels.currentParent} value={task?.parent?.title ?? labels.rootTask} />
+          <Input
+            label={labels.newParent}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={labels.searchTasks}
+          />
+          <div className="grid gap-2">
+            <button
+              type="button"
+              className={[
+                'flex items-center justify-between rounded-md border p-3 text-left text-sm font-semibold',
+                selectedParentId === null
+                  ? 'border-[hsl(var(--primary))] bg-[hsl(var(--surface-muted))]'
+                  : 'border-[hsl(var(--border))]',
+                currentParentId === null ? 'cursor-not-allowed opacity-60' : '',
+              ].join(' ')}
+              disabled={currentParentId === null}
+              onClick={() => setSelectedParentId(null)}
+            >
+              <span>{labels.moveToRoot}</span>
+              <CornerDownRight aria-hidden="true" className="h-4 w-4" />
+            </button>
+            {candidates.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                className={[
+                  'grid gap-2 rounded-md border p-3 text-left',
+                  selectedParentId === candidate.id
+                    ? 'border-[hsl(var(--primary))] bg-[hsl(var(--surface-muted))]'
+                    : 'border-[hsl(var(--border))]',
+                  candidate.id === currentParentId ? 'cursor-not-allowed opacity-60' : '',
+                ].join(' ')}
+                disabled={candidate.id === currentParentId}
+                onClick={() => setSelectedParentId(candidate.id)}
+              >
+                <span className="font-semibold">{candidate.title}</span>
+                <span className="flex flex-wrap gap-2">
+                  <StatusBadge task={candidate} />
+                  <Badge variant={priorityBadge(candidate.priority)}>
+                    {priorityLabel(candidate.priority, labels)}
+                  </Badge>
+                  <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                    {candidate.dueAt ? formatDateTime(candidate.dueAt) : labels.noDueDate}
+                  </span>
+                </span>
+              </button>
+            ))}
+            {candidatesQuery.isLoading ? <Skeleton className="h-14 w-full" /> : null}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+            {labels.cancel}
+          </Button>
+          <Button
+            type="button"
+            disabled={moveMutation.isPending || selectedParentId === undefined || unchangedMove}
+            onClick={() => moveMutation.mutate()}
+          >
+            <MoveRight aria-hidden="true" className="h-4 w-4" />
+            {labels.move}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  actionLabel,
+  onAction,
+}: {
+  label: string;
+  value: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
   return (
     <div className="rounded-md border border-[hsl(var(--border))] p-3">
       <p className="text-xs font-semibold uppercase text-[hsl(var(--muted-foreground))]">{label}</p>
-      <p className="mt-1 break-words text-sm font-semibold">{value}</p>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <p className="break-words text-sm font-semibold">{value}</p>
+        {actionLabel && onAction ? (
+          <Button type="button" variant="ghost" onClick={onAction}>
+            {actionLabel}
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1736,6 +3259,99 @@ function RelationList({
         <p className="text-sm text-[hsl(var(--muted-foreground))]">{empty}</p>
       )}
     </section>
+  );
+}
+
+function SimpleUserSelector({
+  labels,
+  label,
+  users,
+  search,
+  selectedIds,
+  onSearch,
+  onToggle,
+  single = false,
+}: {
+  labels: AllTaskLabels;
+  label: string;
+  users: WorkspaceUser[];
+  search: string;
+  selectedIds: string[];
+  onSearch: (value: string) => void;
+  onToggle: (membershipId: string) => void;
+  single?: boolean;
+}) {
+  return (
+    <div className="grid gap-2">
+      <Input
+        label={label}
+        value={search}
+        onChange={(event) => onSearch(event.target.value)}
+        placeholder={labels.searchPeople}
+      />
+      <div className="grid gap-2 rounded-md border border-[hsl(var(--border))] p-2">
+        {users.length === 0 ? (
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.noEligibleUsers}</p>
+        ) : (
+          users.map((user) => {
+            const id = user.membershipId;
+            const checked = selectedIds.includes(id);
+            return (
+              <Checkbox
+                key={id}
+                label={displayUser(user)}
+                checked={checked}
+                onCheckedChange={() => {
+                  if (single && checked) return;
+                  onToggle(id);
+                }}
+              />
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectSelector({
+  labels,
+  projects,
+  search,
+  selectedIds,
+  onSearch,
+  onToggle,
+}: {
+  labels: AllTaskLabels;
+  projects: WorkspaceProject[];
+  search: string;
+  selectedIds: string[];
+  onSearch: (value: string) => void;
+  onToggle: (projectId: string) => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <Input
+        label={labels.projects}
+        value={search}
+        onChange={(event) => onSearch(event.target.value)}
+        placeholder={labels.searchProjects}
+      />
+      <div className="grid gap-2 rounded-md border border-[hsl(var(--border))] p-2">
+        {projects.length === 0 ? (
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.noProjects}</p>
+        ) : (
+          projects.map((project) => (
+            <Checkbox
+              key={project.id}
+              label={project.name}
+              checked={selectedIds.includes(project.id)}
+              onCheckedChange={() => onToggle(project.id)}
+            />
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1892,6 +3508,118 @@ function safeBulkError(error: unknown, labels: AllTaskLabels) {
   return labels.bulkActionFailed;
 }
 
+function safeHierarchyError(error: unknown, labels: AllTaskLabels) {
+  const status =
+    typeof error === 'object' && error && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  const message = error instanceof Error ? error.message : '';
+  if (status === 401 || status === 403) return labels.permissionDenied;
+  if (status === 404) return labels.taskNotFound;
+  if (status === 409 && /cycle/i.test(message)) return labels.hierarchyCycleNotAllowed;
+  if (status === 409 && /terminal/i.test(message)) return labels.terminalParentRestriction;
+  if (status === 409) return labels.hierarchyConflict;
+  if (status === 400 || status === 422) return labels.bulkActionInvalid;
+  if (error instanceof TypeError) return labels.networkError;
+  return labels.taskLoadFailed;
+}
+
+function safeMoveError(error: unknown, labels: AllTaskLabels) {
+  const status =
+    typeof error === 'object' && error && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  if (status === 404) return labels.parentTaskUnavailable;
+  return safeHierarchyError(error, labels);
+}
+
+function safeRelationshipError(error: unknown, labels: AllTaskLabels) {
+  const status =
+    typeof error === 'object' && error && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  const message = error instanceof Error ? error.message : '';
+  if (status === 401 || status === 403) return labels.permissionDenied;
+  if (status === 404) return labels.relationshipTaskUnavailable;
+  if (status === 409 && /cycle/i.test(message)) return labels.dependencyCycleNotAllowed;
+  if (status === 409 && /terminal|non-terminal/i.test(message))
+    return labels.terminalBlockerRestriction;
+  if (status === 409 || /serializ|concurrent/i.test(message)) return labels.relationshipRetry;
+  if (status === 400 || status === 422) return labels.relationshipUpdateFailed;
+  if (error instanceof TypeError) return labels.networkError;
+  if (error instanceof Error && error.message) return error.message;
+  return labels.relationshipUpdateFailed;
+}
+
+function relationshipSuccessMessage(
+  labels: AllTaskLabels,
+  result: TaskRelationshipResult,
+  changedLabel: string,
+) {
+  if (result.changedCount === 0) {
+    return labels.relationshipNoop;
+  }
+  const base = changedLabel.replace('{count}', String(result.changedCount));
+  return result.unchangedCount > 0
+    ? `${base} ${labels.alreadyLinked.replace('{count}', String(result.unchangedCount))}`
+    : base;
+}
+
+async function invalidateDependencyQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  workspaceId: string | null,
+  taskId: string,
+  counterpartTaskId?: string,
+) {
+  if (!workspaceId) return;
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: taskKeys.blockedByBase(workspaceId, taskId) }),
+    queryClient.invalidateQueries({ queryKey: taskKeys.blocksBase(workspaceId, taskId) }),
+    queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, taskId) }),
+    counterpartTaskId
+      ? queryClient.invalidateQueries({
+          queryKey: taskKeys.blocksBase(workspaceId, counterpartTaskId),
+        })
+      : Promise.resolve(),
+    counterpartTaskId
+      ? queryClient.invalidateQueries({
+          queryKey: taskKeys.detail(workspaceId, counterpartTaskId),
+        })
+      : Promise.resolve(),
+  ]);
+}
+
+function invalidateDependencyCounterpartQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  workspaceId: string | null,
+  counterpartTaskId: string,
+) {
+  if (!workspaceId) return Promise.resolve();
+  return Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: taskKeys.blocksBase(workspaceId, counterpartTaskId),
+    }),
+    queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, counterpartTaskId) }),
+  ]);
+}
+
+async function invalidateRelatedQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  workspaceId: string | null,
+  taskId: string,
+  counterpartTaskIds: string[],
+) {
+  if (!workspaceId) return;
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: taskKeys.relatedBase(workspaceId, taskId) }),
+    queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, taskId) }),
+    ...counterpartTaskIds.flatMap((id) => [
+      queryClient.invalidateQueries({ queryKey: taskKeys.relatedBase(workspaceId, id) }),
+      queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, id) }),
+    ]),
+  ]);
+}
+
 function selectedCountLabel(count: number, labels: AllTaskLabels) {
   return count === 1
     ? labels.oneTaskSelected
@@ -1955,6 +3683,30 @@ function isDatasetPatch(patch: Record<string, string | number | null>) {
         'pageSize',
       ].includes(key),
   );
+}
+
+function toggleId(ids: string[], id: string) {
+  return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
+}
+
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids.filter(Boolean))];
+}
+
+function defaultSubtaskForm(): SubtaskFormState {
+  return {
+    title: '',
+    assigneeMembershipId: '',
+    dueDate: '',
+    dueTime: '',
+    description: '',
+    priority: 'MEDIUM',
+    statusDefinitionId: '',
+    departmentId: '',
+    additionalAssigneeMembershipIds: [],
+    followerMembershipIds: [],
+    projectIds: [],
+  };
 }
 
 function activeFilters(state: TaskUrlState) {
@@ -2106,6 +3858,25 @@ type BulkResultLike = {
   unchangedCount: number;
   relationChangedCount?: number;
 };
+type PageResultLike<T> = {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+type SubtaskFormState = {
+  title: string;
+  assigneeMembershipId: string;
+  dueDate: string;
+  dueTime: string;
+  description: string;
+  priority: TaskPriority;
+  statusDefinitionId: string;
+  departmentId: string;
+  additionalAssigneeMembershipIds: string[];
+  followerMembershipIds: string[];
+  projectIds: string[];
+};
 
 type AllTaskLabels = ReturnType<typeof allTaskLabels>;
 
@@ -2144,6 +3915,86 @@ function allTaskLabels(
     'task',
     'taskDetails',
     'taskDetailsDescription',
+    'overview',
+    'subtasks',
+    'dependencies',
+    'related',
+    'taskRelationshipTabs',
+    'dependenciesDeferred',
+    'relatedDeferred',
+    'blockedBy',
+    'blockedByDescription',
+    'blocks',
+    'blocksDescription',
+    'addBlocker',
+    'addBlockerDescription',
+    'removeBlocker',
+    'noActiveBlockers',
+    'notBlockingTasks',
+    'blockersAdded',
+    'blockerRemoved',
+    'relatedTasks',
+    'relatedDescription',
+    'addRelatedTask',
+    'addRelatedDescription',
+    'removeRelatedTask',
+    'noRelatedTasks',
+    'relatedAdded',
+    'relatedRemoved',
+    'selectedTasks',
+    'removeSelectedTask',
+    'selectRelationshipTasks',
+    'relationshipSelectionLimit',
+    'terminalTask',
+    'activeTask',
+    'loadingRelationships',
+    'dependencyCycleNotAllowed',
+    'terminalBlockerRestriction',
+    'relationshipTaskUnavailable',
+    'relationshipRetry',
+    'relationshipUpdateFailed',
+    'relationshipNoop',
+    'alreadyLinked',
+    'applying',
+    'createSubtask',
+    'subtaskCreated',
+    'noSubtasks',
+    'noSubtasksDescription',
+    'expand',
+    'collapse',
+    'viewTask',
+    'actions',
+    'parentTask',
+    'viewParent',
+    'viewSubtasks',
+    'directSubtasks',
+    'directChildrenOnly',
+    'moveTask',
+    'changeParent',
+    'currentParent',
+    'newParent',
+    'moveToRoot',
+    'rootTask',
+    'move',
+    'taskMoved',
+    'selectParent',
+    'unchangedParent',
+    'retry',
+    'parentTaskUnavailable',
+    'hierarchyCycleNotAllowed',
+    'hierarchyCycleDetected',
+    'terminalParentRestriction',
+    'hierarchyConflict',
+    'titleLabel',
+    'additionalAssignees',
+    'dueTime',
+    'addMoreDetails',
+    'creating',
+    'backendDefault',
+    'none',
+    'noProjects',
+    'titleRequired',
+    'dueDateRequired',
     'descriptionField',
     'creator',
     'followers',

@@ -5,14 +5,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LanguageProvider, useLanguage } from '../contexts/language-provider';
 import { ThemeProvider } from '../contexts/theme-provider';
 import { WorkspaceTasksPage } from '../components/workspace/tasks/WorkspaceTasksPage';
+import { toggleRelationshipSelection } from '../components/workspace/tasks/AllTasksBrowser';
 import { apiClient } from '../services/api';
-import { taskDueAtFromLocalDate } from '../services/workspace-tasks';
+import type { StatusEntityType, WorkspaceStatusDefinition } from '../services/workspace-statuses';
+import { taskDueAtFromLocalDate, type WorkspaceTask } from '../services/workspace-tasks';
 import { useSessionStore } from '../stores/session';
 
 const listRecentWorkspaceTasks = vi.fn();
 const listWorkspaceTasks = vi.fn();
 const getWorkspaceTask = vi.fn();
+const listWorkspaceSubtasks = vi.fn();
+const listWorkspaceTaskBlockedBy = vi.fn();
+const listWorkspaceTaskBlocks = vi.fn();
+const listWorkspaceTaskRelated = vi.fn();
+const addWorkspaceTaskBlockedBy = vi.fn();
+const removeWorkspaceTaskBlockedBy = vi.fn();
+const addWorkspaceTaskRelated = vi.fn();
+const removeWorkspaceTaskRelated = vi.fn();
 const createTaskMock = vi.fn();
+const createSubtaskMock = vi.fn();
+const updateTaskParentMock = vi.fn();
 const bulkUpdateTaskStatus = vi.fn();
 const bulkUpdateTaskPriority = vi.fn();
 const bulkAddTaskAssignees = vi.fn();
@@ -70,7 +82,17 @@ vi.mock('../services/workspace-tasks', async () => {
     listRecentWorkspaceTasks: (...args: unknown[]) => listRecentWorkspaceTasks(...args),
     listWorkspaceTasks: (...args: unknown[]) => listWorkspaceTasks(...args),
     getWorkspaceTask: (...args: unknown[]) => getWorkspaceTask(...args),
+    listWorkspaceSubtasks: (...args: unknown[]) => listWorkspaceSubtasks(...args),
+    listWorkspaceTaskBlockedBy: (...args: unknown[]) => listWorkspaceTaskBlockedBy(...args),
+    listWorkspaceTaskBlocks: (...args: unknown[]) => listWorkspaceTaskBlocks(...args),
+    listWorkspaceTaskRelated: (...args: unknown[]) => listWorkspaceTaskRelated(...args),
+    addWorkspaceTaskBlockedBy: (...args: unknown[]) => addWorkspaceTaskBlockedBy(...args),
+    removeWorkspaceTaskBlockedBy: (...args: unknown[]) => removeWorkspaceTaskBlockedBy(...args),
+    addWorkspaceTaskRelated: (...args: unknown[]) => addWorkspaceTaskRelated(...args),
+    removeWorkspaceTaskRelated: (...args: unknown[]) => removeWorkspaceTaskRelated(...args),
     createWorkspaceTask: (...args: unknown[]) => createTaskMock(...args),
+    createWorkspaceSubtask: (...args: unknown[]) => createSubtaskMock(...args),
+    updateWorkspaceTaskParent: (...args: unknown[]) => updateTaskParentMock(...args),
     bulkUpdateTaskStatus: (...args: unknown[]) => bulkUpdateTaskStatus(...args),
     bulkUpdateTaskPriority: (...args: unknown[]) => bulkUpdateTaskPriority(...args),
     bulkAddTaskAssignees: (...args: unknown[]) => bulkAddTaskAssignees(...args),
@@ -100,8 +122,17 @@ describe('Phase 7.2 task creation experience', () => {
       total: 0,
     });
     getWorkspaceTask.mockResolvedValue(
-      taskFixture({ id: 'task-alpha', title: 'Alpha launch task' }),
+      taskFixture({
+        id: 'task-alpha',
+        title: 'Alpha launch task',
+        directSubtaskCount: 0,
+        parent: null,
+      }),
     );
+    listWorkspaceSubtasks.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskBlockedBy.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskBlocks.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskRelated.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
     listWorkspaceUsers.mockImplementation(({ workspaceId }: { workspaceId: string }) =>
       Promise.resolve({
         items:
@@ -119,7 +150,7 @@ describe('Phase 7.2 task creation experience', () => {
       pageSize: 100,
       total: 1,
     });
-    listWorkspaceStatuses.mockImplementation((_workspaceId: string, entityType: string) =>
+    listWorkspaceStatuses.mockImplementation((_workspaceId: string, entityType: StatusEntityType) =>
       Promise.resolve([
         status('status-task', entityType, 'To Do'),
         status('status-review', entityType, 'Review', false),
@@ -132,6 +163,30 @@ describe('Phase 7.2 task creation experience', () => {
       total: 1,
     });
     createTaskMock.mockResolvedValue({ id: 'task-1', title: 'Draft brief' });
+    createSubtaskMock.mockResolvedValue(taskFixture({ id: 'task-child', title: 'Child task' }));
+    addWorkspaceTaskBlockedBy.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    removeWorkspaceTaskBlockedBy.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    addWorkspaceTaskRelated.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    removeWorkspaceTaskRelated.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    updateTaskParentMock.mockImplementation((_workspaceId: string, taskId: string, parentTaskId) =>
+      Promise.resolve(taskFixture({ id: taskId, parentTaskId })),
+    );
   });
 
   it('renders the Tasks route foundation and keeps quick create simple initially', async () => {
@@ -1255,6 +1310,50 @@ describe('Phase 7.2 task service payload construction', () => {
       'detail',
       'task-1',
     ]);
+    expect(
+      actual.taskKeys.subtasks('workspace-1', 'task-parent', { page: 2, pageSize: 5 }),
+    ).toEqual([
+      'workspace',
+      'workspace-1',
+      'tasks',
+      'detail',
+      'task-parent',
+      'subtasks',
+      { page: 2, pageSize: 5 },
+    ]);
+    expect(
+      actual.taskKeys.blockedBy('workspace-1', 'task-parent', { page: 2, pageSize: 10 }),
+    ).toEqual([
+      'workspace',
+      'workspace-1',
+      'tasks',
+      'detail',
+      'task-parent',
+      'blocked-by',
+      { page: 2, pageSize: 10 },
+    ]);
+    expect(actual.taskKeys.blocks('workspace-1', 'task-parent', { page: 3, pageSize: 10 })).toEqual(
+      [
+        'workspace',
+        'workspace-1',
+        'tasks',
+        'detail',
+        'task-parent',
+        'blocks',
+        { page: 3, pageSize: 10 },
+      ],
+    );
+    expect(
+      actual.taskKeys.related('workspace-1', 'task-parent', { page: 4, pageSize: 10 }),
+    ).toEqual([
+      'workspace',
+      'workspace-1',
+      'tasks',
+      'detail',
+      'task-parent',
+      'related',
+      { page: 4, pageSize: 10 },
+    ]);
 
     await actual.listWorkspaceTasks('workspace-1', normalized);
     expect(requestSpy).toHaveBeenCalledWith(
@@ -1263,6 +1362,95 @@ describe('Phase 7.2 task service payload construction', () => {
     const [requestUrl] = requestSpy.mock.calls[0] ?? [];
     expect(requestUrl).toContain('search=billing');
     expect(requestUrl).toContain('pageSize=25');
+    requestSpy.mockRestore();
+  });
+
+  it('calls dependency and related task APIs with scoped pagination and bounded write payloads', async () => {
+    const requestSpy = vi.spyOn(apiClient, 'request').mockResolvedValue({
+      data: { items: [], page: 2, pageSize: 10, total: 0 },
+      meta: {},
+    } as never);
+    const actual = await vi.importActual<typeof import('../services/workspace-tasks')>(
+      '../services/workspace-tasks',
+    );
+
+    await actual.listWorkspaceTaskBlockedBy('workspace-1', 'task-current', {
+      page: 2,
+      pageSize: 10,
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/blocked-by?page=2&pageSize=10',
+    );
+    await actual.listWorkspaceTaskBlocks('workspace-1', 'task-current', { page: 3, pageSize: 10 });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/blocks?page=3&pageSize=10',
+    );
+    await actual.listWorkspaceTaskRelated('workspace-1', 'task-current', {
+      page: 4,
+      pageSize: 10,
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/related?page=4&pageSize=10',
+    );
+    await actual.addWorkspaceTaskBlockedBy('workspace-1', 'task-current', [
+      'task-a',
+      'task-a',
+      'task-b',
+    ]);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/blocked-by',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ taskIds: ['task-a', 'task-b'] }),
+      }),
+    );
+    await actual.removeWorkspaceTaskBlockedBy('workspace-1', 'task-current', ['task-a']);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/blocked-by/remove',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    await actual.addWorkspaceTaskRelated('workspace-1', 'task-current', ['task-c']);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/related',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    await actual.removeWorkspaceTaskRelated('workspace-1', 'task-current', ['task-c']);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/related/remove',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    requestSpy.mockRestore();
+  });
+
+  it('calls direct-subtask APIs with workspace, parent task, and pagination identity', async () => {
+    const requestSpy = vi.spyOn(apiClient, 'request').mockResolvedValue({
+      data: { items: [], page: 2, pageSize: 5, total: 0 },
+      meta: {},
+    } as never);
+    const actual = await vi.importActual<typeof import('../services/workspace-tasks')>(
+      '../services/workspace-tasks',
+    );
+
+    await actual.listWorkspaceSubtasks('workspace-1', 'task-parent', { page: 2, pageSize: 5 });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-parent/subtasks?page=2&pageSize=5',
+    );
+
+    await actual.createWorkspaceSubtask('workspace-1', 'task-parent', {
+      title: 'Child',
+      dueAt: '2026-10-10T00:00:00.000Z',
+      assigneeMembershipIds: ['membership-a'],
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-parent/subtasks',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    await actual.updateWorkspaceTaskParent('workspace-1', 'task-child', null);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-child/parent',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ parentTaskId: null }) }),
+    );
     requestSpy.mockRestore();
   });
 });
@@ -1536,6 +1724,814 @@ describe('Phase 7.3C2 task bulk selection UX', () => {
   });
 });
 
+describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
+  const rootTask = taskFixture({
+    id: 'task-root',
+    title: 'Root task',
+    directSubtaskCount: 1,
+    parent: null,
+  });
+  const childTask = taskFixture({
+    id: 'task-child',
+    title: 'Child task',
+    parentTaskId: 'task-root',
+    parent: { id: 'task-root', title: 'Root task', status: status('status-task', 'TASK', 'To Do') },
+    directSubtaskCount: 1,
+  });
+  const grandchildTask = taskFixture({
+    id: 'task-grandchild',
+    title: 'Grandchild task',
+    parentTaskId: 'task-child',
+    parent: {
+      id: 'task-child',
+      title: 'Child task',
+      status: status('status-task', 'TASK', 'To Do'),
+    },
+    directSubtaskCount: 0,
+  });
+  const otherParent = taskFixture({
+    id: 'task-other-parent',
+    title: 'Other parent',
+    directSubtaskCount: 0,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentSearchParams = new URLSearchParams();
+    localStorage.clear();
+    useSessionStore.setState({
+      selectedAgencyId: 'agency-1',
+      selectedWorkspaceId: 'workspace-1',
+      hydrated: true,
+      accessToken: 'token',
+      user: { id: 'admin-1', email: 'admin@zeaplay.test' },
+    });
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({ items: [otherParent], page: 1, pageSize: 10, total: 1 });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+    getWorkspaceTask.mockImplementation((_workspaceId: string, taskId: string) =>
+      Promise.resolve(
+        taskId === 'task-child'
+          ? childTask
+          : taskId === 'task-grandchild'
+            ? grandchildTask
+            : rootTask,
+      ),
+    );
+    listWorkspaceSubtasks.mockImplementation((_workspaceId: string, taskId: string) =>
+      Promise.resolve(
+        taskId === 'task-root'
+          ? { items: [childTask], page: 1, pageSize: 10, total: 1 }
+          : taskId === 'task-child'
+            ? { items: [grandchildTask], page: 1, pageSize: 5, total: 1 }
+            : { items: [], page: 1, pageSize: 5, total: 0 },
+      ),
+    );
+    listWorkspaceTaskBlockedBy.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskBlocks.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskRelated.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceUsers.mockResolvedValue({
+      items: [user('membership-a', 'Anya')],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    listDepartments.mockResolvedValue({ items: [], page: 1, pageSize: 100, total: 0 });
+    listWorkspaceStatuses.mockResolvedValue([status('status-task', 'TASK', 'To Do')]);
+    listWorkspaceProjects.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    createSubtaskMock.mockResolvedValue(
+      taskFixture({ id: 'task-created-child', title: 'Created child' }),
+    );
+    addWorkspaceTaskBlockedBy.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    removeWorkspaceTaskBlockedBy.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    addWorkspaceTaskRelated.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    removeWorkspaceTaskRelated.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    updateTaskParentMock.mockImplementation((_workspaceId: string, taskId: string, parentTaskId) =>
+      Promise.resolve(taskFixture({ id: taskId, parentTaskId })),
+    );
+  });
+
+  it('shows task detail tabs and lazy-loads child pages only when Subtasks is opened or expanded', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: 'Subtasks' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Dependencies' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Related' })).toBeInTheDocument();
+    expect(listWorkspaceSubtasks).not.toHaveBeenCalled();
+    expect(listWorkspaceTaskBlockedBy).not.toHaveBeenCalled();
+    expect(listWorkspaceTaskBlocks).not.toHaveBeenCalled();
+    expect(listWorkspaceTaskRelated).not.toHaveBeenCalled();
+
+    await clickTab('Dependencies');
+    expect(await screen.findByText('Blocked By')).toBeInTheDocument();
+    expect(screen.getByText('Blocks')).toBeInTheDocument();
+    expect(listWorkspaceTaskBlockedBy).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 1, pageSize: 10 }),
+    );
+    expect(listWorkspaceTaskBlocks).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 1, pageSize: 10 }),
+    );
+    expect(listWorkspaceTaskRelated).not.toHaveBeenCalled();
+    await clickTab('Related');
+    expect(await screen.findByText('Related Tasks')).toBeInTheDocument();
+    expect(listWorkspaceTaskRelated).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 1, pageSize: 10 }),
+    );
+    expect(listWorkspaceSubtasks).not.toHaveBeenCalled();
+
+    await clickTab('Subtasks');
+    expect(await screen.findByText('Child task')).toBeInTheDocument();
+    expect(listWorkspaceSubtasks).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 1, pageSize: 10 }),
+    );
+    expect(listWorkspaceSubtasks).not.toHaveBeenCalledWith(
+      'workspace-1',
+      'task-child',
+      expect.anything(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(await screen.findByText('Grandchild task')).toBeInTheDocument();
+    expect(listWorkspaceSubtasks).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-child',
+      expect.objectContaining({ page: 1, pageSize: 5 }),
+    );
+
+    fireEvent.click(screen.getByText('Child task'));
+    await waitFor(() => expect(getWorkspaceTask).toHaveBeenCalledWith('workspace-1', 'task-child'));
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'View Parent' }));
+    await waitFor(() => expect(getWorkspaceTask).toHaveBeenCalledWith('workspace-1', 'task-root'));
+    expect((await screen.findAllByText('Root task')).length).toBeGreaterThan(0);
+  });
+
+  it('keeps root and nested pagination bounded, isolated, and keyed by parent', async () => {
+    const rootPageOne = Array.from({ length: 10 }, (_, index) =>
+      taskFixture({
+        id: `task-root-child-${index + 1}`,
+        title: `Root child ${index + 1}`,
+        directSubtaskCount: index === 0 ? 6 : 0,
+      }),
+    );
+    const rootPageTwo = [
+      taskFixture({ id: 'task-root-child-11', title: 'Root child 11', directSubtaskCount: 0 }),
+      taskFixture({ id: 'task-root-child-12', title: 'Root child 12', directSubtaskCount: 0 }),
+    ];
+    const nestedPageOne = Array.from({ length: 5 }, (_, index) =>
+      taskFixture({
+        id: `task-nested-${index + 1}`,
+        title: `Nested child ${index + 1}`,
+        directSubtaskCount: 0,
+      }),
+    );
+    const nestedPageTwo = [
+      taskFixture({ id: 'task-nested-6', title: 'Nested child 6', directSubtaskCount: 0 }),
+    ];
+    listWorkspaceSubtasks.mockImplementation(
+      (_workspaceId: string, taskId: string, params: { page: number; pageSize: number }) => {
+        if (taskId === 'task-root') {
+          return Promise.resolve({
+            items: params.page === 2 ? rootPageTwo : rootPageOne,
+            page: params.page,
+            pageSize: params.pageSize,
+            total: 12,
+          });
+        }
+        if (taskId === 'task-root-child-1') {
+          return Promise.resolve({
+            items: params.page === 2 ? nestedPageTwo : nestedPageOne,
+            page: params.page,
+            pageSize: params.pageSize,
+            total: 6,
+          });
+        }
+        return Promise.resolve({
+          items: [],
+          page: params.page,
+          pageSize: params.pageSize,
+          total: 0,
+        });
+      },
+    );
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    expect(await screen.findByText('Root child 1')).toBeInTheDocument();
+    expect(screen.queryByText('Root child 11')).not.toBeInTheDocument();
+
+    fireEvent.click(firstEnabledButton(screen.getAllByRole('button', { name: 'Expand' })));
+    expect(await screen.findByText('Nested child 1')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0] as HTMLElement);
+    expect(await screen.findByText('Nested child 6')).toBeInTheDocument();
+    expect(listWorkspaceSubtasks).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root-child-1',
+      expect.objectContaining({ page: 2, pageSize: 5 }),
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next' }).at(-1) as HTMLElement);
+    expect(await screen.findByText('Root child 11')).toBeInTheDocument();
+    expect(listWorkspaceSubtasks).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 2, pageSize: 10 }),
+    );
+    expect(listWorkspaceSubtasks).not.toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root-child-2',
+      expect.anything(),
+    );
+  });
+
+  it('stops malformed repeated task paths without recursive network cascades', async () => {
+    const repeatedA = taskFixture({
+      id: 'task-a',
+      title: 'Deep A',
+      directSubtaskCount: 1,
+    });
+    const deepB = taskFixture({
+      id: 'task-b',
+      title: 'Deep B',
+      directSubtaskCount: 1,
+    });
+    listWorkspaceSubtasks.mockImplementation((_workspaceId: string, taskId: string) =>
+      Promise.resolve(
+        taskId === 'task-root'
+          ? { items: [repeatedA], page: 1, pageSize: 10, total: 1 }
+          : taskId === 'task-a'
+            ? { items: [deepB], page: 1, pageSize: 5, total: 1 }
+            : taskId === 'task-b'
+              ? { items: [repeatedA], page: 1, pageSize: 5, total: 1 }
+              : { items: [], page: 1, pageSize: 5, total: 0 },
+      ),
+    );
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand' }));
+    expect(await screen.findByText('Deep B')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expand' })[0] as HTMLElement);
+    expect(
+      await screen.findByText('This branch contains repeated task data and was stopped.'),
+    ).toBeInTheDocument();
+    const taskACalls = listWorkspaceSubtasks.mock.calls.filter((call) => call[1] === 'task-a');
+    expect(taskACalls).toHaveLength(1);
+  });
+
+  it('creates a subtask with quick fields, reveals advanced details, and refreshes parent children', async () => {
+    let resolveCreate: ((task: ReturnType<typeof taskFixture>) => void) | undefined;
+    createSubtaskMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    fireEvent.click(await screen.findByRole('button', { name: 'Create Subtask' }));
+
+    const createDialog = await dialogByTitle('Create Subtask');
+    expect(within(createDialog).getByLabelText('Title *')).toBeInTheDocument();
+    expect(within(createDialog).getByLabelText('Assignee')).toBeInTheDocument();
+    expect(within(createDialog).getByLabelText('Due Date *')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Description')).not.toBeInTheDocument();
+
+    fireEvent.click(within(createDialog).getByRole('button', { name: 'Add more details' }));
+    expect(within(createDialog).getByLabelText('Description')).toBeInTheDocument();
+    fireEvent.change(within(createDialog).getByLabelText('Title *'), {
+      target: { value: 'Created child' },
+    });
+    const [assigneeOption] = await within(createDialog).findAllByLabelText('Anya');
+    if (!assigneeOption) throw new Error('Expected Anya assignee option');
+    fireEvent.click(assigneeOption);
+    fireEvent.change(within(createDialog).getByLabelText('Due Date *'), {
+      target: { value: '2026-10-10' },
+    });
+    const submitButton = within(createDialog).getByRole('button', { name: 'Create Subtask' });
+    fireEvent.click(submitButton);
+    fireEvent.click(submitButton);
+    resolveCreate?.(taskFixture({ id: 'task-created-child', title: 'Created child' }));
+
+    await waitFor(() =>
+      expect(createSubtaskMock).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        expect.objectContaining({
+          title: 'Created child',
+          assigneeMembershipIds: ['membership-a'],
+          dueAt: taskDueAtFromLocalDate('2026-10-10'),
+        }),
+      ),
+    );
+    expect(createSubtaskMock).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith('Subtask created');
+  });
+
+  it('preserves subtask drafts and shows safe create errors for terminal parent rejection', async () => {
+    createSubtaskMock.mockRejectedValueOnce(
+      Object.assign(new Error('Terminal parent tasks cannot contain active subtasks.'), {
+        status: 409,
+      }),
+    );
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    fireEvent.click(await screen.findByRole('button', { name: 'Create Subtask' }));
+    const createDialog = await dialogByTitle('Create Subtask');
+    fireEvent.change(within(createDialog).getByLabelText('Title *'), {
+      target: { value: 'Blocked child' },
+    });
+    const [assigneeOption] = await within(createDialog).findAllByLabelText('Anya');
+    if (!assigneeOption) throw new Error('Expected Anya assignee option');
+    fireEvent.click(assigneeOption);
+    fireEvent.change(within(createDialog).getByLabelText('Due Date *'), {
+      target: { value: '2026-10-10' },
+    });
+    fireEvent.click(within(createDialog).getByRole('button', { name: 'Create Subtask' }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'Terminal parent tasks cannot contain active non-terminal subtasks.',
+      ),
+    );
+    expect(within(createDialog).getByDisplayValue('Blocked child')).toBeInTheDocument();
+    expect(toastSuccess).not.toHaveBeenCalledWith('Subtask created');
+  });
+
+  it('moves a child to another parent, detaches to root, and surfaces hierarchy errors safely', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    expect(await screen.findByText('Child task')).toBeInTheDocument();
+
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({
+          items: [rootTask, otherParent],
+          page: 1,
+          pageSize: 10,
+          total: 2,
+        });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Move / Change Parent' }));
+    fireEvent.change(screen.getByLabelText('New Parent'), { target: { value: 'Other' } });
+    await waitFor(() => expect(screen.getAllByText('Root task').length).toBeGreaterThan(1));
+    const moveDialog = await dialogByTitle('Move Task');
+    const rootCandidate = within(moveDialog)
+      .getAllByText('Root task')
+      .map((node) => node.closest('button'))
+      .find(Boolean);
+    if (!rootCandidate) throw new Error('Expected current parent candidate');
+    expect(rootCandidate).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move' })).toBeDisabled();
+    expect(await screen.findByText('Other parent')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Other parent'));
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    await waitFor(() =>
+      expect(updateTaskParentMock).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-child',
+        'task-other-parent',
+      ),
+    );
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: 'Move / Change Parent' }))[0] as HTMLElement,
+    );
+    fireEvent.click(screen.getByText('Move to Root'));
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    await waitFor(() =>
+      expect(updateTaskParentMock).toHaveBeenCalledWith('workspace-1', 'task-child', null),
+    );
+
+    updateTaskParentMock.mockRejectedValueOnce(
+      Object.assign(new Error('Task hierarchy cycles are not allowed.'), { status: 409 }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Move / Change Parent' }));
+    fireEvent.click(screen.getByText('Move to Root'));
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Hierarchy cycle not allowed.'));
+
+    updateTaskParentMock.mockRejectedValueOnce(
+      Object.assign(new Error('Selected parent was deleted.'), { status: 404 }),
+    );
+    fireEvent.change(screen.getByLabelText('New Parent'), { target: { value: 'Other' } });
+    fireEvent.click(await screen.findByText('Other parent'));
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'Selected parent is no longer available. Refresh and try again.',
+      ),
+    );
+  });
+
+  it('clears relationship UI state on workspace switch', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    expect(await screen.findByText('Child task')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Move / Change Parent' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+    await waitFor(() => expect(screen.queryByText('Child task')).not.toBeInTheDocument());
+    expect(screen.queryByText('Move Task')).not.toBeInTheDocument();
+  });
+
+  it('clears open relationship state on session loss without persisting hierarchy state', async () => {
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Subtasks');
+    expect(await screen.findByText('Child task')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(await screen.findByText('Grandchild task')).toBeInTheDocument();
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: 'Move / Change Parent' }))[0] as HTMLElement,
+    );
+    expect(screen.getByText('Move Task')).toBeInTheDocument();
+
+    act(() => {
+      useSessionStore.setState({ accessToken: null });
+    });
+
+    await waitFor(() => expect(screen.queryByText('Move Task')).not.toBeInTheDocument());
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(localStorage.getItem('task-expanded-ids')).toBeNull();
+  });
+
+  it('lazy-loads dependencies with independent pagination and opens blocker detail without row detail fetches', async () => {
+    const blockerOne = taskFixture({
+      id: 'task-blocker-1',
+      title: 'Legal approval',
+      status: status('status-review', 'TASK', 'Review', false),
+      priority: 'URGENT',
+      assignees: [rootTask.assignees[0]!],
+    });
+    const blockerTwo = taskFixture({
+      id: 'task-blocker-2',
+      title: 'Final signoff',
+      status: status('status-done', 'TASK', 'Completed', false, true),
+      priority: 'LOW',
+    });
+    const blockedTask = taskFixture({
+      id: 'task-blocked-1',
+      title: 'Publish campaign',
+      priority: 'MEDIUM',
+    });
+    listWorkspaceTaskBlockedBy.mockImplementation(
+      (_workspaceId: string, _taskId: string, params: { page: number; pageSize: number }) =>
+        Promise.resolve({
+          items: params.page === 2 ? [blockerTwo] : [blockerOne],
+          page: params.page,
+          pageSize: params.pageSize,
+          total: 11,
+        }),
+    );
+    listWorkspaceTaskBlocks.mockImplementation(
+      (_workspaceId: string, _taskId: string, params: { page: number; pageSize: number }) =>
+        Promise.resolve({
+          items: params.page === 2 ? [] : [blockedTask],
+          page: params.page,
+          pageSize: params.pageSize,
+          total: 1,
+        }),
+    );
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    expect(listWorkspaceTaskBlockedBy).not.toHaveBeenCalled();
+    expect(listWorkspaceTaskBlocks).not.toHaveBeenCalled();
+    await clickTab('Dependencies');
+
+    expect(await screen.findByText('Legal approval')).toBeInTheDocument();
+    expect(screen.getByText('Publish campaign')).toBeInTheDocument();
+    expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
+    expect(getWorkspaceTask).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next' })[0] as HTMLElement);
+    expect(await screen.findByText('Final signoff')).toBeInTheDocument();
+    expect(listWorkspaceTaskBlockedBy).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 2, pageSize: 10 }),
+    );
+    expect(listWorkspaceTaskBlocks).not.toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 2 }),
+    );
+    fireEvent.click(screen.getByText('Final signoff'));
+    await waitFor(() =>
+      expect(getWorkspaceTask).toHaveBeenCalledWith('workspace-1', 'task-blocker-2'),
+    );
+  });
+
+  it('adds and removes blockers with bounded search, one request, counts, and safe failures', async () => {
+    let resolveAdd:
+      | ((value: { requestedCount: number; changedCount: number; unchangedCount: number }) => void)
+      | undefined;
+    addWorkspaceTaskBlockedBy.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveAdd = resolve;
+      }),
+    );
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({
+          items: [
+            taskFixture({ id: 'task-candidate-1', title: 'Design dependency' }),
+            taskFixture({ id: 'task-candidate-2', title: 'Engineering dependency' }),
+            rootTask,
+          ],
+          page: 1,
+          pageSize: 10,
+          total: 3,
+        });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+    listWorkspaceTaskBlockedBy.mockResolvedValue({
+      items: [taskFixture({ id: 'task-candidate-1', title: 'Design dependency' })],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Dependencies');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Blocker' }));
+    const dialog = await dialogByTitle('Add Blocker');
+    fireEvent.change(within(dialog).getByLabelText('Search tasks'), { target: { value: 'dep' } });
+    fireEvent.click(await within(dialog).findByRole('button', { name: /Design dependency/ }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /Engineering dependency/ }));
+    const submit = within(dialog).getByRole('button', { name: 'Add Blocker' });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    resolveAdd?.({ requestedCount: 2, changedCount: 1, unchangedCount: 1 });
+
+    await waitFor(() =>
+      expect(addWorkspaceTaskBlockedBy).toHaveBeenCalledWith('workspace-1', 'task-root', [
+        'task-candidate-1',
+        'task-candidate-2',
+      ]),
+    );
+    expect(addWorkspaceTaskBlockedBy).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith('1 blockers added. 1 already linked.'),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Add Blocker' })).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Remove Blocker:/ }));
+    await waitFor(() =>
+      expect(removeWorkspaceTaskBlockedBy).toHaveBeenCalledWith('workspace-1', 'task-root', [
+        'task-candidate-1',
+      ]),
+    );
+
+    addWorkspaceTaskBlockedBy.mockRejectedValueOnce(
+      Object.assign(new Error('Dependency cycle detected.'), { status: 409 }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Blocker' }));
+    const failingDialog = await dialogByTitle('Add Blocker');
+    fireEvent.click(
+      await within(failingDialog).findByRole('button', { name: /Design dependency/ }),
+    );
+    fireEvent.click(within(failingDialog).getByRole('button', { name: 'Add Blocker' }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('This dependency would create a cycle.'),
+    );
+    expect(within(failingDialog).getAllByText('Design dependency').length).toBeGreaterThan(0);
+  });
+
+  it('manages related tasks symmetrically without dependency language', async () => {
+    const relatedTask = taskFixture({ id: 'task-related-1', title: 'Reference launch task' });
+    listWorkspaceTaskRelated.mockResolvedValue({
+      items: [relatedTask],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({ items: [relatedTask, rootTask], page: 1, pageSize: 10, total: 2 });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+    addWorkspaceTaskRelated.mockResolvedValueOnce({
+      requestedCount: 1,
+      changedCount: 0,
+      unchangedCount: 1,
+    });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Related');
+    expect(await screen.findByText('Related Tasks')).toBeInTheDocument();
+    expect(screen.getByText('Reference launch task')).toBeInTheDocument();
+    expect(screen.queryByText('Must complete first')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Related Task' }));
+    const dialog = await dialogByTitle('Add Related Task');
+    fireEvent.change(within(dialog).getByLabelText('Search tasks'), { target: { value: 'ref' } });
+    fireEvent.click(await within(dialog).findByRole('button', { name: /Reference launch task/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add Related Task' }));
+    await waitFor(() =>
+      expect(addWorkspaceTaskRelated).toHaveBeenCalledWith('workspace-1', 'task-root', [
+        'task-related-1',
+      ]),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith('No new relationships were added.');
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Add Related Task' })).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /Remove Related Task:/ }));
+    await waitFor(() =>
+      expect(removeWorkspaceTaskRelated).toHaveBeenCalledWith('workspace-1', 'task-root', [
+        'task-related-1',
+      ]),
+    );
+    fireEvent.click(screen.getByText('Reference launch task'));
+    await waitFor(() =>
+      expect(getWorkspaceTask).toHaveBeenCalledWith('workspace-1', 'task-related-1'),
+    );
+  });
+
+  it('clears dependency and related dialogs on workspace switch', async () => {
+    const candidate = taskFixture({ id: 'task-candidate-1', title: 'Candidate task' });
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({ items: [candidate], page: 1, pageSize: 10, total: 1 });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Dependencies');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Blocker' }));
+    expect(await dialogByTitle('Add Blocker')).toBeInTheDocument();
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+    await waitFor(() => expect(screen.queryByText('Candidate task')).not.toBeInTheDocument());
+    expect(addWorkspaceTaskBlockedBy).not.toHaveBeenCalled();
+
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-1' });
+    });
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Related');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Related Task' }));
+    expect(await dialogByTitle('Add Related Task')).toBeInTheDocument();
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+    await waitFor(() => expect(screen.queryByText('Candidate task')).not.toBeInTheDocument());
+    expect(addWorkspaceTaskRelated).not.toHaveBeenCalled();
+  });
+
+  it('keeps selected relationship chips across search changes', async () => {
+    const candidates = Array.from({ length: 2 }, (_, index) =>
+      taskFixture({
+        id: `task-candidate-${index + 1}`,
+        title: `Candidate ${index + 1}`,
+      }),
+    );
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({
+          items: candidates,
+          page: 1,
+          pageSize: 10,
+          total: 2,
+        });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Dependencies');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Blocker' }));
+    const dialog = await dialogByTitle('Add Blocker');
+    fireEvent.change(within(dialog).getByLabelText('Search tasks'), {
+      target: { value: 'first' },
+    });
+    fireEvent.click(await within(dialog).findByRole('button', { name: /^Candidate 1\b/ }));
+    fireEvent.change(within(dialog).getByLabelText('Search tasks'), {
+      target: { value: 'second' },
+    });
+    await waitFor(() =>
+      expect(within(dialog).getAllByText('Candidate 1').length).toBeGreaterThan(0),
+    );
+    expect(
+      within(dialog).getByRole('button', { name: 'Remove selected task: Candidate 1' }),
+    ).toBeInTheDocument();
+  });
+
+  it('caps relationship selection at 100 tasks and still allows deselection', () => {
+    const selected = Array.from({ length: 100 }, (_, index) =>
+      taskFixture({
+        id: `task-candidate-${index + 1}`,
+        title: `Candidate ${index + 1}`,
+      }),
+    );
+    const capped = toggleRelationshipSelection(
+      selected,
+      taskFixture({ id: 'task-candidate-101', title: 'Candidate 101' }),
+    );
+    expect(capped).toHaveLength(100);
+    expect(capped.some((item) => item.id === 'task-candidate-101')).toBe(false);
+
+    const reduced = toggleRelationshipSelection(selected, selected[0]!);
+    expect(reduced).toHaveLength(99);
+    expect(reduced.some((item) => item.id === 'task-candidate-1')).toBe(false);
+  });
+
+  it('maps terminal, stale candidate, and concurrent relationship failures safely', async () => {
+    const candidate = taskFixture({ id: 'task-candidate-1', title: 'Candidate task' });
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      if ('search' in (params as Record<string, unknown>)) {
+        return Promise.resolve({ items: [candidate], page: 1, pageSize: 10, total: 1 });
+      }
+      return Promise.resolve({ items: [rootTask], page: 1, pageSize: 20, total: 1 });
+    });
+    addWorkspaceTaskBlockedBy
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Terminal tasks cannot accept active non-terminal blockers.'), {
+          status: 409,
+        }),
+      )
+      .mockRejectedValueOnce(Object.assign(new Error('Task not found.'), { status: 404 }))
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Serialization conflict while writing dependency.'), {
+          status: 409,
+        }),
+      );
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Dependencies');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Blocker' }));
+    const dialog = await dialogByTitle('Add Blocker');
+    fireEvent.click(await within(dialog).findByRole('button', { name: /Candidate task/ }));
+
+    for (const expected of [
+      'This task is already complete. Only completed blockers can be added.',
+      'Selected task is no longer available. Refresh and try again.',
+      'Task relationships changed at the same time. Please retry.',
+    ]) {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add Blocker' }));
+      await waitFor(() => expect(toastError).toHaveBeenCalledWith(expected));
+      expect(within(dialog).getAllByText('Candidate task').length).toBeGreaterThan(0);
+    }
+  });
+});
+
 async function fillQuickTask() {
   fireEvent.change(screen.getByLabelText('Title *'), { target: { value: 'Draft brief' } });
   await selectPerson('Anya');
@@ -1555,6 +2551,26 @@ async function selectProject(name: string) {
 async function selectSelectOption(label: string, option: string) {
   fireEvent.click(screen.getByRole('combobox', { name: label }));
   fireEvent.click(await screen.findByRole('option', { name: option }));
+}
+
+async function clickTab(name: string) {
+  const tab = await screen.findByRole('tab', { name });
+  fireEvent.pointerDown(tab);
+  fireEvent.mouseDown(tab);
+  fireEvent.click(tab);
+}
+
+async function dialogByTitle(title: string) {
+  const heading = await screen.findByRole('heading', { name: title });
+  const dialog = heading.closest('[role="dialog"]');
+  if (!dialog) throw new Error(`Dialog not found for ${title}`);
+  return dialog as HTMLElement;
+}
+
+function firstEnabledButton(buttons: HTMLElement[]) {
+  const button = buttons.find((item) => !(item as HTMLButtonElement).disabled);
+  if (!button) throw new Error('Expected enabled button');
+  return button;
 }
 
 async function firstByLabelText(label: string) {
@@ -1616,11 +2632,11 @@ function user(membershipId: string, name: string) {
 
 function status(
   id: string,
-  entityType: string,
+  entityType: StatusEntityType,
   name: string,
   isDefault = true,
   isTerminal = false,
-) {
+): WorkspaceStatusDefinition {
   return {
     id,
     workspaceId: 'workspace-1',
@@ -1639,11 +2655,11 @@ function status(
   };
 }
 
-function taskFixture(overrides: Partial<ReturnType<typeof taskFixtureBase>>) {
+function taskFixture(overrides: Partial<WorkspaceTask> = {}): WorkspaceTask {
   return { ...taskFixtureBase(), ...overrides };
 }
 
-function taskFixtureBase() {
+function taskFixtureBase(): WorkspaceTask {
   return {
     id: 'task-alpha',
     workspaceId: 'workspace-1',
