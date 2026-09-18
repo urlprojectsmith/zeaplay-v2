@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -27,12 +29,16 @@ import {
   BulkTaskMembershipsDto,
   BulkTaskPriorityDto,
   BulkTaskStatusDto,
+  CreateTaskCommentDto,
   CreateTaskDto,
   ReplaceTaskMembershipsDto,
   ReplaceTaskProjectsDto,
+  TaskCommentParamsDto,
   TaskParamsDto,
+  TaskCommentReactionDto,
   TaskQueryDto,
   TaskRelationshipIdsDto,
+  UpdateTaskCommentDto,
   UpdateTaskDto,
   UpdateTaskParentDto,
   UpdateTaskStatusDto,
@@ -203,6 +209,86 @@ export class TasksController {
     @Body() dto: TaskRelationshipIdsDto,
   ) {
     return this.tasks.removeRelated(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/comments')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsCreate)
+  createComment(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: CreateTaskCommentDto,
+  ) {
+    return this.tasks.createComment(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/comments')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsView)
+  listComments(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listComments(tenant, params.taskId, query);
+  }
+
+  @Post(':taskId/comments/:commentId/replies')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsCreate)
+  createCommentReply(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCommentParamsDto,
+    @Body() dto: CreateTaskCommentDto,
+  ) {
+    return this.tasks.createCommentReply(tenant, params.taskId, params.commentId, dto);
+  }
+
+  @Get(':taskId/comments/:commentId/replies')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsView)
+  listCommentReplies(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCommentParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listCommentReplies(tenant, params.taskId, params.commentId, query);
+  }
+
+  @Patch(':taskId/comments/:commentId')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsView)
+  updateComment(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCommentParamsDto,
+    @Body() dto: UpdateTaskCommentDto,
+  ) {
+    return this.tasks.updateComment(tenant, params.taskId, params.commentId, dto);
+  }
+
+  @Delete(':taskId/comments/:commentId')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsView)
+  deleteComment(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCommentParamsDto,
+  ) {
+    return this.tasks.deleteComment(tenant, params.taskId, params.commentId);
+  }
+
+  @Post(':taskId/comments/:commentId/reactions')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsView)
+  addCommentReaction(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCommentParamsDto,
+    @Body() dto: TaskCommentReactionDto,
+  ) {
+    return this.tasks.addCommentReaction(tenant, params.taskId, params.commentId, dto);
+  }
+
+  @Post(':taskId/comments/:commentId/reactions/remove')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCommentsView)
+  removeCommentReaction(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCommentParamsDto,
+    @Body() dto: TaskCommentReactionDto,
+  ) {
+    return this.tasks.removeCommentReaction(tenant, params.taskId, params.commentId, dto);
   }
 
   @Get(':taskId')

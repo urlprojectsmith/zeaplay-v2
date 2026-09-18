@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.4B - Task Relationships UX - COMPLETE / PASS
-Next: Phase 7.4C - Comments, Mentions & Tags
+Current: Phase 7.4C1 - Task Comments + Mentions + Reactions Backend - COMPLETE / PASS
+Next: Phase 7.4C1 Refinement
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -815,8 +815,39 @@ Task Relationships UX is complete across Overview, Subtasks, nested lazy tree, C
 
 Known deferred Task features:
 
-- Phase 7.4C Comments, Mentions & Tags remains next.
+- Phase 7.4C1 Refinement remains next.
 - Attachments, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, gamification, automation, visual dependency graph, and drag/drop relationship editing remain deferred.
+
+### Phase 7.4C1 - Comments + Mentions + Reactions Backend - COMPLETE / PASS
+
+Implemented:
+
+- Workspace-scoped `TaskComment`, `TaskCommentMention`, and `TaskCommentReaction` models with tenant-preserving composite relations.
+- Root comments and direct reply endpoints with unlimited logical nesting through `parentCommentId`.
+- Paginated root comment and direct-reply reads; no recursive eager hydration.
+- `NORMAL` and `INTERNAL` comment visibility, with internal comments hidden from callers without `tasks.comments.internal`.
+- Soft-delete tombstones for comments; replies remain preserved and readable according to visibility.
+- Mention metadata for active same-Workspace memberships only; duplicate mention payloads are normalized, and no notification side effects are emitted.
+- Controlled reaction types: `LIKE`, `LOVE`, `CELEBRATE`, `EYES`, and `CHECK`.
+- One reaction per membership per reaction type per comment, with idempotent add/remove behavior.
+- Comment audit events for create, reply, update, delete, reaction add, and reaction remove.
+- Explicit comment permissions: `tasks.comments.view`, `tasks.comments.create`, `tasks.comments.update_own`, `tasks.comments.delete_own`, `tasks.comments.moderate`, and `tasks.comments.internal`.
+
+Security/performance invariants:
+
+- All comment APIs require normal Task visibility plus comment-specific permission checks.
+- Internal comments are excluded before totals, reply counts, and parent discovery for non-internal callers.
+- Author edit/delete requires own permissions; moderators can edit/delete any visible comment in the Workspace.
+- Deleted comments cannot receive new replies or reactions.
+- Mentions reject suspended, foreign Workspace, and cross-Agency memberships.
+- Same-Workspace database FKs protect comment, mention, reaction, task, membership, and parent-comment ownership.
+- Direct reply counts and reaction counts are scoped to the current page and current caller visibility.
+- Normal All Tasks list/grid/compact paths remain unchanged and do not hydrate comments.
+
+Known deferred Task features:
+
+- No comments frontend yet.
+- No tags, attachments, notifications, automation hooks, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, or gamification.
 
 ## Architecture Invariants
 
@@ -852,7 +883,7 @@ Known deferred Task features:
 - Role
 - Permission
 - StatusDefinition
-- Task / TaskAssignee / TaskFollower / TaskProject
+- Task / TaskAssignee / TaskFollower / TaskProject / TaskComment / TaskCommentMention / TaskCommentReaction
 - FeatureDefinition / FeatureEntitlement
 - Project
 - Asset
@@ -912,6 +943,7 @@ Do not infer or invent model fields from this list.
 | Phase 7.4B2   | PASS   | Not tagged                       |
 | Phase 7.4B3   | PASS   | Not tagged                       |
 | Phase 7.4B    | PASS   | Not tagged                       |
+| Phase 7.4C1   | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -942,6 +974,7 @@ Confirmed current warnings:
 - Phase 7.4B1 Task Detail Relationship Shell + Subtask Tree UX is complete/pass.
 - Phase 7.4B2 Dependencies + Related Tasks UX and focused refinement are complete/pass.
 - Phase 7.4B3 Final Task Relationships UX security/performance/integration audit is complete/pass.
-- Phase 7.4B Task Relationships UX is complete/pass; the next phase is Phase 7.4C Comments, Mentions & Tags.
+- Phase 7.4B Task Relationships UX is complete/pass.
+- Phase 7.4C1 Task Comments + Mentions + Reactions Backend is complete/pass; the next phase is Phase 7.4C1 Refinement.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

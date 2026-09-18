@@ -93,6 +93,19 @@ enum TaskPriority {
   URGENT
 }
 
+enum TaskCommentVisibility {
+  NORMAL
+  INTERNAL
+}
+
+enum TaskCommentReactionType {
+  LIKE
+  LOVE
+  CELEBRATE
+  EYES
+  CHECK
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -122,6 +135,7 @@ model User {
   tasksUpdated            Task[]                @relation("TaskUpdater")
   taskDependenciesCreated TaskDependency[]      @relation("TaskDependencyCreator")
   taskRelatedLinksCreated TaskRelatedTask[]     @relation("TaskRelatedTaskCreator")
+  taskCommentsAuthored    TaskComment[]         @relation("TaskCommentAuthorUser")
   assets                  Asset[]
   auditLogs               AuditLog[]
   agenciesCreated         Agency[]              @relation("AgencyCreator")
@@ -190,6 +204,9 @@ model Workspace {
   taskProjects        TaskProject[]
   taskDependencies    TaskDependency[]
   taskRelatedTasks    TaskRelatedTask[]
+  taskComments        TaskComment[]
+  taskCommentMentions TaskCommentMention[]
+  taskCommentReactions TaskCommentReaction[]
   assets              Asset[]
   processingJobs      ProcessingJob[]
   featureEntitlements FeatureEntitlement[]
@@ -279,6 +296,9 @@ model WorkspaceMembership {
   managedDepartments Department[]   @relation("DepartmentManager")
   assignedTasks      TaskAssignee[]
   followedTasks      TaskFollower[]
+  taskComments       TaskComment[]         @relation("TaskCommentAuthor")
+  commentMentions    TaskCommentMention[]
+  commentReactions   TaskCommentReaction[]
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -440,6 +460,7 @@ model Task {
   blockedByDependencies TaskDependency[]  @relation("TaskDependencyBlocked")
   relatedTaskALinks     TaskRelatedTask[] @relation("TaskRelatedTaskA")
   relatedTaskBLinks     TaskRelatedTask[] @relation("TaskRelatedTaskB")
+  comments              TaskComment[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId, statusDefinitionId, createdAt])
@@ -486,6 +507,70 @@ model TaskRelatedTask {
   @@index([workspaceId, taskAId, createdAt])
   @@index([workspaceId, taskBId, createdAt])
   @@map("task_related_tasks")
+}
+
+model TaskComment {
+  id                 String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String                @map("workspace_id") @db.Uuid
+  taskId             String                @map("task_id") @db.Uuid
+  authorMembershipId String                @map("author_membership_id") @db.Uuid
+  authorUserId       String                @map("author_user_id") @db.Uuid
+  parentCommentId    String?               @map("parent_comment_id") @db.Uuid
+  body               String                @db.VarChar(4000)
+  visibility         TaskCommentVisibility @default(NORMAL)
+  editedAt           DateTime?             @map("edited_at") @db.Timestamptz(6)
+  deletedAt          DateTime?             @map("deleted_at") @db.Timestamptz(6)
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task             Task                   @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  authorMembership WorkspaceMembership    @relation("TaskCommentAuthor", fields: [authorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  authorUser       User                   @relation("TaskCommentAuthorUser", fields: [authorUserId], references: [id], onDelete: Restrict)
+  parentComment    TaskComment?           @relation("TaskCommentThread", fields: [parentCommentId, workspaceId, taskId], references: [id, workspaceId, taskId], onDelete: Restrict)
+  replies          TaskComment[]          @relation("TaskCommentThread")
+  mentions         TaskCommentMention[]
+  reactions        TaskCommentReaction[]
+
+  @@unique([id, workspaceId])
+  @@unique([id, workspaceId, taskId])
+  @@index([workspaceId, taskId, parentCommentId, createdAt])
+  @@index([workspaceId, taskId, createdAt])
+  @@index([workspaceId, authorMembershipId, createdAt])
+  @@map("task_comments")
+}
+
+model TaskCommentMention {
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  commentId    String   @map("comment_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  comment    TaskComment         @relation(fields: [commentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([commentId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@index([workspaceId, commentId])
+  @@map("task_comment_mentions")
+}
+
+model TaskCommentReaction {
+  workspaceId  String                  @map("workspace_id") @db.Uuid
+  commentId    String                  @map("comment_id") @db.Uuid
+  membershipId String                  @map("membership_id") @db.Uuid
+  reactionType TaskCommentReactionType @map("reaction_type")
+  createdAt    DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  comment    TaskComment         @relation(fields: [commentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([commentId, membershipId, reactionType])
+  @@index([workspaceId, commentId, reactionType])
+  @@index([workspaceId, membershipId])
+  @@map("task_comment_reactions")
 }
 
 model TaskAssignee {

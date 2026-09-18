@@ -472,6 +472,9 @@ async function seedRoles() {
 
 async function resetDatabase() {
   await prisma.$transaction([
+    prisma.taskCommentReaction.deleteMany(),
+    prisma.taskCommentMention.deleteMany(),
+    prisma.taskComment.deleteMany(),
     prisma.taskRelatedTask.deleteMany(),
     prisma.taskDependency.deleteMany(),
     prisma.taskAssignee.deleteMany(),

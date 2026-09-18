@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TaskPriority } from '@prisma/client';
+import { TaskCommentReactionType, TaskCommentVisibility, TaskPriority } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   ArrayUnique,
@@ -27,6 +27,12 @@ export class TaskParamsDto {
   @ApiProperty()
   @IsUUID()
   taskId!: string;
+}
+
+export class TaskCommentParamsDto extends TaskParamsDto {
+  @ApiProperty()
+  @IsUUID()
+  commentId!: string;
 }
 
 export class TaskQueryDto {
@@ -152,6 +158,40 @@ export class CreateTaskDto {
   @ArrayUnique()
   @IsUUID(undefined, { each: true })
   projectIds?: string[];
+}
+
+export class CreateTaskCommentDto {
+  @ApiProperty({ minLength: 1, maxLength: 4000 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  body!: string;
+
+  @ApiPropertyOptional({ enum: TaskCommentVisibility, default: TaskCommentVisibility.NORMAL })
+  @IsOptional()
+  @IsEnum(TaskCommentVisibility)
+  visibility?: TaskCommentVisibility;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 100 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsUUID(undefined, { each: true })
+  mentionedMembershipIds?: string[];
+}
+
+export class UpdateTaskCommentDto {
+  @ApiProperty({ minLength: 1, maxLength: 4000 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4000)
+  body!: string;
+}
+
+export class TaskCommentReactionDto {
+  @ApiProperty({ enum: TaskCommentReactionType })
+  @IsEnum(TaskCommentReactionType)
+  reactionType!: TaskCommentReactionType;
 }
 
 export class UpdateTaskDto {

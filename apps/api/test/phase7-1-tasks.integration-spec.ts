@@ -7,6 +7,8 @@ import {
   ProjectStatus,
   RoleScope,
   StatusCategory,
+  TaskCommentReactionType,
+  TaskCommentVisibility,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
@@ -60,6 +62,8 @@ describe('Phase 7.1 task core backend integration', () => {
   let adminToken: string;
   let memberToken: string;
   let viewerToken: string;
+  let commentViewerToken: string;
+  let commentCreateToken: string;
   let createOnlyToken: string;
   let updateOnlyToken: string;
   let assignOnlyToken: string;
@@ -109,6 +113,8 @@ describe('Phase 7.1 task core backend integration', () => {
     adminToken = await accessTokenFor('admin-a@zeaplay.test');
     memberToken = await accessTokenFor('member-a@zeaplay.test');
     viewerToken = await accessTokenFor('viewer-a@zeaplay.test');
+    commentViewerToken = await accessTokenFor('comment-viewer-a@zeaplay.test');
+    commentCreateToken = await accessTokenFor('comment-create-a@zeaplay.test');
     createOnlyToken = await accessTokenFor('task-create-a@zeaplay.test');
     updateOnlyToken = await accessTokenFor('task-update-a@zeaplay.test');
     assignOnlyToken = await accessTokenFor('task-assign-a@zeaplay.test');
@@ -2596,6 +2602,241 @@ describe('Phase 7.1 task core backend integration', () => {
       .expect(200);
   });
 
+  it('manages task comments, threaded replies, tombstones, mentions, and internal visibility', async () => {
+    const task = await createTask({ title: 'Comment visibility task' }).expect(201);
+    const root = await createComment(task.body.data.id, {
+      body: '  Please review this thread  ',
+      mentionedMembershipIds: [memberMembershipId, memberMembershipId, adminMembershipId],
+    }).expect(201);
+
+    expect(root.body.data).toMatchObject({
+      body: 'Please review this thread',
+      deleted: false,
+      visibility: TaskCommentVisibility.NORMAL,
+    });
+    expect(root.body.data.mentions).toHaveLength(2);
+
+    const reply = await createReply(task.body.data.id, root.body.data.id, {
+      body: 'Direct reply',
+    }).expect(201);
+    const grandchild = await createReply(task.body.data.id, reply.body.data.id, {
+      body: 'Nested reply',
+    }).expect(201);
+    await createReply(task.body.data.id, root.body.data.id, {
+      body: 'Internal direct reply',
+      visibility: TaskCommentVisibility.INTERNAL,
+    }).expect(201);
+
+    await createComment(task.body.data.id, {
+      body: 'Internal root',
+      visibility: TaskCommentVisibility.INTERNAL,
+    }).expect(201);
+
+    const adminList = await listComments(task.body.data.id).expect(200);
+    expect(adminList.body.data.total).toBe(2);
+    expect(
+      adminList.body.data.items.find((item: { id: string }) => item.id === root.body.data.id)
+        .directReplyCount,
+    ).toBe(2);
+
+    const viewerList = await listComments(task.body.data.id, commentViewerToken).expect(200);
+    expect(viewerList.body.data.total).toBe(1);
+    expect(viewerList.body.data.items[0]).toMatchObject({
+      id: root.body.data.id,
+      directReplyCount: 1,
+    });
+
+    const rootReplies = await listReplies(task.body.data.id, root.body.data.id, commentViewerToken)
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(1));
+    expect(rootReplies.body.data.items[0].id).toBe(reply.body.data.id);
+
+    await listReplies(task.body.data.id, reply.body.data.id, commentViewerToken)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(1);
+        expect(response.body.data.items[0].id).toBe(grandchild.body.data.id);
+      });
+
+    await createComment(
+      task.body.data.id,
+      {
+        body: 'Normal creator comment',
+      },
+      commentCreateToken,
+    ).expect(201);
+    await createComment(
+      task.body.data.id,
+      { body: 'Hidden creator comment', visibility: TaskCommentVisibility.INTERNAL },
+      commentCreateToken,
+    ).expect(403);
+    await createReply(
+      task.body.data.id,
+      adminList.body.data.items.find(
+        (item: { visibility: TaskCommentVisibility }) =>
+          item.visibility === TaskCommentVisibility.INTERNAL,
+      ).id,
+      { body: 'Cannot discover hidden parent' },
+      commentCreateToken,
+    ).expect(404);
+
+    await deleteComment(task.body.data.id, root.body.data.id).expect(200);
+    const afterDelete = await listComments(task.body.data.id, commentViewerToken).expect(200);
+    const tombstone = afterDelete.body.data.items.find(
+      (item: { id: string }) => item.id === root.body.data.id,
+    );
+    expect(tombstone).toMatchObject({ body: null, deleted: true, directReplyCount: 1 });
+    await createReply(task.body.data.id, root.body.data.id, { body: 'After delete' }).expect(404);
+  });
+
+  it('serializes comment delete and reply races without creating replies after tombstone', async () => {
+    const task = await createTask({ title: 'Comment delete reply race task' }).expect(201);
+    const parent = await createComment(task.body.data.id, { body: 'Race parent' }).expect(201);
+
+    const [deleteResponse, replyResponse] = await Promise.all([
+      deleteComment(task.body.data.id, parent.body.data.id),
+      createReply(task.body.data.id, parent.body.data.id, { body: 'Race reply' }),
+    ]);
+
+    expect([200, 409]).toContain(deleteResponse.status);
+    expect([201, 404, 409]).toContain(replyResponse.status);
+
+    if (deleteResponse.status === 409) {
+      await deleteComment(task.body.data.id, parent.body.data.id).expect(200);
+    }
+
+    const parentAfterRace = await prisma.taskComment.findUniqueOrThrow({
+      where: { id: parent.body.data.id },
+      select: { deletedAt: true },
+    });
+    expect(parentAfterRace.deletedAt).toBeTruthy();
+
+    if (replyResponse.status === 201) {
+      const replyAfterRace = await prisma.taskComment.findUniqueOrThrow({
+        where: { id: replyResponse.body.data.id },
+        select: { createdAt: true },
+      });
+      expect(replyAfterRace.createdAt.getTime()).toBeLessThanOrEqual(
+        parentAfterRace.deletedAt!.getTime(),
+      );
+    }
+
+    await createReply(task.body.data.id, parent.body.data.id, { body: 'Post-race reply' }).expect(
+      404,
+    );
+  });
+
+  it('enforces comment ownership, moderation, mention validation, reactions, tenant fences, and audits', async () => {
+    const task = await createTask({ title: 'Comment moderation task' }).expect(201);
+    const comment = await createComment(task.body.data.id, { body: 'Original comment' }).expect(
+      201,
+    );
+
+    await patchComment(
+      task.body.data.id,
+      comment.body.data.id,
+      { body: 'Unauthorized edit' },
+      commentCreateToken,
+    ).expect(403);
+
+    await patchComment(task.body.data.id, comment.body.data.id, { body: 'Admin edit' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.body).toBe('Admin edit');
+        expect(response.body.data.editedAt).toBeTruthy();
+      });
+    await patchComment(
+      task.body.data.id,
+      comment.body.data.id,
+      { body: 'Owner moderation edit' },
+      ownerAToken,
+    ).expect(200);
+
+    await deleteComment(task.body.data.id, comment.body.data.id, commentCreateToken).expect(403);
+
+    await createComment(task.body.data.id, {
+      body: 'Invalid suspended mention',
+      mentionedMembershipIds: [suspendedMembershipId],
+    }).expect(400);
+    await createComment(task.body.data.id, {
+      body: 'Invalid foreign mention',
+      mentionedMembershipIds: [foreignMembershipId],
+    }).expect(404);
+
+    const secondTask = await createTask({ title: 'Comment route fence task' }).expect(201);
+    await listReplies(secondTask.body.data.id, comment.body.data.id).expect(404);
+
+    const reactionComment = await createComment(task.body.data.id, { body: 'React here' }).expect(
+      201,
+    );
+    await addReaction(task.body.data.id, reactionComment.body.data.id, TaskCommentReactionType.LIKE)
+      .expect(201)
+      .expect((response) => expect(response.body.data.changed).toBe(true));
+    await addReaction(task.body.data.id, reactionComment.body.data.id, TaskCommentReactionType.LIKE)
+      .expect(201)
+      .expect((response) => expect(response.body.data.changed).toBe(false));
+    await addReaction(task.body.data.id, reactionComment.body.data.id, TaskCommentReactionType.LOVE)
+      .expect(201)
+      .expect((response) => expect(response.body.data.changed).toBe(true));
+    await removeReaction(
+      task.body.data.id,
+      reactionComment.body.data.id,
+      TaskCommentReactionType.LIKE,
+    )
+      .expect(200)
+      .expect((response) => expect(response.body.data.changed).toBe(true));
+    await removeReaction(
+      task.body.data.id,
+      reactionComment.body.data.id,
+      TaskCommentReactionType.LIKE,
+    )
+      .expect(200)
+      .expect((response) => expect(response.body.data.changed).toBe(false));
+    await removeReaction(
+      task.body.data.id,
+      reactionComment.body.data.id,
+      TaskCommentReactionType.LOVE,
+      commentCreateToken,
+    )
+      .expect(200)
+      .expect((response) => expect(response.body.data.changed).toBe(false));
+
+    const internalComment = await createComment(task.body.data.id, {
+      body: 'Internal reactions',
+      visibility: TaskCommentVisibility.INTERNAL,
+    }).expect(201);
+    await addReaction(
+      task.body.data.id,
+      internalComment.body.data.id,
+      TaskCommentReactionType.EYES,
+      commentViewerToken,
+    ).expect(404);
+
+    await deleteComment(task.body.data.id, reactionComment.body.data.id).expect(200);
+    await addReaction(
+      task.body.data.id,
+      reactionComment.body.data.id,
+      TaskCommentReactionType.CHECK,
+    ).expect(404);
+
+    await expect(
+      prisma.auditLog.count({
+        where: {
+          action: {
+            in: [
+              'task.comment_created',
+              'task.comment_updated',
+              'task.comment_deleted',
+              'task.comment_reaction_added',
+              'task.comment_reaction_removed',
+            ],
+          },
+          entityType: 'TaskComment',
+        },
+      }),
+    ).resolves.toBeGreaterThanOrEqual(5);
+  });
+
   it('validates combined hierarchy and dependency bulk status transitions atomically', async () => {
     const p = await createTask({ title: 'Deep combined parent' }).expect(201);
     const a = await createSubtask(p.body.data.id, { title: 'Deep combined child' }).expect(201);
@@ -2930,6 +3171,122 @@ describe('Phase 7.1 task core backend integration', () => {
       .send({ taskIds });
   }
 
+  function createComment(
+    taskId: string,
+    body: Record<string, unknown>,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send(body);
+  }
+
+  function listComments(
+    taskId: string,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments?page=1&pageSize=20`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function createReply(
+    taskId: string,
+    commentId: string,
+    body: Record<string, unknown>,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments/${commentId}/replies`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send(body);
+  }
+
+  function listReplies(
+    taskId: string,
+    commentId: string,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments/${commentId}/replies?page=1&pageSize=20`,
+      )
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function patchComment(
+    taskId: string,
+    commentId: string,
+    body: Record<string, unknown>,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments/${commentId}`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send(body);
+  }
+
+  function deleteComment(
+    taskId: string,
+    commentId: string,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments/${commentId}`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function addReaction(
+    taskId: string,
+    commentId: string,
+    reactionType: TaskCommentReactionType,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments/${commentId}/reactions`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send({ reactionType });
+  }
+
+  function removeReaction(
+    taskId: string,
+    commentId: string,
+    reactionType: TaskCommentReactionType,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceId}/tasks/${taskId}/comments/${commentId}/reactions/remove`,
+      )
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send({ reactionType });
+  }
+
   function createTaskInWorkspace(
     workspaceId: string,
     agencyId: string,
@@ -3050,6 +3407,12 @@ describe('Phase 7.1 task core backend integration', () => {
       'tasks.delete',
       'tasks.assign',
       'tasks.manage',
+      'tasks.comments.view',
+      'tasks.comments.create',
+      'tasks.comments.update_own',
+      'tasks.comments.delete_own',
+      'tasks.comments.moderate',
+      'tasks.comments.internal',
     ];
     for (const key of permissions) await prisma.permission.create({ data: { key } });
     const roles: Record<string, { id: string }> = {};
@@ -3075,6 +3438,16 @@ describe('Phase 7.1 task core backend integration', () => {
         ['workspace.read', 'tasks.assign', 'tasks.delete'],
       ],
       ['TASK_MANAGE_ONLY', RoleScope.WORKSPACE, ['workspace.read', 'tasks.manage']],
+      [
+        'TASK_COMMENT_VIEWER',
+        RoleScope.WORKSPACE,
+        ['workspace.read', 'tasks.view', 'tasks.comments.view'],
+      ],
+      [
+        'TASK_COMMENT_CREATE',
+        RoleScope.WORKSPACE,
+        ['workspace.read', 'tasks.view', 'tasks.comments.view', 'tasks.comments.create'],
+      ],
     ] as const) {
       const role = await prisma.role.create({ data: { key, name: key, scope } });
       roles[key] = role;
@@ -3100,6 +3473,8 @@ describe('Phase 7.1 task core backend integration', () => {
       updateAssignA,
       assignDeleteA,
       manageOnlyA,
+      commentViewerA,
+      commentCreateA,
       ownerB,
     ] = await Promise.all([
       user('owner-a@zeaplay.test', 'Owner A'),
@@ -3113,6 +3488,8 @@ describe('Phase 7.1 task core backend integration', () => {
       user('task-update-assign-a@zeaplay.test', 'Task Update Assign A'),
       user('task-assign-delete-a@zeaplay.test', 'Task Assign Delete A'),
       user('task-manage-a@zeaplay.test', 'Task Manage A'),
+      user('comment-viewer-a@zeaplay.test', 'Comment Viewer A'),
+      user('comment-create-a@zeaplay.test', 'Comment Create A'),
       user('owner-b@zeaplay.test', 'Owner B'),
     ]);
     const agency = await prisma.agency.create({
@@ -3164,6 +3541,8 @@ describe('Phase 7.1 task core backend integration', () => {
     await agencyMember(updateAssignA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(assignDeleteA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(manageOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(commentViewerA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(commentCreateA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(ownerB.id, beta.id, roleId(roles, 'AGENCY_OWNER'));
 
     await workspaceMember(ownerA.id, wa.id, roleId(roles, 'OWNER'));
@@ -3184,6 +3563,8 @@ describe('Phase 7.1 task core backend integration', () => {
     await workspaceMember(updateAssignA.id, wa.id, roleId(roles, 'TASK_UPDATE_ASSIGN'));
     await workspaceMember(assignDeleteA.id, wa.id, roleId(roles, 'TASK_ASSIGN_DELETE'));
     await workspaceMember(manageOnlyA.id, wa.id, roleId(roles, 'TASK_MANAGE_ONLY'));
+    await workspaceMember(commentViewerA.id, wa.id, roleId(roles, 'TASK_COMMENT_VIEWER'));
+    await workspaceMember(commentCreateA.id, wa.id, roleId(roles, 'TASK_COMMENT_CREATE'));
     foreignMembershipId = (await workspaceMember(ownerA.id, wa2.id, roleId(roles, 'OWNER'))).id;
     betaMembershipId = (await workspaceMember(ownerB.id, wb.id, roleId(roles, 'OWNER'))).id;
 
@@ -3254,6 +3635,9 @@ describe('Phase 7.1 task core backend integration', () => {
 
 async function resetDatabase() {
   await prisma.$transaction([
+    prisma.taskCommentReaction.deleteMany(),
+    prisma.taskCommentMention.deleteMany(),
+    prisma.taskComment.deleteMany(),
     prisma.taskRelatedTask.deleteMany(),
     prisma.taskDependency.deleteMany(),
     prisma.taskAssignee.deleteMany(),

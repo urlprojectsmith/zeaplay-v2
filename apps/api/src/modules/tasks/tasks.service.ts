@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,10 +10,13 @@ import {
   MembershipStatus,
   Prisma,
   ProjectStatus,
+  TaskCommentReactionType,
+  TaskCommentVisibility,
   StatusEntityType,
   TaskPriority,
 } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { PermissionKeys } from '../../common/authorization/permissions';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import {
@@ -20,11 +24,14 @@ import {
   BulkTaskMembershipsDto,
   BulkTaskPriorityDto,
   BulkTaskStatusDto,
+  CreateTaskCommentDto,
   CreateTaskDto,
   ReplaceTaskMembershipsDto,
   ReplaceTaskProjectsDto,
+  TaskCommentReactionDto,
   TaskQueryDto,
   TaskRelationshipIdsDto,
+  UpdateTaskCommentDto,
   UpdateTaskDto,
 } from './dto/task.dto';
 
@@ -728,6 +735,158 @@ export class TasksService {
     return result;
   }
 
+  async createComment(tenant: WorkspaceTenantContext, taskId: string, dto: CreateTaskCommentDto) {
+    return this.createTaskComment(tenant, taskId, null, dto, 'task.comment_created');
+  }
+
+  async createCommentReply(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    parentCommentId: string,
+    dto: CreateTaskCommentDto,
+  ) {
+    return this.createTaskComment(tenant, taskId, parentCommentId, dto, 'task.comment_replied');
+  }
+
+  async listComments(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
+    await this.assertTask(tenant.workspaceId, taskId);
+    return this.listCommentPage(tenant, taskId, null, query);
+  }
+
+  async listCommentReplies(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    parentCommentId: string,
+    query: TaskQueryDto,
+  ) {
+    await this.assertVisibleComment(tenant, taskId, parentCommentId);
+    return this.listCommentPage(tenant, taskId, parentCommentId, query);
+  }
+
+  async updateComment(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    commentId: string,
+    dto: UpdateTaskCommentDto,
+  ) {
+    const comment = await this.assertVisibleComment(tenant, taskId, commentId, true);
+    this.assertCanChangeComment(
+      tenant,
+      comment.authorMembershipId,
+      PermissionKeys.taskCommentsUpdateOwn,
+    );
+    const body = normalizeCommentBody(dto.body);
+    if (body === comment.body) return this.serializeCommentById(tenant, taskId, commentId);
+    const updated = await this.prisma.taskComment.update({
+      where: { id: commentId },
+      data: { body, editedAt: new Date() },
+      select: taskCommentSelect,
+    });
+    await this.audit.record({
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
+      userId: tenant.userId,
+      action: 'task.comment_updated',
+      entityType: 'TaskComment',
+      entityId: commentId,
+      metadata: { taskId, visibility: comment.visibility },
+    });
+    return this.enrichAndSerializeComments(tenant, taskId, [updated]).then((items) => items[0]);
+  }
+
+  async deleteComment(tenant: WorkspaceTenantContext, taskId: string, commentId: string) {
+    const comment = await this.assertVisibleComment(tenant, taskId, commentId, true);
+    this.assertCanChangeComment(
+      tenant,
+      comment.authorMembershipId,
+      PermissionKeys.taskCommentsDeleteOwn,
+    );
+    const deleted = await this.prisma
+      .$transaction(async (tx) => {
+        await this.lockCommentForWrite(tenant, taskId, commentId, tx);
+        const deletedComment = await tx.taskComment.update({
+          where: { id: commentId },
+          data: { deletedAt: new Date() },
+          select: taskCommentSelect,
+        });
+        await tx.auditLog.create({
+          data: {
+            agencyId: tenant.agencyId,
+            workspaceId: tenant.workspaceId,
+            userId: tenant.userId,
+            action: 'task.comment_deleted',
+            entityType: 'TaskComment',
+            entityId: commentId,
+            metadata: { taskId, visibility: comment.visibility },
+          },
+        });
+        return deletedComment;
+      }, serializableTransaction)
+      .catch(mapHierarchyWriteError);
+    return this.enrichAndSerializeComments(tenant, taskId, [deleted]).then((items) => items[0]);
+  }
+
+  async addCommentReaction(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    commentId: string,
+    dto: TaskCommentReactionDto,
+  ) {
+    const membershipId = this.requireWorkspaceMembership(tenant);
+    await this.assertVisibleComment(tenant, taskId, commentId, true);
+    const created = await this.prisma.taskCommentReaction.createMany({
+      data: {
+        workspaceId: tenant.workspaceId,
+        commentId,
+        membershipId,
+        reactionType: dto.reactionType,
+      },
+      skipDuplicates: true,
+    });
+    if (created.count > 0) {
+      await this.audit.record({
+        agencyId: tenant.agencyId,
+        workspaceId: tenant.workspaceId,
+        userId: tenant.userId,
+        action: 'task.comment_reaction_added',
+        entityType: 'TaskComment',
+        entityId: commentId,
+        metadata: { taskId, reactionType: dto.reactionType },
+      });
+    }
+    return { changed: created.count > 0, reactionType: dto.reactionType };
+  }
+
+  async removeCommentReaction(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    commentId: string,
+    dto: TaskCommentReactionDto,
+  ) {
+    const membershipId = this.requireWorkspaceMembership(tenant);
+    await this.assertVisibleComment(tenant, taskId, commentId);
+    const removed = await this.prisma.taskCommentReaction.deleteMany({
+      where: {
+        workspaceId: tenant.workspaceId,
+        commentId,
+        membershipId,
+        reactionType: dto.reactionType,
+      },
+    });
+    if (removed.count > 0) {
+      await this.audit.record({
+        agencyId: tenant.agencyId,
+        workspaceId: tenant.workspaceId,
+        userId: tenant.userId,
+        action: 'task.comment_reaction_removed',
+        entityType: 'TaskComment',
+        entityId: commentId,
+        metadata: { taskId, reactionType: dto.reactionType },
+      });
+    }
+    return { changed: removed.count > 0, reactionType: dto.reactionType };
+  }
+
   async update(tenant: WorkspaceTenantContext, taskId: string, dto: UpdateTaskDto) {
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     const changedFields = Object.entries(dto)
@@ -942,6 +1101,271 @@ export class TasksService {
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
     return serializeTaskDetail(task);
+  }
+
+  private async createTaskComment(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    parentCommentId: string | null,
+    dto: CreateTaskCommentDto,
+    action: 'task.comment_created' | 'task.comment_replied',
+  ) {
+    const authorMembershipId = this.requireWorkspaceMembership(tenant);
+    const body = normalizeCommentBody(dto.body);
+    const visibility = dto.visibility ?? TaskCommentVisibility.NORMAL;
+    if (visibility === TaskCommentVisibility.INTERNAL)
+      this.assertPermission(tenant, PermissionKeys.taskCommentsInternal);
+    const mentionedMembershipIds = await this.activeMembershipIds(
+      tenant.workspaceId,
+      uniqueIds(dto.mentionedMembershipIds ?? []),
+    );
+    const commentId = await this.prisma
+      .$transaction(async (tx) => {
+        await this.assertTask(tenant.workspaceId, taskId, tx);
+        if (parentCommentId) {
+          const parent = await this.lockCommentForWrite(tenant, taskId, parentCommentId, tx);
+          if (parent.visibility === TaskCommentVisibility.INTERNAL) {
+            this.assertPermission(tenant, PermissionKeys.taskCommentsInternal);
+          }
+        }
+        const created = await tx.taskComment.create({
+          data: {
+            workspaceId: tenant.workspaceId,
+            taskId,
+            parentCommentId,
+            authorMembershipId,
+            authorUserId: tenant.userId,
+            body,
+            visibility,
+          },
+          select: taskCommentSelect,
+        });
+        if (mentionedMembershipIds.length > 0) {
+          await tx.taskCommentMention.createMany({
+            data: mentionedMembershipIds.map((membershipId) => ({
+              workspaceId: tenant.workspaceId,
+              commentId: created.id,
+              membershipId,
+            })),
+          });
+        }
+        await tx.auditLog.create({
+          data: {
+            agencyId: tenant.agencyId,
+            workspaceId: tenant.workspaceId,
+            userId: tenant.userId,
+            action,
+            entityType: 'TaskComment',
+            entityId: created.id,
+            metadata: {
+              taskId,
+              parentCommentId,
+              visibility,
+              mentionCount: mentionedMembershipIds.length,
+              mentionedMembershipIds,
+            },
+          },
+        });
+        return created.id;
+      }, serializableTransaction)
+      .catch(mapHierarchyWriteError);
+    return this.serializeCommentById(tenant, taskId, commentId);
+  }
+
+  private async listCommentPage(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    parentCommentId: string | null,
+    query: TaskQueryDto,
+  ) {
+    const where = this.visibleCommentWhere(tenant, taskId, { parentCommentId });
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.taskComment.findMany({
+        where,
+        select: taskCommentSelect,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.taskComment.count({ where }),
+    ]);
+    return {
+      items: await this.enrichAndSerializeComments(tenant, taskId, items),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+    };
+  }
+
+  private async serializeCommentById(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    commentId: string,
+  ) {
+    const comment = await this.prisma.taskComment.findFirst({
+      where: this.visibleCommentWhere(tenant, taskId, { id: commentId }),
+      select: taskCommentSelect,
+    });
+    if (!comment) throw new NotFoundException('Comment not found.');
+    const [serialized] = await this.enrichAndSerializeComments(tenant, taskId, [comment]);
+    return serialized;
+  }
+
+  private async enrichAndSerializeComments(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    comments: TaskCommentRecord[],
+  ) {
+    if (comments.length === 0) return [];
+    const ids = comments.map((comment) => comment.id);
+    const visibleReplyWhere = this.visibleCommentWhere(tenant, taskId, {
+      parentCommentId: { in: ids },
+    });
+    const [visibleReplies, reactions, currentReactions] = await this.prisma.$transaction([
+      this.prisma.taskComment.findMany({
+        where: visibleReplyWhere,
+        select: { parentCommentId: true },
+      }),
+      this.prisma.taskCommentReaction.findMany({
+        where: { workspaceId: tenant.workspaceId, commentId: { in: ids } },
+        select: { commentId: true, reactionType: true },
+      }),
+      tenant.workspaceMembershipId
+        ? this.prisma.taskCommentReaction.findMany({
+            where: {
+              workspaceId: tenant.workspaceId,
+              commentId: { in: ids },
+              membershipId: tenant.workspaceMembershipId,
+            },
+            select: { commentId: true, reactionType: true },
+          })
+        : this.prisma.taskCommentReaction.findMany({
+            where: { workspaceId: tenant.workspaceId, commentId: { in: [] } },
+            select: { commentId: true, reactionType: true },
+          }),
+    ]);
+    const replyCountByParent = new Map<string, number>();
+    for (const reply of visibleReplies) {
+      if (!reply.parentCommentId) continue;
+      replyCountByParent.set(
+        reply.parentCommentId,
+        (replyCountByParent.get(reply.parentCommentId) ?? 0) + 1,
+      );
+    }
+    const reactionCountsByComment = new Map<string, Record<TaskCommentReactionType, number>>();
+    for (const reaction of reactions) {
+      const counts = reactionCountsByComment.get(reaction.commentId) ?? emptyReactionCounts();
+      counts[reaction.reactionType] += 1;
+      reactionCountsByComment.set(reaction.commentId, counts);
+    }
+    const currentReactionsByComment = new Map<string, TaskCommentReactionType[]>();
+    for (const reaction of currentReactions) {
+      const list = currentReactionsByComment.get(reaction.commentId) ?? [];
+      list.push(reaction.reactionType);
+      currentReactionsByComment.set(reaction.commentId, list);
+    }
+    return comments.map((comment) =>
+      serializeTaskComment(comment, {
+        directReplyCount: replyCountByParent.get(comment.id) ?? 0,
+        reactionCounts: reactionCountsByComment.get(comment.id) ?? emptyReactionCounts(),
+        currentUserReactions: currentReactionsByComment.get(comment.id) ?? [],
+      }),
+    );
+  }
+
+  private visibleCommentWhere(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    extra: Prisma.TaskCommentWhereInput = {},
+  ): Prisma.TaskCommentWhereInput {
+    return {
+      workspaceId: tenant.workspaceId,
+      taskId,
+      ...extra,
+      ...(this.canSeeInternal(tenant) ? {} : { visibility: TaskCommentVisibility.NORMAL }),
+    };
+  }
+
+  private async assertVisibleComment(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    commentId: string,
+    requireNotDeleted = false,
+  ) {
+    await this.assertTask(tenant.workspaceId, taskId);
+    const comment = await this.prisma.taskComment.findFirst({
+      where: this.visibleCommentWhere(tenant, taskId, {
+        id: commentId,
+        ...(requireNotDeleted ? { deletedAt: null } : {}),
+      }),
+      select: {
+        id: true,
+        body: true,
+        authorMembershipId: true,
+        visibility: true,
+        deletedAt: true,
+      },
+    });
+    if (!comment) throw new NotFoundException('Comment not found.');
+    return comment;
+  }
+
+  private async lockCommentForWrite(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    commentId: string,
+    tx: Prisma.TransactionClient,
+  ) {
+    const internalFilter = this.canSeeInternal(tenant)
+      ? Prisma.empty
+      : Prisma.sql`AND visibility = 'NORMAL'::"TaskCommentVisibility"`;
+    const [comment] = await tx.$queryRaw<Array<{ id: string; visibility: TaskCommentVisibility }>>`
+      SELECT id, visibility
+      FROM task_comments
+      WHERE workspace_id = ${tenant.workspaceId}::uuid
+        AND task_id = ${taskId}::uuid
+        AND id = ${commentId}::uuid
+        AND deleted_at IS NULL
+        ${internalFilter}
+      FOR UPDATE
+    `;
+    if (!comment) throw new NotFoundException('Comment not found.');
+    return comment;
+  }
+
+  private assertCanChangeComment(
+    tenant: WorkspaceTenantContext,
+    authorMembershipId: string,
+    ownPermission: string,
+  ) {
+    if (this.hasPermission(tenant, PermissionKeys.taskCommentsModerate)) return;
+    if (
+      tenant.workspaceMembershipId === authorMembershipId &&
+      this.hasPermission(tenant, ownPermission)
+    ) {
+      return;
+    }
+    throw new ForbiddenException('Insufficient comment permissions.');
+  }
+
+  private requireWorkspaceMembership(tenant: WorkspaceTenantContext) {
+    if (!tenant.workspaceMembershipId) {
+      throw new ForbiddenException('Workspace membership is required for task comments.');
+    }
+    return tenant.workspaceMembershipId;
+  }
+
+  private assertPermission(tenant: WorkspaceTenantContext, permission: string) {
+    if (!this.hasPermission(tenant, permission))
+      throw new ForbiddenException('Insufficient permissions.');
+  }
+
+  private hasPermission(tenant: WorkspaceTenantContext, permission: string) {
+    return tenant.permissions.includes('*') || tenant.permissions.includes(permission);
+  }
+
+  private canSeeInternal(tenant: WorkspaceTenantContext) {
+    return this.hasPermission(tenant, PermissionKeys.taskCommentsInternal);
   }
 
   private taskWhere(workspaceId: string, query: TaskQueryDto): Prisma.TaskWhereInput {
@@ -1310,9 +1734,41 @@ const taskDetailSelect = {
   },
 } satisfies Prisma.TaskSelect;
 
+const taskCommentSelect = {
+  id: true,
+  workspaceId: true,
+  taskId: true,
+  parentCommentId: true,
+  body: true,
+  visibility: true,
+  editedAt: true,
+  deletedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  authorMembership: {
+    select: {
+      id: true,
+      user: { select: { id: true, email: true, name: true } },
+    },
+  },
+  mentions: {
+    select: {
+      membership: {
+        select: {
+          id: true,
+          user: { select: { id: true, email: true, name: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  },
+} satisfies Prisma.TaskCommentSelect;
+
 type TaskListRecord = Prisma.TaskGetPayload<{ select: typeof taskListSelect }>;
 type TaskRelationshipRecord = Prisma.TaskGetPayload<{ select: typeof taskRelationshipSelect }>;
 type TaskDetailRecord = Prisma.TaskGetPayload<{ select: typeof taskDetailSelect }>;
+type TaskCommentRecord = Prisma.TaskCommentGetPayload<{ select: typeof taskCommentSelect }>;
 
 function serializeTaskListItem(task: TaskListRecord) {
   return {
@@ -1374,6 +1830,47 @@ function paginatedRelationship(
   };
 }
 
+function serializeTaskComment(
+  comment: TaskCommentRecord,
+  summary: {
+    directReplyCount: number;
+    reactionCounts: Record<TaskCommentReactionType, number>;
+    currentUserReactions: TaskCommentReactionType[];
+  },
+) {
+  const deleted = Boolean(comment.deletedAt);
+  return {
+    id: comment.id,
+    workspaceId: comment.workspaceId,
+    taskId: comment.taskId,
+    parentCommentId: comment.parentCommentId,
+    body: deleted ? null : comment.body,
+    visibility: comment.visibility,
+    deleted,
+    editedAt: deleted ? null : comment.editedAt,
+    deletedAt: comment.deletedAt,
+    createdAt: comment.createdAt,
+    updatedAt: comment.updatedAt,
+    author: {
+      membershipId: comment.authorMembership.id,
+      userId: comment.authorMembership.user.id,
+      name: comment.authorMembership.user.name,
+      email: comment.authorMembership.user.email,
+    },
+    mentions: deleted
+      ? []
+      : comment.mentions.map((mention) => ({
+          membershipId: mention.membership.id,
+          userId: mention.membership.user.id,
+          name: mention.membership.user.name,
+          email: mention.membership.user.email,
+        })),
+    directReplyCount: summary.directReplyCount,
+    reactionCounts: summary.reactionCounts,
+    currentUserReactions: summary.currentUserReactions,
+  };
+}
+
 function taskOrderBy(sortBy: TaskQueryDto['sortBy'], sortDirection: Prisma.SortOrder) {
   return { [sortBy]: sortDirection } as Prisma.TaskOrderByWithRelationInput;
 }
@@ -1411,6 +1908,22 @@ function relationKey(taskId: string, membershipId: string) {
 
 function uniqueIds(ids: string[]) {
   return [...new Set(ids)];
+}
+
+function emptyReactionCounts(): Record<TaskCommentReactionType, number> {
+  return {
+    LIKE: 0,
+    LOVE: 0,
+    CELEBRATE: 0,
+    EYES: 0,
+    CHECK: 0,
+  };
+}
+
+function normalizeCommentBody(body: string) {
+  const normalized = body.trim();
+  if (!normalized) throw new BadRequestException('Comment body is required.');
+  return normalized;
 }
 
 function canonicalRelatedPair(taskId: string, relatedTaskId: string) {
