@@ -14,7 +14,7 @@ interface AssetJobEnvelope {
   jobId: string;
   correlationId: string;
   workspaceId: string;
-  projectId: string;
+  projectId?: string | null;
   assetId: string;
   type: typeof ASSET_PROCESSING_JOB_TYPE;
   createdAt: string;
@@ -54,8 +54,8 @@ export class AssetProcessingProcessor extends WorkerHost {
     const asset = await this.prisma.asset.findFirst({
       where: {
         id: envelope.assetId,
-        projectId: envelope.projectId,
         workspaceId: envelope.workspaceId,
+        ...(envelope.projectId ? { projectId: envelope.projectId } : {}),
       },
       select: {
         id: true,
@@ -88,9 +88,8 @@ export class AssetProcessingProcessor extends WorkerHost {
       await this.prisma.$transaction([
         this.prisma.asset.update({
           where: {
-            id_projectId_workspaceId: {
+            id_workspaceId: {
               id: asset.id,
-              projectId: asset.projectId,
               workspaceId: asset.workspaceId,
             },
           },
@@ -155,8 +154,8 @@ export class AssetProcessingProcessor extends WorkerHost {
       this.prisma.asset.updateMany({
         where: {
           id: envelope.assetId,
-          projectId: envelope.projectId,
           workspaceId: envelope.workspaceId,
+          ...(envelope.projectId ? { projectId: envelope.projectId } : {}),
         },
         data: { status: AssetStatus.FAILED },
       }),
@@ -197,7 +196,7 @@ export class AssetProcessingProcessor extends WorkerHost {
       where: {
         id: envelope.jobId,
         workspaceId: envelope.workspaceId,
-        projectId: envelope.projectId,
+        projectId: envelope.projectId ?? null,
         assetId: envelope.assetId,
         ...options.where,
       },
@@ -210,17 +209,18 @@ function assertEnvelope(value: unknown): AssetJobEnvelope {
   if (!isObject(value) || value.version !== 1 || value.type !== ASSET_PROCESSING_JOB_TYPE) {
     throw new Error('Invalid asset job envelope.');
   }
-  for (const key of [
-    'jobId',
-    'correlationId',
-    'workspaceId',
-    'projectId',
-    'assetId',
-    'createdAt',
-  ]) {
+  for (const key of ['jobId', 'correlationId', 'workspaceId', 'assetId', 'createdAt']) {
     if (typeof value[key] !== 'string' || value[key].length === 0) {
       throw new Error('Invalid asset job envelope.');
     }
+  }
+  if (
+    'projectId' in value &&
+    value.projectId !== null &&
+    value.projectId !== undefined &&
+    (typeof value.projectId !== 'string' || value.projectId.length === 0)
+  ) {
+    throw new Error('Invalid asset job envelope.');
   }
   return value as unknown as AssetJobEnvelope;
 }
@@ -249,7 +249,7 @@ function logContext(envelope: AssetJobEnvelope) {
     correlationId: envelope.correlationId,
     jobId: envelope.jobId,
     workspaceId: envelope.workspaceId,
-    projectId: envelope.projectId,
+    projectId: envelope.projectId ?? null,
     assetId: envelope.assetId,
   };
 }

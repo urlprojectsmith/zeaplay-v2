@@ -39,6 +39,30 @@ const workspacePermissions = [
   'tasks.comments.delete_own',
   'tasks.comments.moderate',
   'tasks.comments.internal',
+  'tasks.attachments.view',
+  'tasks.attachments.add',
+  'tasks.attachments.remove',
+  'tasks.attachments.download',
+  'tasks.completion.view',
+  'tasks.completion.submit',
+  'tasks.completion.manage_policy',
+  'tasks.completion.approve',
+  'tasks.time.view_own',
+  'tasks.time.track',
+  'tasks.time.edit_own',
+  'tasks.time.delete_own',
+  'tasks.time.view_all',
+  'tasks.time.manage',
+  'tags.view',
+  'tags.create',
+  'tags.update',
+  'tags.archive',
+  'tags.assign',
+  'projects.view',
+  'projects.create',
+  'projects.update',
+  'projects.delete',
+  'projects.manage_status',
   'project.read',
   'project.create',
   'project.update',
@@ -284,19 +308,45 @@ async function seedRoles() {
         'workspace.read',
         'users.view',
         'departments.view',
+        'projects.view',
+        'projects.create',
+        'projects.update',
+        'projects.manage_status',
         'project.read',
         'project.create',
         'project.update',
         'asset.read',
         'asset.create',
         'asset.download',
+        'tasks.view',
+        'tasks.time.view_own',
+        'tasks.time.track',
+        'tasks.time.edit_own',
+        'tasks.time.delete_own',
+        'tasks.attachments.view',
+        'tasks.attachments.add',
+        'tasks.attachments.download',
       ],
     },
     {
       key: 'MEMBER',
       name: 'Member',
       scope: RoleScope.WORKSPACE,
-      permissions: ['workspace.read', 'project.read', 'asset.read', 'asset.download'],
+      permissions: [
+        'workspace.read',
+        'projects.view',
+        'project.read',
+        'asset.read',
+        'asset.download',
+        'tasks.view',
+        'tasks.time.view_own',
+        'tasks.time.track',
+        'tasks.time.edit_own',
+        'tasks.time.delete_own',
+        'tasks.attachments.view',
+        'tasks.attachments.add',
+        'tasks.attachments.download',
+      ],
     },
   ];
   const roles: Record<string, { id: string }> = {};
@@ -369,8 +419,18 @@ async function upsertProject(
 ) {
   const existing = await prisma.project.findFirst({ where: { workspaceId, name } });
   if (existing) return existing;
+  const status = await prisma.statusDefinition.findFirstOrThrow({
+    where: { workspaceId, entityType: 'PROJECT', nameNormalized: 'development' },
+  });
   return prisma.project.create({
-    data: { workspaceId, createdById, name, description, status: ProjectStatus.ACTIVE },
+    data: {
+      workspaceId,
+      createdById,
+      name,
+      description,
+      status: ProjectStatus.ACTIVE,
+      statusDefinitionId: status.id,
+    },
   });
 }
 
@@ -383,23 +443,49 @@ async function upsertAsset(
 ) {
   const storageKey = `workspace/${workspaceId}/projects/${projectId}/assets/${filename}/seed.txt`;
   const existing = await prisma.asset.findUnique({ where: { storageKey } });
-  if (existing) return existing;
-  return prisma.asset.create({
-    data: {
+  const asset =
+    existing ??
+    (await prisma.asset.create({
+      data: {
+        workspaceId,
+        projectId,
+        createdById,
+        originalFilename: filename,
+        displayName: filename,
+        storageBucket: 'zea-play-dev',
+        storageKey,
+        mimeType: 'text/plain',
+        extension: 'txt',
+        sizeBytes,
+        status: AssetStatus.READY,
+        uploadExpiresAt: new Date(Date.now() + 60_000),
+      },
+    }));
+  await prisma.attachment.upsert({
+    where: { id: asset.id },
+    update: { deletedAt: asset.deletedAt },
+    create: {
+      id: asset.id,
       workspaceId,
-      projectId,
-      createdById,
-      originalFilename: filename,
+      type: 'FILE',
+      assetId: asset.id,
       displayName: filename,
-      storageBucket: 'zea-play-dev',
-      storageKey,
-      mimeType: 'text/plain',
-      extension: 'txt',
-      sizeBytes,
-      status: AssetStatus.READY,
-      uploadExpiresAt: new Date(Date.now() + 60_000),
+      createdById,
+      deletedAt: asset.deletedAt,
     },
   });
+  await prisma.projectAttachment.upsert({
+    where: { projectId_attachmentId: { projectId, attachmentId: asset.id } },
+    update: { removedAt: asset.deletedAt },
+    create: {
+      workspaceId,
+      projectId,
+      attachmentId: asset.id,
+      attachedById: createdById,
+      removedAt: asset.deletedAt,
+    },
+  });
+  return asset;
 }
 
 async function seedTasks(

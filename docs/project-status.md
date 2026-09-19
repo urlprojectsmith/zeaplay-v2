@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 7.4C1 - Task Comments + Mentions + Reactions Backend - COMPLETE / PASS
-Next: Phase 7.4C1 Refinement
+Current: Phase 8.1 - Project Core + Status Migration - COMPLETE / PASS
+Next: Phase 8.2 - Project Owner + Members + Visibility
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -598,8 +598,8 @@ Phase 7.3 complete invariants:
 
 Known deferred Task features:
 
-- No Phase 7.4 Task Relationships yet.
-- No subtasks, dependencies, comments, tags, attachments, recurrence, templates, approvals, completion proof, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
+- Phase 7.4 Task Relationships are complete/pass.
+- No recurrence, templates, approvals, completion proof, time tracking, workload, Kanban, Calendar, Gantt, gamification, or automation.
 
 ### Phase 7.3C - COMPLETE / PASS
 
@@ -849,6 +849,584 @@ Known deferred Task features:
 - No comments frontend yet.
 - No tags, attachments, notifications, automation hooks, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, or gamification.
 
+### Phase 7.4C2 - Workspace Tags Backend - COMPLETE / PASS
+
+Implemented:
+
+- Workspace-scoped reusable `WorkspaceTag` catalog.
+- `TaskTag` many-to-many join between Workspace Tags and Tasks.
+- Normalized case-insensitive Tag uniqueness per Workspace.
+- Optional safe `#RRGGBB` Tag color.
+- `ACTIVE` / `ARCHIVED` Tag lifecycle with archive/reactivate APIs.
+- Archived Tags preserve existing Task relationships and remain visible on Task Tag reads.
+- Archived Tags cannot be newly assigned to Tasks.
+- Explicit Task Tag add/remove APIs with idempotent changed/unchanged counts.
+- Same-Workspace composite DB safety for TaskTag -> Task and TaskTag -> WorkspaceTag.
+- Server-side paginated/searchable Tag catalog.
+- Single `tagId` Task list filter foundation.
+- Explicit Tag RBAC: `tags.view`, `tags.create`, `tags.update`, `tags.archive`, `tags.assign`.
+- Audit events for Tag create/update/archive/reactivate and Task Tag add/remove.
+
+Security/performance invariants:
+
+- Tag catalog operations are Workspace scoped through existing tenant guards.
+- Workspace Tags use case-insensitive normalized uniqueness while preserving trimmed display casing.
+- Same display names are allowed across different Workspaces.
+- Tag colors are optional and restricted to deterministic safe `#RRGGBB` HEX storage.
+- ACTIVE/ARCHIVED lifecycle is idempotent and serializable for archive/reactivate.
+- Task Tag reads require `tasks.view`; Task Tag add/remove require `tasks.update` plus `tags.assign`.
+- Foreign Workspace and cross-Agency Tag assignment/removal are rejected without partial mutation.
+- Archived Tags preserve TaskTag history, remain readable/filterable, and cannot be newly assigned.
+- Archive-vs-assign overlap is protected by serializable set-based active-status assignment.
+- Task Tag add/remove is explicit, idempotent, all-or-nothing for invalid Tag sets, and bounded to 50 IDs.
+- Task list `tagId` filtering uses the indexed `TaskTag` join and does not filter in memory.
+- Task Tag reads use one bounded relation query and include archived historical Tags.
+- Normal All Tasks hot paths do not hydrate Tag objects unless the explicit Task Tag read route is used.
+- Tag create/update/archive/reactivate and Task Tag add/remove success audit is bounded and suppressed for no-ops/failures.
+- No Tags frontend, comment frontend, attachments, notifications, or automation were added.
+
+Focused refinement verified:
+
+- Same-Workspace composite database fences reject cross-Workspace `TaskTag` links even if services are bypassed.
+- Concurrent duplicate create, rename conflict, two-way rename collision, archive/reactivate, archive-vs-assign, and duplicate TaskTag add paths return safe final state or retryable conflict.
+- Tag catalog remains server-side paginated/searchable with allowlisted sorting.
+- Active and archived Task Tag relationships remain server-side filterable through `tagId`.
+- Tag permissions remain independent: `tags.view`, `tags.create`, `tags.update`, `tags.archive`, and `tags.assign` do not imply one another.
+
+Known deferred Task features:
+
+- No Tags frontend yet.
+- No comment frontend, attachments, notifications, automation, recurrence, templates, completion proof, approvals, time tracking, workload, Kanban, Calendar, Gantt, or gamification.
+
+### Phase 7.4C3A - Comments + Mentions + Reactions UX - COMPLETE / PASS
+
+Implemented:
+
+- Comments tab added to the existing Task Detail shell after Overview, Subtasks, Dependencies, and Related.
+- Root comments lazy-load only when the Comments tab opens.
+- Direct replies lazy-load per expanded comment with independent pagination and unlimited logical thread depth.
+- Comment composer defaults to NORMAL visibility, with INTERNAL comment UX for clearly privileged Workspace sessions and backend authority preserved.
+- Active Workspace member @mention picker uses server-side bounded search; selected membership IDs are authoritative and manual @text alone does not create mention metadata.
+- Author edit/delete UX, soft-delete tombstones, and reply preservation are supported.
+- Controlled reactions support LIKE, LOVE, CELEBRATE, EYES, and CHECK with independent toggles/counts.
+- Workspace/task/session changes clear comment drafts, reply/edit state, mention search, expanded replies, and pending reaction state through scoped component state and tenant query keys.
+- English/Tamil labels, Light/Dark/Colorful theme compatibility, responsive wrapping, and accessibility labels were added.
+
+Security/performance invariants:
+
+- All comment/reply query keys include Workspace and Task identity.
+- Opening Overview/Subtasks/Dependencies/Related does not fetch comments.
+- Root comment rendering does not fan out author, mention, reaction, or reply network requests per row.
+- Comment bodies are rendered as text, not HTML.
+- No attachments, notifications, or Tags frontend were added.
+
+Focused refinement verified:
+
+- Comments fetch only on Comments tab activation, with one root request for the active Task page.
+- Root comments and direct replies remain independently paginated and lazy-loaded.
+- The frontend imposes no logical thread-depth cap; visual indentation is capped for layout only.
+- Fresh root and reply composers default to NORMAL and reset to NORMAL after successful create.
+- Backend responses control INTERNAL visibility; the frontend does not fetch INTERNAL rows then hide them.
+- INTERNAL composer affordance is based on returned role permissions, not hardcoded role names.
+- Selected Workspace membership IDs are the only mention authority; plain @text creates no mention metadata.
+- Visibility is immutable during edit, and edit sends body only.
+- Tombstones preserve existing replies and do not show reply/edit/reaction controls.
+- Controlled reaction UX supports LIKE, LOVE, CELEBRATE, EYES, and CHECK as independent toggles.
+- Comment/reply/reaction mutations invalidate only the current Task comment/reply scope.
+- Rendering comments uses summary payloads and does not create per-comment author, mention, reaction, or reply fan-out.
+- Task, Workspace, and session changes clear drafts, reply state, edit state, mention state, expanded replies, and pending reaction state.
+- No Tags UI, attachments, notifications, automation, or gamification were added.
+
+### Phase 7.4C3B - Task Tags UX - COMPLETE / PASS
+
+Implemented:
+
+- Task Tags render inside Task Detail Overview using the existing Phase 7.4C2 backend APIs.
+- Attached tag chips show name, validated color dot, archived historical state, and remove controls when `tasks.update` + `tags.assign` are present.
+- Add Tags dialog uses active-only catalog search, selected chips, duplicate prevention, a 50-tag cap, and one bulk add request.
+- Manage Tags dialog supports paginated/searchable catalog browsing, status filter, create, edit name/color, archive, and reactivate without hard delete.
+- All Tasks gained a server-backed `tagId` URL filter with active filter chip labeling and Workspace switch cleanup.
+- React Query keys are Workspace/Task scoped; tag catalog loading stays lazy so normal All Tasks hot paths do not fetch Tags unless the tag filter is used.
+- English/Tamil labels, theme-compatible styling, responsive wrapping, and accessible row-action names were added.
+
+Security/performance invariants:
+
+- Tag assignment/removal uses explicit RBAC-derived affordances and backend authority remains final.
+- Archived tags remain visible when historically attached and removable from a Task, but Add Tags only queries ACTIVE tags.
+- Workspace/session/task changes close tag dialogs and clear tag-local state.
+- Tag mutations invalidate only scoped task-tag/catalog queries.
+- No attachments, notifications, automation/gamification, or new Task tabs were added.
+
+Verified:
+
+- `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`, `pnpm prisma:validate`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- Focused refinement verified active/archived Task Tag display, active-only assignment, explicit idempotent add/remove feedback, inline Manage Tags lifecycle UX, no hard-delete UI, server-side paginated/searchable catalog, server-side `tagId` All Tasks filtering, archived historical filtering, Workspace/task/session cleanup, targeted invalidation, no Task-row Tag hydration, unambiguous Tag search accessibility names, English/Tamil copy, themes, and mobile E2E coverage.
+- `pnpm test:e2e` passes 16/16.
+
+### Phase 7.4C3 - Final Comments / Mentions / Reactions / Tags Integration Audit - PASS
+
+Verified:
+
+- Task Detail has one implementation with Overview, Subtasks, Dependencies, Related, and Comments tabs; Tags remain inside Overview.
+- Comments lazy-load only on the Comments tab; Overview/Subtasks/Dependencies/Related do not fetch comments.
+- Task Tags load only on Overview/Tag UI surfaces; Add Tags, Manage Tags, and All Tasks tag catalog queries stay lazy and scoped.
+- Comments and Tags remain Task/Workspace scoped through backend tenant guards, composite database fences, and Workspace/Task-aware frontend query keys.
+- INTERNAL comments remain server-filtered before items, totals, reply counts, mention data, and reaction data; the frontend does not rely on client-side hiding.
+- Selected Workspace membership IDs are the only mention authority; plain `@text` does not create mention metadata.
+- Comment threads return roots only and direct replies only; unlimited logical nesting is preserved while visual indentation is capped.
+- Comments soft-delete to tombstones with body hidden, existing replies preserved, and no new reply/reaction/edit controls on tombstones.
+- Controlled reactions remain enum-bound and idempotent; same-reaction duplicates do not create duplicate rows, while different reaction types by the same user remain allowed.
+- Workspace Tags use ACTIVE/ARCHIVED lifecycle; archived Tags preserve TaskTag history, remain visible/removable/filterable, and cannot be newly assigned.
+- All Tasks `tagId` filtering remains server-side, tenant-safe, and composed with existing search/filter/sort/pagination parameters.
+- Normal All Tasks hot paths do not fetch comments, replies, Task Tags per row, Tag objects per row, or per-row comment/tag counts.
+- Comment/tag permission systems remain independent and backend authoritative, including `tasks.comments.*`, `tasks.update`, and `tags.*`.
+- Comment/tag audit records only committed meaningful changes; no success audit is emitted for no-ops, permission failures, hidden resources, foreign resources, or rollback/conflict paths.
+- English/Tamil labels, Light/Dark/Colorful themes, mobile widths, and accessibility states remain verified for combined Comments and Tags UX.
+- No Attachments, Notifications, Automation/Gamification, recurrence, templates, proof/approval, time tracking, Kanban, Calendar, or Gantt work was introduced.
+
+Regression verification:
+
+- `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm prisma:validate`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 16/16.
+
+### Phase 7.4C - COMMENTS / MENTIONS / REACTIONS / TAGS - COMPLETE / PASS
+
+Phase 7.4C is complete across backend, UX, focused refinements, and final integration/security/performance audit.
+
+### Phase 7.4D - Task Attachment Architecture - COMPLETE / PASS
+
+Implemented:
+
+- First-class `Attachment` model with explicit `TaskAttachment` and `ProjectAttachment` link tables.
+- `Asset.projectId` is optional so stored files are Workspace-owned physical records, while Project compatibility is preserved through `ProjectAttachment`.
+- Existing Project Assets are migrated into `Attachment` + `ProjectAttachment` rows without moving MinIO objects.
+- New Task file uploads use generic Workspace storage keys under `workspace/{workspaceId}/assets/...`.
+- Task URL attachments are stored as `AttachmentType.URL` rows without MinIO objects.
+- Removing a Task or Project attachment is a soft unlink; physical MinIO objects and quota remain tied to the Asset.
+- Task attachment APIs support list, presigned file upload init/finalize, URL attach, reusable attachment linking, download authorization, and remove.
+- Explicit permissions were added: `tasks.attachments.view`, `tasks.attachments.add`, `tasks.attachments.remove`, and `tasks.attachments.download`.
+- Worker asset processing no longer requires `projectId`; project-backed jobs keep tuple safety, while Workspace-owned Task assets process by `(workspaceId, assetId)`.
+- Task Detail Overview now includes an Attachments section with Upload File and Add Link flows, English/Tamil labels, scoped query keys, and no All Tasks row attachment hydration.
+
+Security/performance invariants:
+
+- Attachments are Workspace scoped and linked through composite Workspace-aware relations.
+- Task attachment routes use the existing JWT -> WorkspaceTenantGuard -> PermissionGuard chain plus Task ownership assertions.
+- Foreign Workspace Attachment, Task, Asset, or Project IDs resolve as not found and do not leak tenant details.
+- File upload hard limit is 25 MB for Task attachments; backend validates size and MIME type, frontend pre-checks size.
+- Frontend shows a non-blocking Drive/OneDrive suggestion for files over 2 MB.
+- URL attachments accept only HTTP/HTTPS URLs.
+- Quota is charged per physical `Asset`, not per Task/Project link; unlinking does not decrement quota.
+- Pending file uploads are not linked to a Task until upload finalization succeeds.
+- Task attachment list queries include Attachment and Asset data in one query shape, avoiding per-row attachment N+1.
+- Normal All Tasks list/grid/compact views do not hydrate attachment data per row.
+- Presigned upload/download URLs and MinIO object keys remain server-only.
+- Comment, tag, dependency, and relationship systems were not extended with attachments in this phase.
+
+Verified:
+
+- `pnpm prisma:generate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm prisma:validate`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- Focused worker test verifies Workspace-owned assets process without a Project tuple.
+- Focused E2E verifies deterministic Task URL attachment addition inside Task Detail.
+- `pnpm test:e2e` passes 16/16.
+
+### Phase 7.4E - Final Task Relationships Audit - COMPLETE / PASS
+
+Verified:
+
+- Task Detail remains one implementation with Overview, Subtasks, Dependencies, Related, and Comments tabs.
+- Overview contains core Task details plus Tags and Attachments; no Tags or Attachments tab was added.
+- Task hierarchy is Workspace-safe and cycle-free.
+- Terminal parent/descendant rules are enforced backend-side for single and bulk status changes.
+- Dependency graph is directed and cycle-safe, with blocked completion rules enforced backend-side.
+- Related Tasks remain symmetric and canonical without dependency semantics.
+- Comments are Task scoped, root/reply queries are lazy and direct-child bounded, and tombstones preserve reply history.
+- INTERNAL visibility remains backend-filtered before items, totals, reply counts, mentions, and reactions.
+- Mentions use selected same-Workspace active memberships only.
+- Reactions remain controlled and idempotent.
+- Tags use the ACTIVE/ARCHIVED lifecycle; archived Tags remain historically visible/filterable/removable but not newly assignable.
+- All Tasks `tagId` filtering remains server-side and composes with existing filters.
+- Asset is Workspace-owned physical storage; Attachment supports FILE/URL and Task/Project links are explicit.
+- Attachment reuse does not double-charge quota, and unlink does not physically delete storage.
+- Phase 7.4 server state is tenant-safe through Workspace/Task/comment-aware query keys and scoped invalidation.
+- Task Detail remains surface-lazy; Overview loads only core detail, Tags, and Attachments.
+- All Tasks hot path remains lean with no eager hierarchy, dependency, related, comment, tag, attachment, or presigned URL hydration.
+- Permission checks remain permission-key/custom-role compatible, with no backend role-name authorization.
+- Audit only records committed meaningful changes and does not log presigned URLs, MinIO credentials, large comment bodies, or unsafe URL payload data.
+- No Phase 7.5+ scope was introduced.
+
+Regression verification:
+
+- `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm --filter @zea-play/worker test` passes.
+- Focused E2E now verifies Task Detail 7.4 coexistence: Overview Tags/Attachments render, each relationship tab opens and returns, and lazy request counts do not fan out.
+- `pnpm test:e2e` passes 16/16.
+
+### Phase 7.4 - TASK RELATIONSHIPS - COMPLETE / PASS
+
+Phase 7.4 is complete across relationship backend, relationship UX, comments/mentions/reactions/tags, attachment architecture, focused refinements, and final integration/security/performance audit.
+
+### Phase 7.5 - KANBAN - COMPLETE / PASS
+
+Implemented:
+
+- Kanban board view added to All Tasks alongside List, Grid, and Compact.
+- Columns are generated from active Workspace TASK `StatusDefinition` records; no duplicate status engine was introduced.
+- Column order follows existing status ordering.
+- Persistent `Task.kanbanRank` ordering was added for server-authoritative card order.
+- New Tasks, ordinary status changes, bulk status changes, and Kanban moves keep rank state coherent.
+- Cross-column Kanban moves reuse existing Task status transition rules.
+- Drag/drop works for pointer and keyboard sensors, with a mobile-safe status select fallback on each card.
+- WIP limits are stored per Workspace/status column and remain informational, not hard-blocking.
+- Kanban columns load bounded server-side pages and compose with existing All Tasks filters/search.
+- Workspace switch clears tenant-bound Kanban board UI state.
+
+Security/performance invariants:
+
+- Kanban settings and moves are Workspace-scoped and permission-key/custom-role compatible.
+- Cross-Workspace task/status/placement anchors are rejected by backend ownership checks.
+- Rank changes are computed server-side in a transaction; client-provided rank values are not accepted.
+- Card order is persisted through server-authoritative Decimal ranks.
+- Rebalance is deterministic and bounded to the destination Workspace/status column.
+- Cross-column moves update `statusDefinitionId` and `kanbanRank` atomically.
+- Existing Task hierarchy/dependency transition rules remain authoritative for Kanban moves.
+- Filtered-board reorder uses backend anchor placement against the full destination column, so hidden cards are not corrupted.
+- WIP limits are informative and overrideable; backend totals drive column counts and WIP state.
+- Each column remains independently bounded and paginated.
+- Kanban filters stay server-side.
+- Mobile/non-drag status-move fallback exists and uses the same backend move path.
+- Workspace/session switching clears board-local state.
+- All Tasks non-Kanban hot path remains unchanged and does not hydrate Kanban columns.
+- No Phase 7.6+ recurrence, templates, approvals, timers, Calendar, Gantt, gamification, or automation scope was introduced.
+
+Regression verification:
+
+- `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 17/17.
+- High-threshold audit passes while reporting one moderate advisory.
+
+### Phase 7.6 - Recurring Tasks + Templates - COMPLETE / PASS
+
+Implemented:
+
+- Workspace-scoped recurrence series model with explicit schedule fields, lifecycle state, generation cursor, occurrence count, and safe blueprint relations.
+- Nullable Task recurrence metadata so every generated occurrence remains a normal independent Task linked to its Series.
+- Schedule-driven recurrence for DAILY, WEEKDAYS, WEEKLY selected weekdays, MONTHLY, and CUSTOM DAY/WEEK/MONTH intervals.
+- IANA timezone validation and Luxon-based local wall-clock recurrence calculation, including DST behavior and monthly date clamping.
+- First occurrence creation during Task create and existing Task -> recurring conversion without duplicate first occurrence.
+- Pause, resume, and end lifecycle endpoints; resume advances to the first valid future occurrence instead of backfilling intentionally paused dates.
+- One system-level BullMQ recurrence dispatch job registered by the API, with a worker-side bounded PostgreSQL scanner.
+- Worker generation uses database locking and the Task occurrence unique identity as final duplicate protection.
+- Workspace-scoped Task Templates with ACTIVE/ARCHIVED lifecycle, create/edit/archive/reactivate/use, and Save Task As Template.
+- Templates copy only creation-safe Task fields: title, description, priority, status, department, assignees, followers, projects, and tags.
+- Normal Task create now supports create-time Tag assignment through the existing Task create validation path.
+- Task Create advanced fields now include recurrence configuration for Does not repeat, Daily, Weekdays, Weekly, Monthly, and Custom patterns.
+- Task Detail overview now shows recurring Series summary and pause/resume/end controls for recurring tasks.
+- Existing non-recurring Tasks can be converted with a Make Recurring dialog using the same recurrence controls.
+- Recurring Task edits require an explicit scope choice: This task only, This and future tasks, or Entire Series.
+- Task Detail includes Save as Template with copy-scope helper text.
+- `/workspace/tasks/recurring` lists recurring Series with server-side search/status/page parameters and lifecycle actions.
+- `/workspace/tasks/templates` lists templates with server-side search/status/page parameters, create/edit/archive/reactivate actions, and Use Template opening the existing Task Create dialog prefilled for user review.
+- Template stale-reference risk is surfaced safely before reuse.
+- Recurrence/template frontend services use Workspace-scoped React Query keys.
+- English/Tamil labels were added for visible recurrence/template UX.
+
+Security/performance invariants:
+
+- Recurrence is schedule-driven, not completion-driven.
+- PostgreSQL is recurrence source of truth.
+- BullMQ only triggers the bounded scanner; there is no one-BullMQ-job-per-Series design.
+- The scanner is bounded, indexed, and multi-worker safe through row claiming and database uniqueness.
+- Occurrence generation is transactional and idempotent.
+- Each generated occurrence is a normal independent Task.
+- Task occurrence identity is unique per Series.
+- Local wall-clock schedules use explicit IANA timezones retained on the Series.
+- Monthly recurrence retains the intended anchor day and clamps only per occurrence.
+- DST and nonexistent/ambiguous local times are handled through Luxon.
+- Missed ACTIVE occurrences catch up in bounded batches.
+- Intentional PAUSE does not backfill skipped dates.
+- Catch-up remains bounded and later scans continue unprocessed backlog.
+- Series supports Never, On Date, and After Count ending.
+- The first Task is occurrence #1 for both create-time recurrence and Make Recurring.
+- Generated Tasks use normal Task creation invariants for status, tenant relations, tags, and Kanban rank.
+- Individual occurrence edits do not mutate Series by default.
+- Edit scope is explicit in the visible Task Detail editing path.
+- Historical occurrences remain snapshots.
+- Completing, deleting, or editing one occurrence does not alter the Series without an explicit Series action.
+- Templates are Workspace scoped.
+- Template names are case-insensitively unique per Workspace.
+- Templates use ACTIVE/ARCHIVED lifecycle; no hard-delete Template UX was added.
+- Template relations use Workspace-safe relational integrity.
+- Template creation reuses normal Task create flow.
+- Save As Template copies creation-safe fields only.
+- Use Template pre-fills the existing Task Create flow and never auto-submits.
+- Stale Template references cannot create invalid Tasks because final persistence goes through normal Task validation.
+- Template changes never mutate already-created Tasks.
+- Recurrence/template permissions are backend authoritative and permission-key/custom-role compatible.
+- No role-name authorization was added.
+- Comments, mentions, reactions, subtasks, dependencies, related Tasks, attachments, history, Kanban rank, recurrence history, notifications, automation, and gamification are not copied into Templates.
+- Existing Task, All Tasks, and Kanban hot paths remain lean; recurrence/template catalogs are not fetched by normal All Tasks/Kanban rendering.
+- English/Tamil, Light/Dark/Colorful, responsive widths, and recurrence/template accessibility paths are covered by focused UI/E2E verification.
+
+Verification:
+
+- `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm test:integration` passes 83/83 API integration tests plus worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 10 worker tests.
+- Focused recurrence schedule tests cover daily, weekdays, weekly selected days, monthly clamp, custom day/week/month intervals, On Date, After Count, timezone validation, and DST behavior.
+- Focused worker tests cover skipped row-claim behavior so a locked Series is not generated by another worker.
+- Focused recurrence/template E2E coverage passes for create-time recurrence, Task Detail summary and lifecycle actions, Make Recurring, explicit edit scope, recurring Series list, template catalog lifecycle, Use Template prefill, and Save Task As Template.
+
+### Phase 7.7 - Completion Proof + Approval - COMPLETE / PASS
+
+Implemented:
+
+- Workspace-scoped Task completion policies with proof requirement mode, required proof types, approval mode, creator approver source, permission-based approver source, and explicit approver relation support.
+- Immutable/versioned Task completion submissions with requested terminal status snapshot, previous status snapshot, proof requirement snapshot, approval mode snapshot, submitter, proof items, approver snapshots, and approval decisions.
+- Proof item support for TEXT, URL, CHECKLIST_CONFIRMATION, and ATTACHMENT; attachment proof links reuse the Phase 7.4D Attachment/Asset architecture through an explicit proof relation.
+- Pending approval is modeled as workflow state on `Task.pendingCompletionSubmissionId`, not as a `StatusDefinition`.
+- Approval-required submissions keep the Task in its previous non-terminal status until final approval.
+- Approval-free submissions apply the requested terminal status immediately through the normal Task status transition path.
+- Rejection keeps historical submission/proof records, clears pending state, and requires a new submission attempt for the next version.
+- Final approval reuses existing terminal transition validation, dependency/hierarchy rules, and Kanban rank assignment.
+- Task status update and Kanban terminal moves accept completion payloads for backend-authoritative terminal completion.
+- Terminal transitions that need proof/approval return structured `COMPLETION_FLOW_REQUIRED` errors with safe task/status/policy details.
+- Kanban terminal drag and All Tasks terminal completion entry points route into the shared completion dialog.
+- The shared completion dialog supports text, URL, checklist, and file/image proof. File/image proof uses existing Attachment upload-init -> presigned upload -> finalize flow and submits only the finalized `attachmentId`.
+- Bulk terminal status actions are guarded: tasks requiring proof/approval must use the completion flow instead of silent bulk completion.
+- Task Detail overview includes completion policy management, terminal completion submission, completion history, and the current task's approval queue.
+- Recurring Series store explicit completion-policy blueprints, including same-Workspace explicit approver relations, and generated future occurrences receive independent `TaskCompletionPolicy` snapshots.
+- English/Tamil labels were added for visible completion and approval UX.
+
+Security/performance invariants:
+
+- Completion policies, submissions, proof items, proof attachments, approver snapshots, and approval decisions are Workspace scoped.
+- DB relations use same-Workspace composite foreign keys for Task, StatusDefinition, WorkspaceMembership, and Attachment ownership.
+- Completion policy and decision APIs use permission-key/custom-role authorization; no role-name authorization was added.
+- Proof attachment validation accepts only active same-Workspace READY file attachments.
+- External proof URLs accept http/https only.
+- Completion submission versioning is immutable; rejected proof/history is retained.
+- At most one pending completion submission can exist per Task.
+- Approval decisions are idempotency-protected per approver/submission through a unique relation.
+- Double-submit and approval/rejection races are guarded by transaction row locks and serializable writes.
+- Creator approval uses the Task creator's active same-Workspace membership.
+- Permission approvers are resolved from active same-Workspace memberships with `tasks.completion.approve`.
+- Project owner/manager approver source remains structurally represented but intentionally not resolved because the current Project foundation has no authoritative owner/manager membership semantics.
+- All Tasks and Kanban hot paths expose only pending completion summary and do not hydrate proof history or policies per row/card.
+- Recurring Task approval is per occurrence; completion does not mutate the Series.
+- Recurring generated Tasks inherit completion policy only; submission/proof/decision history is never inherited.
+- No notifications, automation, gamification, timers, workload, Calendar, or Gantt scope was introduced.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:integration`, `pnpm build`, `pnpm test:e2e`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm test:integration` passes 87/87 API integration tests plus 11/11 worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- Build passes with the existing Next ESLint-plugin detection warning.
+
+### Phase 7.8 - Time Tracking + Workload - COMPLETE / PASS
+
+Implemented:
+
+- Workspace-scoped Task time entries with TIMER and MANUAL entry types, duration tracking, soft delete metadata, and explicit stop reasons.
+- Database-enforced global running-timer uniqueness through a partial unique index on running TIMER rows per user.
+- Live timer start, stop, and explicit switch APIs, including cross-Workspace switch safety for a global user.
+- Global active timer API and Workspace header indicator with local elapsed ticking and no per-second persistence or polling writes.
+- Manual time create/edit/delete APIs with permission-key authorization and same-Workspace membership validation.
+- Manual time remains allowed on completed Tasks, while live timers cannot start on terminal Tasks.
+- Terminal Task transitions, bulk terminal transitions, Task delete, and completion approval finalization auto-stop running timers in the same transaction.
+- `Task.estimatedMinutes`, recurrence blueprint estimates, and template estimate support.
+- Task workload allocations with explicit per-assignee planned minutes, automatic equal remainder distribution, and estimate ceiling enforcement.
+- Workspace member capacity overrides scoped to `WorkspaceMembership`; default capacity is 40h/week without creating override rows.
+- Authoritative Workspace IANA timezone stored on `Workspace.timezone`, validated on create/update, surfaced in session/workspace settings, and defaulting to UTC.
+- Workload day/week reporting from estimates and allocations only; actual tracked time is intentionally not used.
+- Workload day/week windows use the Workspace timezone and separate scheduled member load, unallocated work, unscheduled work, and overdue backlog.
+- Time reports use Workspace-timezone date boundaries, server-side filtered totals across the full dataset, and date-range overlap clipping.
+- New recurrence schedules default to the current Workspace timezone when no explicit timezone is submitted; existing recurrence series keep their stored timezone snapshot.
+- Time tracking, workload, and Workspace settings frontend routes, navigation entries, English/Tamil labels, and responsive summary tables/forms.
+
+Security/performance invariants:
+
+- Global timer uniqueness is enforced by the database and guarded by user row locks during timer writes.
+- Same-Workspace and cross-Workspace simultaneous starts are protected; explicit switch stops the old timer and starts the new timer atomically.
+- Server timestamps all live timer stops.
+- All time/allocation/capacity APIs are Workspace-tenant scoped and use permission keys/custom roles, not role-name authorization.
+- Cross-Workspace time entry, workload allocation, and capacity mutation attacks are rejected by same-Workspace lookups and composite relations.
+- Recurring generated Tasks copy estimates and completion policy blueprints only; TimeEntries are never copied.
+- All Tasks and Kanban hot paths do not hydrate TimeEntry history.
+- Workload uses set-based membership/task queries and paginates member results.
+- Workload states use locked utilization thresholds.
+- Workspace timezone is server-authoritative for workload and time report calendar interpretation; clients no longer pass workload timezone query parameters.
+- No surveillance, payroll, billing, gamification, notifications, Calendar, or Gantt scope was introduced.
+
+Known limitations:
+
+- Task Detail has backend and service support for time entry actions, but the most complete visible UX is currently the global timer, Time Tracking page, and Workload page.
+- The Time Tracking and Workload pages are intentionally operational summaries; richer inline allocation/capacity editors remain deferred.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:integration`, `pnpm build`, `pnpm test:e2e`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm test:integration` passes 92/92 API integration tests plus 11/11 worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- Focused Phase 7.8 integration coverage verifies global timer switching, terminal auto-stop, manual time on completed Tasks, report clipping across the full filtered dataset, Workspace-timezone workload/report boundaries, recurrence timezone defaults/snapshots, workload allocation math, unallocated/unscheduled/overdue buckets, and capacity overrides.
+- Build passes with the existing Next ESLint-plugin detection warning.
+
+### Phase 7.9 - Task Views - COMPLETE / PASS
+
+Implemented:
+
+- Calendar - COMPLETE / PASS
+- Gantt - COMPLETE / PASS
+- Team - COMPLETE / PASS
+- Reports - COMPLETE / PASS
+- Activity Logs - COMPLETE / PASS
+- Nullable `Task.plannedStartAt` with safe migration, Prisma mapping, create/edit/schedule validation, and Gantt scheduling support.
+- Calendar view under `/workspace/tasks?view=calendar`, driven by `dueAt`, with server-authoritative Workspace timezone windows, fixed month summaries, bounded day/week detail loading, and derived urgency separate from priority.
+- Gantt view under `/workspace/tasks?view=gantt`, requiring `plannedStartAt + dueAt`, keeping missing-boundary work unscheduled, reusing `TaskDependency` for display, and applying schedule updates through the server.
+- Team view at `/workspace/tasks/team`, reusing Phase 7.8 Workload calculation and capacity/allocation semantics.
+- Reports view at `/workspace/tasks/reports`, backed by server-side summary and CSV export for the current filters with formula-injection mitigation.
+- Activity Logs view at `/workspace/tasks/activity`, reusing `AuditLog` with server-side filters, pagination, and CSV export.
+- Task navigation, English/Tamil labels, planned-start create/detail visibility, and responsive view switching for List/Grid/Compact/Kanban/Calendar/Gantt.
+
+Security/performance invariants:
+
+- Workspace timezone remains authoritative; clients cannot choose arbitrary Calendar/Gantt/Reports timezone.
+- Day/week/month boundaries are computed server-side using Workspace-local calendar boundaries, including DST-safe `luxon` windows.
+- Calendar Month/Week uses Workspace timezone; Month cells remain fixed and summary-driven.
+- Calendar day detail is separately loaded and paginated by Workspace-local date.
+- Calendar urgency is derived from deadline state and remains separate from priority.
+- Terminal overdue Tasks never show overdue urgency.
+- Gantt uses `plannedStartAt + dueAt`; incomplete schedules remain Unscheduled.
+- Gantt reuses `TaskDependency`, has no second dependency graph, and does not auto-schedule dependent Tasks.
+- Gantt mutations are server-authoritative and validate the final date pair atomically.
+- Team reuses Phase 7.8 workload/capacity with no second workload formula.
+- Reports are server aggregated and KPI values use one consistent filtered Task population.
+- Completion trend uses reliable AuditLog completion evidence only and avoids duplicate counts when status-change and approval evidence refer to the same Task/date completion.
+- Tracked-time report metrics respect Time permissions.
+- CSV exports follow active filters and prevent formula injection.
+- Activity Logs use the existing immutable Audit system only.
+- Activity DTO metadata is allowlisted/safe; filtering/export is server-side.
+- All Task Views are Workspace/timezone safe and load lazily.
+- List/Grid/Compact/Kanban hot paths remain unchanged.
+- No role-name authorization and no Phase 7.10+/Phase 10+ scope was introduced.
+- Gantt is display/update only and does not auto-reschedule dependencies.
+- Team view continues to use Workload, not actual tracked time.
+- Reports and Activity are server-side filtered and aggregated/exported; browser all-data aggregation is not introduced.
+- All new routes remain Workspace-tenant scoped and permission-key based, with no role-name authorization.
+- All Tasks/Kanban hot paths continue to avoid TimeEntry history hydration.
+- List/Grid/Compact/Kanban task browser behavior remains intact.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm test:integration` passes 93/93 API integration tests plus 11/11 worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- Focused Phase 7.9 integration coverage verifies planned-start interval rejection, server schedule updates, cross-Workspace schedule fences, Calendar month summaries plus separately paginated day detail, Workspace timezone/DST boundaries, terminal overdue SAFE urgency, Gantt dependency display and unscheduled counts, report aggregation/export, duplicate-safe completion trend evidence, activity pagination, and CSV formula mitigation.
+- Build passes with the existing Next ESLint-plugin detection warning.
+
+### Phase 7.10 - Final Task Security + Performance + Integration Audit - COMPLETE / PASS
+
+Implemented:
+
+- Final Task Management module audit and hardening across Task CRUD, create, All Tasks, bulk actions, hierarchy, dependencies, related Tasks, comments, internal comments, mentions, reactions, Tags, attachments, Kanban, recurrence, Templates, completion proof, approvals, time tracking, workload, Calendar, Gantt, Team, Reports, Activity Logs, audit, query/cache isolation, concurrency, database constraints, performance, routing, responsive/accessibility/i18n/theme, storage, and workers.
+- Time report totals now use a set-based database aggregate for clipped overlap duration instead of loading every matching TimeEntry row.
+- Reports and Activity CSV exports now enforce an explicit 10,000-row full-filter maximum and return machine-readable `TASK_EXPORT_TOO_LARGE` instead of silently truncating.
+- Task query DTOs now bound Task search and Activity action filters.
+- Login now routes into the current scope-aware dashboard shell (`/workspace/dashboard` when a Workspace is selected, otherwise `/agency/dashboard`) instead of the legacy `/dashboard` placeholder.
+- Focused integration coverage now verifies the explicit oversized Activity export failure.
+
+Final Phase 7 invariants:
+
+- Task data is Workspace isolated.
+- Custom-role RBAC remains backend authoritative.
+- No role-name authorization is used for Task module authorization.
+- Task creation and bulk operations are transactional.
+- All Tasks remains server-side and bounded.
+- Relationships are tenant-safe and cycle-safe.
+- Comments, Internal comments, Mentions, and Reactions remain isolated.
+- Tags retain ACTIVE/ARCHIVED lifecycle semantics.
+- Attachments reuse Workspace physical storage safely.
+- Kanban reuses StatusDefinition and server-owned Decimal rank.
+- Recurrence is PostgreSQL-authoritative and idempotent.
+- Templates create independent Task snapshots.
+- Completion proof and approval are immutable and concurrency-safe.
+- StatusDefinition remains the sole Task status engine.
+- Global timer uniqueness is database enforced.
+- Terminal transitions atomically stop active Task timers.
+- Workload uses planned estimates, not tracked time.
+- Workspace timezone is authoritative.
+- Calendar, Gantt, Team, Reports, and Activity remain server-driven/lazy.
+- Reports and Activity CSVs are tenant-safe and formula-injection protected.
+- AuditLog remains immutable and Activity remains read-only.
+- Task hot paths avoid N+1/request fan-out.
+- Query keys remain Workspace safe.
+- Migrations validate from a clean migration chain.
+- Task frontend surfaces remain responsive/accessibility/i18n/theme safe.
+- Phase 7 introduces no premature Phase 8+ features.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm test:integration` passes 93/93 API integration tests plus 11/11 worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- Build passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+
+### Phase 7 - Task Management - COMPLETE / PASS
+
+The full Phase 7 Task Management module is production-safe for the audited scope. The next phase is Phase 8 - Project Management System. Do not start Phase 8 automatically.
+
+### Phase 8.1 - Project Core + Status Migration - COMPLETE / PASS
+
+Implemented:
+
+- Existing `Project` model retained as the Project foundation; no parallel Project system was introduced.
+- Project belongs to exactly one Workspace, and Workspace remains the Project tenant boundary through canonical `/api/v1/workspaces/:workspaceId/projects` APIs.
+- Project lifecycle now uses Workspace-scoped `StatusDefinition` records with `entityType = PROJECT`.
+- Legacy `Project.status` is no longer runtime business authority; it is retained temporarily for compatibility and deterministic archival mapping.
+- Existing legacy Project status data is preserved and migrated deterministically into `statusDefinitionId`: `DRAFT` -> Initial Meeting, `ACTIVE` -> Development, `ARCHIVED` -> Completed.
+- Project core fields now include `priority`, `plannedStartAt`, `dueAt`, and optional `departmentId`.
+- Project CRUD is Workspace scoped, permission-key based, and audited.
+- Project list is server-side paginated and filterable by search, PROJECT status, priority, department, planned-start range, due range, and bounded sort options.
+- Minimal `/workspace/projects` UX supports list, create, detail, edit, status change, and soft delete.
+- Workspace Tasks project selectors now read from the canonical Workspace-scoped Project API.
+- Legacy `/api/v1/projects` routes remain as thin compatibility wrappers over the same service.
+
+Security/performance invariants:
+
+- Project status assignment accepts only active same-Workspace `StatusDefinition(PROJECT)` rows.
+- TASK/TICKET/foreign/inactive/missing statuses are rejected for Project lifecycle mutations.
+- Task `StatusDefinition` rows cannot be used by Projects.
+- Project priority accepts LOW, MEDIUM, HIGH, and URGENT without affecting status semantics.
+- `plannedStartAt` and `dueAt` are stored as UTC timestamps and validated as a final pair on create and patch.
+- Project department assignment accepts only active same-Workspace Departments.
+- Project list, search, filter, sort, and pagination are server-side and bounded.
+- Project list/detail return Status/Department summaries without per-Project preload of Tasks, Files, Members, Activity, Reports, Kanban, or Gantt.
+- Project delete is a soft archive and does not cascade into Tasks, Assets, or attachments.
+- No role-name authorization is used.
+- No Project owner/member/visibility/tag/progress functionality was added.
+- `TaskProject` remains unchanged.
+- `ProjectAttachment` compatibility remains unchanged.
+- Project asset routes remain compatibility-scoped and were not redesigned in Phase 8.1.
+- No Phase 8.2+ features were introduced.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm test:integration` passes 94/94 API integration tests plus 11/11 worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- Build passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+
+Phase 8.1 is complete/pass. Do not start Phase 8.2 automatically.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -857,6 +1435,11 @@ Known deferred Task features:
 - Backend tenant authorization is authoritative.
 - Workspace users/departments, roles/permissions, and statuses are tenant-scoped Workspace resources.
 - Shared statuses are entity-type isolated across TASK, PROJECT, and TICKET.
+- Project lifecycle is backed by Workspace-scoped `StatusDefinition(PROJECT)` records.
+- Legacy `Project.status` is compatibility-only and must not be restored as Project lifecycle authority.
+- Project CRUD and listing must remain Workspace scoped.
+- Project `plannedStartAt` and `dueAt` are UTC timestamps and must be validated as a final pair.
+- `TaskProject` and `ProjectAttachment` compatibility must be preserved while extending Project features.
 - Each initialized Workspace/entity type has exactly one active default status.
 - Status ordering is transactional and complete-list based.
 - Frontend tenant caches must include Workspace identity, and status caches must include entity type.
@@ -883,7 +1466,7 @@ Known deferred Task features:
 - Role
 - Permission
 - StatusDefinition
-- Task / TaskAssignee / TaskFollower / TaskProject / TaskComment / TaskCommentMention / TaskCommentReaction
+- Task / TaskAssignee / TaskFollower / TaskProject / TaskKanbanColumnSetting / TaskRecurrenceSeries / TaskRecurrenceCompletionApprover / TaskCompletionPolicy / TaskCompletionPolicyApprover / TaskCompletionSubmission / TaskCompletionProofItem / TaskCompletionProofAttachment / TaskCompletionSubmissionApprover / TaskCompletionApprovalDecision / WorkspaceTag / TaskTag / TaskComment / TaskCommentMention / TaskCommentReaction / Attachment / TaskAttachment / ProjectAttachment
 - FeatureDefinition / FeatureEntitlement
 - Project
 - Asset
@@ -944,6 +1527,22 @@ Do not infer or invent model fields from this list.
 | Phase 7.4B3   | PASS   | Not tagged                       |
 | Phase 7.4B    | PASS   | Not tagged                       |
 | Phase 7.4C1   | PASS   | Not tagged                       |
+| Phase 7.4C2   | PASS   | Not tagged                       |
+| Phase 7.4C3A  | PASS   | Not tagged                       |
+| Phase 7.4C3B  | PASS   | Not tagged                       |
+| Phase 7.4C3   | PASS   | Not tagged                       |
+| Phase 7.4C    | PASS   | Not tagged                       |
+| Phase 7.4D    | PASS   | Not tagged                       |
+| Phase 7.4E    | PASS   | Not tagged                       |
+| Phase 7.4     | PASS   | Not tagged                       |
+| Phase 7.5     | PASS   | Not tagged                       |
+| Phase 7.6     | PASS   | Not tagged                       |
+| Phase 7.7     | PASS   | Not tagged                       |
+| Phase 7.8     | PASS   | Not tagged                       |
+| Phase 7.9     | PASS   | Not tagged                       |
+| Phase 7.10    | PASS   | Not tagged                       |
+| Phase 7       | PASS   | Not tagged                       |
+| Phase 8.1     | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -975,6 +1574,21 @@ Confirmed current warnings:
 - Phase 7.4B2 Dependencies + Related Tasks UX and focused refinement are complete/pass.
 - Phase 7.4B3 Final Task Relationships UX security/performance/integration audit is complete/pass.
 - Phase 7.4B Task Relationships UX is complete/pass.
-- Phase 7.4C1 Task Comments + Mentions + Reactions Backend is complete/pass; the next phase is Phase 7.4C1 Refinement.
+- Phase 7.4C1 Task Comments + Mentions + Reactions Backend is complete/pass.
+- Phase 7.4C2 Workspace Tags Backend and focused refinement are complete/pass; the next phase is Phase 7.4C3 Comments, Mentions, Reactions & Tags UX.
+- Phase 7.4C3A Comments + Mentions + Reactions UX and focused refinement are complete/pass; the next phase is Phase 7.4C3B Task Tags UX.
+- Phase 7.4C3B Task Tags UX and focused refinement are complete/pass; the next phase is Phase 7.4C3 Final Comments/Mentions/Reactions/Tags Integration Audit.
+- Phase 7.4C3 Final Comments/Mentions/Reactions/Tags integration audit is complete/pass.
+- Phase 7.4C Comments/Mentions/Reactions/Tags is complete/pass; the next phase is Phase 7.4D Task Attachment Architecture.
+- Phase 7.4D Task Attachment Architecture and focused refinement are complete/pass.
+- Phase 7.4E Final Task Relationships Audit is complete/pass.
+- Phase 7.4 Task Relationships is complete/pass.
+- Phase 7.5 Kanban implementation and focused refinement are complete/pass.
+- Phase 7.6 Recurring Tasks + Templates implementation and final focused refinement are complete/pass.
+- Phase 7.8 Time Tracking + Workload, including the Workspace timezone refinement, is complete/pass.
+- Phase 7.9 Task Views final focused refinement is complete/pass.
+- Phase 7.10 Final Task Security + Performance + Integration Audit is complete/pass.
+- Phase 7 Task Management is complete/pass; the next phase is Phase 8 Project Management System.
+- Phase 8.1 Project Core + Status Migration is complete/pass; the next phase is Phase 8.2 Project Owner + Members + Visibility.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

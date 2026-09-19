@@ -22,6 +22,7 @@ import { ProjectsModule } from './modules/projects/projects.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { TasksModule } from './modules/tasks/tasks.module';
+import { TagsModule } from './modules/tags/tags.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { TasksModule } from './modules/tasks/tasks.module';
     ProjectsModule,
     AssetsModule,
     TasksModule,
+    TagsModule,
     AgenciesModule,
     WorkspacesModule,
     UsersModule,

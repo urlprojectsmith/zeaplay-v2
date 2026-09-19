@@ -8,6 +8,7 @@ export interface SessionWorkspace {
   agencyId: string;
   name: string;
   slug: string;
+  timezone: string;
   status: string;
   role: string | null;
   membershipId: string | null;

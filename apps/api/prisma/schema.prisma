@@ -106,6 +106,90 @@ enum TaskCommentReactionType {
   CHECK
 }
 
+enum WorkspaceTagStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AttachmentType {
+  FILE
+  URL
+}
+
+enum TaskRecurrenceFrequency {
+  DAILY
+  WEEKDAYS
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum TaskRecurrenceCustomUnit {
+  DAY
+  WEEK
+  MONTH
+}
+
+enum TaskRecurrenceStatus {
+  ACTIVE
+  PAUSED
+  ENDED
+  ERROR
+}
+
+enum TaskRecurrenceEndMode {
+  NEVER
+  ON_DATE
+  AFTER_COUNT
+}
+
+enum TaskTemplateStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum TaskTimeEntryType {
+  TIMER
+  MANUAL
+}
+
+enum TaskTimeEntryStopReason {
+  USER
+  SWITCHED_TASK
+  TASK_TERMINAL
+  TASK_DELETED
+  ADMIN
+}
+
+enum TaskCompletionProofRequirementMode {
+  NONE
+  ANY
+  SPECIFIC
+}
+
+enum TaskCompletionProofType {
+  TEXT
+  ATTACHMENT
+  URL
+  CHECKLIST_CONFIRMATION
+}
+
+enum TaskCompletionApproverMode {
+  ANY_ONE
+  ALL_REQUIRED
+}
+
+enum TaskCompletionSubmissionStatus {
+  PENDING_APPROVAL
+  ACCEPTED
+  REJECTED
+}
+
+enum TaskCompletionDecision {
+  APPROVED
+  REJECTED
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -126,20 +210,32 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  memberships             Membership[]
-  agencyMemberships       AgencyMembership[]
-  workspaceMemberships    WorkspaceMembership[]
-  refreshTokens           RefreshToken[]
-  projects                Project[]             @relation("ProjectCreator")
-  tasksCreated            Task[]                @relation("TaskCreator")
-  tasksUpdated            Task[]                @relation("TaskUpdater")
-  taskDependenciesCreated TaskDependency[]      @relation("TaskDependencyCreator")
-  taskRelatedLinksCreated TaskRelatedTask[]     @relation("TaskRelatedTaskCreator")
-  taskCommentsAuthored    TaskComment[]         @relation("TaskCommentAuthorUser")
-  assets                  Asset[]
-  auditLogs               AuditLog[]
-  agenciesCreated         Agency[]              @relation("AgencyCreator")
-  workspacesCreated       Workspace[]           @relation("WorkspaceCreator")
+  memberships                   Membership[]
+  agencyMemberships             AgencyMembership[]
+  workspaceMemberships          WorkspaceMembership[]
+  refreshTokens                 RefreshToken[]
+  projects                      Project[]              @relation("ProjectCreator")
+  tasksCreated                  Task[]                 @relation("TaskCreator")
+  tasksUpdated                  Task[]                 @relation("TaskUpdater")
+  taskRecurrenceSeriesCreated   TaskRecurrenceSeries[] @relation("TaskRecurrenceSeriesCreator")
+  taskRecurrenceSeriesUpdated   TaskRecurrenceSeries[] @relation("TaskRecurrenceSeriesUpdater")
+  taskTemplatesCreated          TaskTemplate[]         @relation("TaskTemplateCreator")
+  taskTemplatesUpdated          TaskTemplate[]         @relation("TaskTemplateUpdater")
+  taskCompletionPoliciesCreated TaskCompletionPolicy[] @relation("TaskCompletionPolicyCreator")
+  taskCompletionPoliciesUpdated TaskCompletionPolicy[] @relation("TaskCompletionPolicyUpdater")
+  taskTimeEntries               TaskTimeEntry[]
+  taskDependenciesCreated       TaskDependency[]       @relation("TaskDependencyCreator")
+  taskRelatedLinksCreated       TaskRelatedTask[]      @relation("TaskRelatedTaskCreator")
+  workspaceTagsCreated          WorkspaceTag[]         @relation("WorkspaceTagCreator")
+  taskTagsCreated               TaskTag[]              @relation("TaskTagCreator")
+  taskCommentsAuthored          TaskComment[]          @relation("TaskCommentAuthorUser")
+  attachmentsCreated            Attachment[]
+  taskAttachmentsAttached       TaskAttachment[]
+  projectAttachmentsAttached    ProjectAttachment[]
+  assets                        Asset[]
+  auditLogs                     AuditLog[]
+  agenciesCreated               Agency[]               @relation("AgencyCreator")
+  workspacesCreated             Workspace[]            @relation("WorkspaceCreator")
 
   @@map("users")
 }
@@ -185,6 +281,7 @@ model Workspace {
   agencyId          String          @map("agency_id") @db.Uuid
   name              String          @db.VarChar(160)
   slug              String          @db.VarChar(120)
+  timezone          String          @default("UTC") @db.VarChar(80)
   status            WorkspaceStatus @default(ACTIVE)
   storageUsedBytes  BigInt          @default(0) @map("storage_used_bytes")
   storageLimitBytes BigInt          @default(1073741824) @map("storage_limit_bytes")
@@ -192,25 +289,52 @@ model Workspace {
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  agency              Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  createdBy           User                  @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  memberships         WorkspaceMembership[]
-  departments         Department[]
-  statusDefinitions   StatusDefinition[]
-  projects            Project[]
-  tasks               Task[]
-  taskAssignees       TaskAssignee[]
-  taskFollowers       TaskFollower[]
-  taskProjects        TaskProject[]
-  taskDependencies    TaskDependency[]
-  taskRelatedTasks    TaskRelatedTask[]
-  taskComments        TaskComment[]
-  taskCommentMentions TaskCommentMention[]
-  taskCommentReactions TaskCommentReaction[]
-  assets              Asset[]
-  processingJobs      ProcessingJob[]
-  featureEntitlements FeatureEntitlement[]
-  auditLogs           AuditLog[]
+  agency                            Agency                             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy                         User                               @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships                       WorkspaceMembership[]
+  departments                       Department[]
+  statusDefinitions                 StatusDefinition[]
+  projects                          Project[]
+  tasks                             Task[]
+  taskRecurrenceSeries              TaskRecurrenceSeries[]
+  taskTemplates                     TaskTemplate[]
+  taskCompletionPolicies            TaskCompletionPolicy[]
+  taskCompletionPolicyApprovers     TaskCompletionPolicyApprover[]
+  taskCompletionSubmissions         TaskCompletionSubmission[]
+  taskCompletionProofItems          TaskCompletionProofItem[]
+  taskCompletionProofAttachments    TaskCompletionProofAttachment[]
+  taskCompletionSubmissionApprovers TaskCompletionSubmissionApprover[]
+  taskCompletionApprovalDecisions   TaskCompletionApprovalDecision[]
+  taskTimeEntries                   TaskTimeEntry[]
+  taskWorkloadAllocations           TaskWorkloadAllocation[]
+  workspaceMemberCapacities         WorkspaceMemberCapacity[]
+  taskRecurrenceCompletionApprovers TaskRecurrenceCompletionApprover[]
+  taskRecurrenceAssignees           TaskRecurrenceAssignee[]
+  taskRecurrenceFollowers           TaskRecurrenceFollower[]
+  taskRecurrenceProjects            TaskRecurrenceProject[]
+  taskRecurrenceTags                TaskRecurrenceTag[]
+  taskTemplateAssignees             TaskTemplateAssignee[]
+  taskTemplateFollowers             TaskTemplateFollower[]
+  taskTemplateProjects              TaskTemplateProject[]
+  taskTemplateTags                  TaskTemplateTag[]
+  taskAssignees                     TaskAssignee[]
+  taskFollowers                     TaskFollower[]
+  taskProjects                      TaskProject[]
+  taskDependencies                  TaskDependency[]
+  taskRelatedTasks                  TaskRelatedTask[]
+  workspaceTags                     WorkspaceTag[]
+  taskTags                          TaskTag[]
+  taskComments                      TaskComment[]
+  taskCommentMentions               TaskCommentMention[]
+  taskCommentReactions              TaskCommentReaction[]
+  taskKanbanColumnSettings          TaskKanbanColumnSetting[]
+  attachments                       Attachment[]
+  taskAttachments                   TaskAttachment[]
+  projectAttachments                ProjectAttachment[]
+  assets                            Asset[]
+  processingJobs                    ProcessingJob[]
+  featureEntitlements               FeatureEntitlement[]
+  auditLogs                         AuditLog[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -229,10 +353,13 @@ model Department {
   createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  managerMembership WorkspaceMembership?  @relation("DepartmentManager", fields: [managerMembershipId], references: [id], onDelete: SetNull)
-  members           WorkspaceMembership[] @relation("DepartmentMembers")
-  tasks             Task[]
+  workspace            Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  managerMembership    WorkspaceMembership?   @relation("DepartmentManager", fields: [managerMembershipId], references: [id], onDelete: SetNull)
+  members              WorkspaceMembership[]  @relation("DepartmentMembers")
+  projects             Project[]
+  tasks                Task[]
+  taskRecurrenceSeries TaskRecurrenceSeries[]
+  taskTemplates        TaskTemplate[]
 
   @@unique([workspaceId, name])
   @@unique([id, workspaceId])
@@ -289,16 +416,31 @@ model WorkspaceMembership {
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user               User           @relation(fields: [userId], references: [id], onDelete: Restrict)
-  workspace          Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  role               Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  department         Department?    @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  managedDepartments Department[]   @relation("DepartmentManager")
-  assignedTasks      TaskAssignee[]
-  followedTasks      TaskFollower[]
-  taskComments       TaskComment[]         @relation("TaskCommentAuthor")
-  commentMentions    TaskCommentMention[]
-  commentReactions   TaskCommentReaction[]
+  user                           User                               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  workspace                      Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  role                           Role                               @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  department                     Department?                        @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  managedDepartments             Department[]                       @relation("DepartmentManager")
+  assignedTasks                  TaskAssignee[]
+  followedTasks                  TaskFollower[]
+  taskComments                   TaskComment[]                      @relation("TaskCommentAuthor")
+  commentMentions                TaskCommentMention[]
+  commentReactions               TaskCommentReaction[]
+  recurrenceAssignees            TaskRecurrenceAssignee[]
+  recurrenceFollowers            TaskRecurrenceFollower[]
+  templateAssignees              TaskTemplateAssignee[]
+  templateFollowers              TaskTemplateFollower[]
+  completionPolicyApprovers      TaskCompletionPolicyApprover[]
+  completionSubmissionsSubmitted TaskCompletionSubmission[]         @relation("TaskCompletionSubmittedBy")
+  completionSubmissionApprovals  TaskCompletionSubmissionApprover[] @relation("TaskCompletionSubmissionApproverMembership")
+  completionApprovalDecisions    TaskCompletionApprovalDecision[]   @relation("TaskCompletionDecisionApprover")
+  recurrenceCompletionApprovers  TaskRecurrenceCompletionApprover[]
+  taskTimeEntries                TaskTimeEntry[]                    @relation("TaskTimeEntryMembership")
+  taskTimeEntriesCreated         TaskTimeEntry[]                    @relation("TaskTimeEntryCreator")
+  taskTimeEntriesUpdated         TaskTimeEntry[]                    @relation("TaskTimeEntryUpdater")
+  taskTimeEntriesDeleted         TaskTimeEntry[]                    @relation("TaskTimeEntryDeleter")
+  taskWorkloadAllocations        TaskWorkloadAllocation[]
+  workspaceMemberCapacity        WorkspaceMemberCapacity?
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -374,9 +516,14 @@ model StatusDefinition {
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  projects  Project[]
-  tasks     Task[]
+  workspace                      Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  projects                       Project[]
+  tasks                          Task[]
+  taskKanbanColumnSettings       TaskKanbanColumnSetting[]
+  taskRecurrenceSeries           TaskRecurrenceSeries[]
+  taskTemplates                  TaskTemplate[]
+  requestedCompletionSubmissions TaskCompletionSubmission[] @relation("TaskCompletionRequestedStatus")
+  previousCompletionSubmissions  TaskCompletionSubmission[] @relation("TaskCompletionPreviousStatus")
 
   @@unique([workspaceId, entityType, nameNormalized])
   @@unique([id, workspaceId])
@@ -409,68 +556,562 @@ model Project {
   description        String?       @db.VarChar(1000)
   status             ProjectStatus @default(DRAFT)
   statusDefinitionId String?       @map("status_definition_id") @db.Uuid
+  priority           TaskPriority  @default(MEDIUM)
+  plannedStartAt     DateTime?     @map("planned_start_at") @db.Timestamptz(6)
+  dueAt              DateTime?     @map("due_at") @db.Timestamptz(6)
+  departmentId       String?       @map("department_id") @db.Uuid
   createdById        String        @map("created_by_id") @db.Uuid
   archivedAt         DateTime?     @map("archived_at") @db.Timestamptz(6)
   createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  statusDefinition StatusDefinition? @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdBy        User              @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  assets           Asset[]
-  processingJobs   ProcessingJob[]
-  taskLinks        TaskProject[]
+  workspace           Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition    StatusDefinition?       @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  department          Department?             @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy           User                    @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assets              Asset[]
+  attachments         ProjectAttachment[]
+  processingJobs      ProcessingJob[]
+  taskLinks           TaskProject[]
+  taskRecurrenceLinks TaskRecurrenceProject[]
+  taskTemplateLinks   TaskTemplateProject[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId])
   @@index([workspaceId, status])
   @@index([workspaceId, statusDefinitionId])
+  @@index([workspaceId, priority])
+  @@index([workspaceId, dueAt])
+  @@index([workspaceId, plannedStartAt])
+  @@index([workspaceId, departmentId])
   @@index([workspaceId, createdAt])
   @@map("projects")
 }
 
 model Task {
-  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId        String       @map("workspace_id") @db.Uuid
-  title              String       @db.VarChar(160)
-  description        String?      @db.VarChar(4000)
-  priority           TaskPriority @default(MEDIUM)
-  statusDefinitionId String       @map("status_definition_id") @db.Uuid
-  parentTaskId       String?      @map("parent_task_id") @db.Uuid
-  departmentId       String?      @map("department_id") @db.Uuid
-  dueAt              DateTime?    @map("due_at") @db.Timestamptz(6)
-  createdById        String       @map("created_by_id") @db.Uuid
-  updatedById        String?      @map("updated_by_id") @db.Uuid
-  archivedAt         DateTime?    @map("archived_at") @db.Timestamptz(6)
-  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz(6)
-  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                   String       @map("workspace_id") @db.Uuid
+  title                         String       @db.VarChar(160)
+  description                   String?      @db.VarChar(4000)
+  priority                      TaskPriority @default(MEDIUM)
+  statusDefinitionId            String       @map("status_definition_id") @db.Uuid
+  parentTaskId                  String?      @map("parent_task_id") @db.Uuid
+  departmentId                  String?      @map("department_id") @db.Uuid
+  plannedStartAt                DateTime?    @map("planned_start_at") @db.Timestamptz(6)
+  dueAt                         DateTime?    @map("due_at") @db.Timestamptz(6)
+  estimatedMinutes              Int?         @map("estimated_minutes")
+  kanbanRank                    Decimal?     @map("kanban_rank") @db.Decimal(30, 12)
+  recurrenceSeriesId            String?      @map("recurrence_series_id") @db.Uuid
+  recurrenceScheduledFor        DateTime?    @map("recurrence_scheduled_for") @db.Timestamptz(6)
+  recurrenceSequence            Int?         @map("recurrence_sequence")
+  recurrenceIsException         Boolean      @default(false) @map("recurrence_is_exception")
+  pendingCompletionSubmissionId String?      @map("pending_completion_submission_id") @db.Uuid
+  createdById                   String       @map("created_by_id") @db.Uuid
+  updatedById                   String?      @map("updated_by_id") @db.Uuid
+  archivedAt                    DateTime?    @map("archived_at") @db.Timestamptz(6)
+  deletedAt                     DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  createdAt                     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace             Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  statusDefinition      StatusDefinition  @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  parentTask            Task?             @relation("TaskHierarchy", fields: [parentTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  subtasks              Task[]            @relation("TaskHierarchy")
-  department            Department?       @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdBy             User              @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy             User?             @relation("TaskUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
-  assignees             TaskAssignee[]
-  followers             TaskFollower[]
-  projects              TaskProject[]
-  blockingDependencies  TaskDependency[]  @relation("TaskDependencyBlocker")
-  blockedByDependencies TaskDependency[]  @relation("TaskDependencyBlocked")
-  relatedTaskALinks     TaskRelatedTask[] @relation("TaskRelatedTaskA")
-  relatedTaskBLinks     TaskRelatedTask[] @relation("TaskRelatedTaskB")
-  comments              TaskComment[]
+  workspace                   Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition            StatusDefinition           @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  parentTask                  Task?                      @relation("TaskHierarchy", fields: [parentTaskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  subtasks                    Task[]                     @relation("TaskHierarchy")
+  department                  Department?                @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  recurrenceSeries            TaskRecurrenceSeries?      @relation(fields: [recurrenceSeriesId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  pendingCompletionSubmission TaskCompletionSubmission?  @relation("TaskPendingCompletionSubmission", fields: [pendingCompletionSubmissionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy                   User                       @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                   User?                      @relation("TaskUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  assignees                   TaskAssignee[]
+  followers                   TaskFollower[]
+  projects                    TaskProject[]
+  blockingDependencies        TaskDependency[]           @relation("TaskDependencyBlocker")
+  blockedByDependencies       TaskDependency[]           @relation("TaskDependencyBlocked")
+  relatedTaskALinks           TaskRelatedTask[]          @relation("TaskRelatedTaskA")
+  relatedTaskBLinks           TaskRelatedTask[]          @relation("TaskRelatedTaskB")
+  tags                        TaskTag[]
+  comments                    TaskComment[]
+  attachments                 TaskAttachment[]
+  completionPolicy            TaskCompletionPolicy?
+  completionSubmissions       TaskCompletionSubmission[] @relation("TaskCompletionSubmissions")
+  timeEntries                 TaskTimeEntry[]
+  workloadAllocations         TaskWorkloadAllocation[]
 
   @@unique([id, workspaceId])
+  @@unique([recurrenceSeriesId, recurrenceSequence])
+  @@index([workspaceId, pendingCompletionSubmissionId])
   @@index([workspaceId, statusDefinitionId, createdAt])
+  @@index([workspaceId, statusDefinitionId, kanbanRank, createdAt])
+  @@index([workspaceId, recurrenceSeriesId, recurrenceSequence])
   @@index([workspaceId, priority, createdAt])
+  @@index([workspaceId, plannedStartAt, dueAt])
   @@index([workspaceId, dueAt])
+  @@index([workspaceId, estimatedMinutes])
   @@index([workspaceId, parentTaskId, createdAt])
   @@index([workspaceId, departmentId])
   @@index([workspaceId, createdAt])
   @@index([workspaceId, createdById])
   @@map("tasks")
+}
+
+model TaskTimeEntry {
+  id                    String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId           String                   @map("workspace_id") @db.Uuid
+  taskId                String                   @map("task_id") @db.Uuid
+  userId                String                   @map("user_id") @db.Uuid
+  workspaceMembershipId String                   @map("workspace_membership_id") @db.Uuid
+  entryType             TaskTimeEntryType        @map("entry_type")
+  startedAt             DateTime                 @map("started_at") @db.Timestamptz(6)
+  endedAt               DateTime?                @map("ended_at") @db.Timestamptz(6)
+  durationSeconds       Int?                     @map("duration_seconds")
+  stopReason            TaskTimeEntryStopReason? @map("stop_reason")
+  createdByMembershipId String                   @map("created_by_membership_id") @db.Uuid
+  updatedByMembershipId String?                  @map("updated_by_membership_id") @db.Uuid
+  deletedAt             DateTime?                @map("deleted_at") @db.Timestamptz(6)
+  deletedByMembershipId String?                  @map("deleted_by_membership_id") @db.Uuid
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task                Task                 @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  workspaceMembership WorkspaceMembership  @relation("TaskTimeEntryMembership", fields: [workspaceMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership WorkspaceMembership  @relation("TaskTimeEntryCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  updatedByMembership WorkspaceMembership? @relation("TaskTimeEntryUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  deletedByMembership WorkspaceMembership? @relation("TaskTimeEntryDeleter", fields: [deletedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, taskId, startedAt])
+  @@index([workspaceId, workspaceMembershipId, startedAt])
+  @@index([workspaceId, startedAt])
+  @@index([userId, entryType, endedAt, deletedAt])
+  @@map("task_time_entries")
+}
+
+model TaskWorkloadAllocation {
+  taskId                String   @map("task_id") @db.Uuid
+  workspaceId           String   @map("workspace_id") @db.Uuid
+  workspaceMembershipId String   @map("workspace_membership_id") @db.Uuid
+  plannedMinutes        Int      @map("planned_minutes")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task       Task                @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [workspaceMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([taskId, workspaceMembershipId])
+  @@index([workspaceId, workspaceMembershipId])
+  @@map("task_workload_allocations")
+}
+
+model WorkspaceMemberCapacity {
+  workspaceId           String   @map("workspace_id") @db.Uuid
+  workspaceMembershipId String   @map("workspace_membership_id") @db.Uuid
+  weeklyCapacityMinutes Int      @map("weekly_capacity_minutes")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [workspaceMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([workspaceId, workspaceMembershipId])
+  @@unique([workspaceMembershipId, workspaceId])
+  @@index([workspaceId])
+  @@map("workspace_member_capacities")
+}
+
+model TaskCompletionPolicy {
+  id                           String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                  String                             @map("workspace_id") @db.Uuid
+  taskId                       String                             @map("task_id") @db.Uuid
+  proofRequirementMode         TaskCompletionProofRequirementMode @default(NONE) @map("proof_requirement_mode")
+  requiredProofTypes           TaskCompletionProofType[]          @default([]) @map("required_proof_types")
+  approvalRequired             Boolean                            @default(false) @map("approval_required")
+  approverMode                 TaskCompletionApproverMode?        @map("approver_mode")
+  includeTaskCreator           Boolean                            @default(false) @map("include_task_creator")
+  includePermissionApprovers   Boolean                            @default(false) @map("include_permission_approvers")
+  includeProjectOwnersManagers Boolean                            @default(false) @map("include_project_owners_managers")
+  createdById                  String                             @map("created_by_id") @db.Uuid
+  updatedById                  String?                            @map("updated_by_id") @db.Uuid
+  createdAt                    DateTime                           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime                           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task      Task                           @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy User                           @relation("TaskCompletionPolicyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy User?                          @relation("TaskCompletionPolicyUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  approvers TaskCompletionPolicyApprover[]
+
+  @@unique([taskId])
+  @@unique([taskId, workspaceId])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, taskId])
+  @@map("task_completion_policies")
+}
+
+model TaskCompletionPolicyApprover {
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  policyId     String   @map("policy_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  policy     TaskCompletionPolicy @relation(fields: [policyId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  membership WorkspaceMembership  @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([policyId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@map("task_completion_policy_approvers")
+}
+
+model TaskCompletionSubmission {
+  id                                  String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                         String                             @map("workspace_id") @db.Uuid
+  taskId                              String                             @map("task_id") @db.Uuid
+  version                             Int
+  status                              TaskCompletionSubmissionStatus
+  requestedTerminalStatusDefinitionId String                             @map("requested_terminal_status_definition_id") @db.Uuid
+  previousStatusDefinitionId          String                             @map("previous_status_definition_id") @db.Uuid
+  submittedByMembershipId             String                             @map("submitted_by_membership_id") @db.Uuid
+  submittedAt                         DateTime                           @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  proofRequirementModeSnapshot        TaskCompletionProofRequirementMode @map("proof_requirement_mode_snapshot")
+  requiredProofTypesSnapshot          TaskCompletionProofType[]          @default([]) @map("required_proof_types_snapshot")
+  approvalRequiredSnapshot            Boolean                            @map("approval_required_snapshot")
+  approverModeSnapshot                TaskCompletionApproverMode?        @map("approver_mode_snapshot")
+  resolvedAt                          DateTime?                          @map("resolved_at") @db.Timestamptz(6)
+  createdAt                           DateTime                           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace                         Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task                              Task                               @relation("TaskCompletionSubmissions", fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  pendingForTasks                   Task[]                             @relation("TaskPendingCompletionSubmission")
+  requestedTerminalStatusDefinition StatusDefinition                   @relation("TaskCompletionRequestedStatus", fields: [requestedTerminalStatusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  previousStatusDefinition          StatusDefinition                   @relation("TaskCompletionPreviousStatus", fields: [previousStatusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  submittedBy                       WorkspaceMembership                @relation("TaskCompletionSubmittedBy", fields: [submittedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  proofItems                        TaskCompletionProofItem[]
+  approvers                         TaskCompletionSubmissionApprover[]
+  decisions                         TaskCompletionApprovalDecision[]
+
+  @@unique([id, workspaceId])
+  @@unique([taskId, version])
+  @@index([workspaceId, taskId, createdAt])
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, submittedByMembershipId])
+  @@map("task_completion_submissions")
+}
+
+model TaskCompletionProofItem {
+  id                 String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String                  @map("workspace_id") @db.Uuid
+  submissionId       String                  @map("submission_id") @db.Uuid
+  type               TaskCompletionProofType
+  textValue          String?                 @map("text_value") @db.VarChar(4000)
+  url                String?                 @db.VarChar(2048)
+  checklistConfirmed Boolean?                @map("checklist_confirmed")
+  createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace   Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  submission  TaskCompletionSubmission        @relation(fields: [submissionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachments TaskCompletionProofAttachment[]
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, submissionId, type])
+  @@map("task_completion_proof_items")
+}
+
+model TaskCompletionProofAttachment {
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  proofItemId  String   @map("proof_item_id") @db.Uuid
+  attachmentId String   @map("attachment_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  proofItem  TaskCompletionProofItem @relation(fields: [proofItemId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachment Attachment              @relation(fields: [attachmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([proofItemId, attachmentId])
+  @@index([workspaceId, attachmentId])
+  @@map("task_completion_proof_attachments")
+}
+
+model TaskCompletionSubmissionApprover {
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  submissionId String   @map("submission_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  sources      String[] @default([])
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  submission TaskCompletionSubmission @relation(fields: [submissionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  membership WorkspaceMembership      @relation("TaskCompletionSubmissionApproverMembership", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([submissionId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@index([workspaceId, submissionId])
+  @@map("task_completion_submission_approvers")
+}
+
+model TaskCompletionApprovalDecision {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String                 @map("workspace_id") @db.Uuid
+  submissionId         String                 @map("submission_id") @db.Uuid
+  approverMembershipId String                 @map("approver_membership_id") @db.Uuid
+  decision             TaskCompletionDecision
+  reason               String?                @db.VarChar(1000)
+  decidedAt            DateTime               @default(now()) @map("decided_at") @db.Timestamptz(6)
+
+  workspace  Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  submission TaskCompletionSubmission @relation(fields: [submissionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  approver   WorkspaceMembership      @relation("TaskCompletionDecisionApprover", fields: [approverMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([submissionId, approverMembershipId])
+  @@index([workspaceId, approverMembershipId, decidedAt])
+  @@index([workspaceId, submissionId])
+  @@map("task_completion_approval_decisions")
+}
+
+model TaskRecurrenceSeries {
+  id                                     String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                            String                             @map("workspace_id") @db.Uuid
+  status                                 TaskRecurrenceStatus               @default(ACTIVE)
+  title                                  String                             @db.VarChar(160)
+  description                            String?                            @db.VarChar(4000)
+  priority                               TaskPriority                       @default(MEDIUM)
+  statusDefinitionId                     String                             @map("status_definition_id") @db.Uuid
+  departmentId                           String?                            @map("department_id") @db.Uuid
+  estimatedMinutes                       Int?                               @map("estimated_minutes")
+  timezone                               String                             @db.VarChar(80)
+  frequency                              TaskRecurrenceFrequency
+  interval                               Int                                @default(1)
+  customIntervalUnit                     TaskRecurrenceCustomUnit?          @map("custom_interval_unit")
+  startLocalDate                         DateTime                           @map("start_local_date") @db.Date
+  localTime                              String                             @map("local_time") @db.VarChar(5)
+  selectedWeekdays                       Int[]                              @default([]) @map("selected_weekdays")
+  monthlyDay                             Int?                               @map("monthly_day")
+  endMode                                TaskRecurrenceEndMode              @default(NEVER) @map("end_mode")
+  untilLocalDate                         DateTime?                          @map("until_local_date") @db.Date
+  maxOccurrences                         Int?                               @map("max_occurrences")
+  completionProofRequirementMode         TaskCompletionProofRequirementMode @default(NONE) @map("completion_proof_requirement_mode")
+  completionRequiredProofTypes           TaskCompletionProofType[]          @default([]) @map("completion_required_proof_types")
+  completionApprovalRequired             Boolean                            @default(false) @map("completion_approval_required")
+  completionApproverMode                 TaskCompletionApproverMode?        @map("completion_approver_mode")
+  completionIncludeTaskCreator           Boolean                            @default(false) @map("completion_include_task_creator")
+  completionIncludePermissionApprovers   Boolean                            @default(false) @map("completion_include_permission_approvers")
+  completionIncludeProjectOwnersManagers Boolean                            @default(false) @map("completion_include_project_owners_managers")
+  generatedCount                         Int                                @default(0) @map("generated_count")
+  nextOccurrenceAt                       DateTime?                          @map("next_occurrence_at") @db.Timestamptz(6)
+  lastGeneratedAt                        DateTime?                          @map("last_generated_at") @db.Timestamptz(6)
+  pausedAt                               DateTime?                          @map("paused_at") @db.Timestamptz(6)
+  endedAt                                DateTime?                          @map("ended_at") @db.Timestamptz(6)
+  lastErrorCode                          String?                            @map("last_error_code") @db.VarChar(80)
+  createdById                            String                             @map("created_by_id") @db.Uuid
+  updatedById                            String?                            @map("updated_by_id") @db.Uuid
+  createdAt                              DateTime                           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                              DateTime                           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace           Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition    StatusDefinition                   @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  department          Department?                        @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy           User                               @relation("TaskRecurrenceSeriesCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy           User?                              @relation("TaskRecurrenceSeriesUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  occurrences         Task[]
+  assignees           TaskRecurrenceAssignee[]
+  followers           TaskRecurrenceFollower[]
+  projects            TaskRecurrenceProject[]
+  tags                TaskRecurrenceTag[]
+  completionApprovers TaskRecurrenceCompletionApprover[]
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status, nextOccurrenceAt])
+  @@index([status, nextOccurrenceAt])
+  @@index([workspaceId, createdAt])
+  @@map("task_recurrence_series")
+}
+
+model TaskRecurrenceCompletionApprover {
+  seriesId     String   @map("series_id") @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  series     TaskRecurrenceSeries @relation(fields: [seriesId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace  Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership  @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([seriesId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@map("task_recurrence_completion_approvers")
+}
+
+model TaskRecurrenceAssignee {
+  seriesId     String   @map("series_id") @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  series     TaskRecurrenceSeries @relation(fields: [seriesId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace  Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership  @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([seriesId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@map("task_recurrence_assignees")
+}
+
+model TaskRecurrenceFollower {
+  seriesId     String   @map("series_id") @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  series     TaskRecurrenceSeries @relation(fields: [seriesId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace  Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership  @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([seriesId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@map("task_recurrence_followers")
+}
+
+model TaskRecurrenceProject {
+  seriesId    String   @map("series_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  projectId   String   @map("project_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  series    TaskRecurrenceSeries @relation(fields: [seriesId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project   Project              @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([seriesId, projectId])
+  @@index([workspaceId, projectId])
+  @@map("task_recurrence_projects")
+}
+
+model TaskRecurrenceTag {
+  seriesId    String   @map("series_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  tagId       String   @map("tag_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  series    TaskRecurrenceSeries @relation(fields: [seriesId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  tag       WorkspaceTag         @relation(fields: [tagId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([seriesId, tagId])
+  @@index([workspaceId, tagId])
+  @@map("task_recurrence_tags")
+}
+
+model TaskTemplate {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String             @map("workspace_id") @db.Uuid
+  name               String             @db.VarChar(120)
+  nameNormalized     String             @map("name_normalized") @db.VarChar(120)
+  status             TaskTemplateStatus @default(ACTIVE)
+  title              String             @db.VarChar(160)
+  description        String?            @db.VarChar(4000)
+  priority           TaskPriority       @default(MEDIUM)
+  statusDefinitionId String             @map("status_definition_id") @db.Uuid
+  departmentId       String?            @map("department_id") @db.Uuid
+  estimatedMinutes   Int?               @map("estimated_minutes")
+  createdById        String             @map("created_by_id") @db.Uuid
+  updatedById        String?            @map("updated_by_id") @db.Uuid
+  archivedAt         DateTime?          @map("archived_at") @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition StatusDefinition       @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  department       Department?            @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy        User                   @relation("TaskTemplateCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy        User?                  @relation("TaskTemplateUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  assignees        TaskTemplateAssignee[]
+  followers        TaskTemplateFollower[]
+  projects         TaskTemplateProject[]
+  tags             TaskTemplateTag[]
+
+  @@unique([workspaceId, nameNormalized])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status, nameNormalized])
+  @@index([workspaceId, createdAt])
+  @@map("task_templates")
+}
+
+model TaskTemplateAssignee {
+  templateId   String   @map("template_id") @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  template   TaskTemplate        @relation(fields: [templateId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([templateId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@map("task_template_assignees")
+}
+
+model TaskTemplateFollower {
+  templateId   String   @map("template_id") @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  membershipId String   @map("membership_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  template   TaskTemplate        @relation(fields: [templateId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([templateId, membershipId])
+  @@index([workspaceId, membershipId])
+  @@map("task_template_followers")
+}
+
+model TaskTemplateProject {
+  templateId  String   @map("template_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  projectId   String   @map("project_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  template  TaskTemplate @relation(fields: [templateId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project   Project      @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([templateId, projectId])
+  @@index([workspaceId, projectId])
+  @@map("task_template_projects")
+}
+
+model TaskTemplateTag {
+  templateId  String   @map("template_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  tagId       String   @map("tag_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  template  TaskTemplate @relation(fields: [templateId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  tag       WorkspaceTag @relation(fields: [tagId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([templateId, tagId])
+  @@index([workspaceId, tagId])
+  @@map("task_template_tags")
+}
+
+model TaskKanbanColumnSetting {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String   @map("workspace_id") @db.Uuid
+  statusDefinitionId String   @map("status_definition_id") @db.Uuid
+  wipLimit           Int?     @map("wip_limit")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition StatusDefinition @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([workspaceId, statusDefinitionId])
+  @@index([workspaceId])
+  @@map("task_kanban_column_settings")
 }
 
 model TaskDependency {
@@ -509,6 +1150,48 @@ model TaskRelatedTask {
   @@map("task_related_tasks")
 }
 
+model WorkspaceTag {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String             @map("workspace_id") @db.Uuid
+  name           String             @db.VarChar(80)
+  nameNormalized String             @map("name_normalized") @db.VarChar(80)
+  color          String?            @db.VarChar(7)
+  status         WorkspaceTagStatus @default(ACTIVE)
+  createdById    String             @map("created_by_id") @db.Uuid
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace           Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdBy           User                @relation("WorkspaceTagCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  taskLinks           TaskTag[]
+  taskRecurrenceLinks TaskRecurrenceTag[]
+  taskTemplateLinks   TaskTemplateTag[]
+
+  @@unique([workspaceId, nameNormalized])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status, nameNormalized])
+  @@index([workspaceId, createdAt])
+  @@map("workspace_tags")
+}
+
+model TaskTag {
+  workspaceId String   @map("workspace_id") @db.Uuid
+  taskId      String   @map("task_id") @db.Uuid
+  tagId       String   @map("tag_id") @db.Uuid
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task      Task         @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  tag       WorkspaceTag @relation(fields: [tagId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy User         @relation("TaskTagCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@id([taskId, tagId])
+  @@index([workspaceId, taskId, createdAt])
+  @@index([workspaceId, tagId, createdAt])
+  @@map("task_tags")
+}
+
 model TaskComment {
   id                 String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId        String                @map("workspace_id") @db.Uuid
@@ -523,12 +1206,12 @@ model TaskComment {
   createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  task             Task                   @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  authorMembership WorkspaceMembership    @relation("TaskCommentAuthor", fields: [authorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  authorUser       User                   @relation("TaskCommentAuthorUser", fields: [authorUserId], references: [id], onDelete: Restrict)
-  parentComment    TaskComment?           @relation("TaskCommentThread", fields: [parentCommentId, workspaceId, taskId], references: [id, workspaceId, taskId], onDelete: Restrict)
-  replies          TaskComment[]          @relation("TaskCommentThread")
+  workspace        Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task             Task                  @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  authorMembership WorkspaceMembership   @relation("TaskCommentAuthor", fields: [authorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  authorUser       User                  @relation("TaskCommentAuthorUser", fields: [authorUserId], references: [id], onDelete: Restrict)
+  parentComment    TaskComment?          @relation("TaskCommentThread", fields: [parentCommentId, workspaceId, taskId], references: [id, workspaceId, taskId], onDelete: Restrict)
+  replies          TaskComment[]         @relation("TaskCommentThread")
   mentions         TaskCommentMention[]
   reactions        TaskCommentReaction[]
 
@@ -621,7 +1304,7 @@ model TaskProject {
 model Asset {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId      String      @map("workspace_id") @db.Uuid
-  projectId        String      @map("project_id") @db.Uuid
+  projectId        String?     @map("project_id") @db.Uuid
   createdById      String      @map("created_by_id") @db.Uuid
   originalFilename String      @map("original_filename") @db.VarChar(255)
   displayName      String      @map("display_name") @db.VarChar(255)
@@ -639,8 +1322,9 @@ model Asset {
   updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  project        Project         @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  project        Project?        @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   createdBy      User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  attachments    Attachment[]
   processingJobs ProcessingJob[]
 
   @@unique([id, workspaceId])
@@ -652,10 +1336,73 @@ model Asset {
   @@map("assets")
 }
 
+model Attachment {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String         @map("workspace_id") @db.Uuid
+  type        AttachmentType
+  assetId     String?        @map("asset_id") @db.Uuid
+  url         String?        @db.VarChar(2048)
+  displayName String?        @map("display_name") @db.VarChar(255)
+  createdById String         @map("created_by_id") @db.Uuid
+  deletedAt   DateTime?      @map("deleted_at") @db.Timestamptz(6)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace            Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  asset                Asset?                          @relation(fields: [assetId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy            User                            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  taskLinks            TaskAttachment[]
+  projectLinks         ProjectAttachment[]
+  completionProofLinks TaskCompletionProofAttachment[]
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, type, createdAt])
+  @@index([workspaceId, assetId])
+  @@map("attachments")
+}
+
+model TaskAttachment {
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  taskId       String    @map("task_id") @db.Uuid
+  attachmentId String    @map("attachment_id") @db.Uuid
+  attachedById String    @map("attached_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  removedAt    DateTime? @map("removed_at") @db.Timestamptz(6)
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  task       Task       @relation(fields: [taskId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachment Attachment @relation(fields: [attachmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachedBy User       @relation(fields: [attachedById], references: [id], onDelete: Restrict)
+
+  @@id([taskId, attachmentId])
+  @@index([workspaceId, taskId, removedAt, createdAt])
+  @@index([workspaceId, attachmentId, removedAt])
+  @@map("task_attachments")
+}
+
+model ProjectAttachment {
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  projectId    String    @map("project_id") @db.Uuid
+  attachmentId String    @map("attachment_id") @db.Uuid
+  attachedById String    @map("attached_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  removedAt    DateTime? @map("removed_at") @db.Timestamptz(6)
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  project    Project    @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachment Attachment @relation(fields: [attachmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachedBy User       @relation(fields: [attachedById], references: [id], onDelete: Restrict)
+
+  @@id([projectId, attachmentId])
+  @@index([workspaceId, projectId, removedAt, createdAt])
+  @@index([workspaceId, attachmentId, removedAt])
+  @@map("project_attachments")
+}
+
 model ProcessingJob {
   id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId   String              @map("workspace_id") @db.Uuid
-  projectId     String              @map("project_id") @db.Uuid
+  projectId     String?             @map("project_id") @db.Uuid
   assetId       String              @map("asset_id") @db.Uuid
   type          String              @db.VarChar(80)
   status        ProcessingJobStatus @default(QUEUED)
@@ -670,8 +1417,8 @@ model ProcessingJob {
   updatedAt     DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  project   Project   @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  asset     Asset     @relation(fields: [assetId, projectId, workspaceId], references: [id, projectId, workspaceId], onDelete: Restrict)
+  project   Project?  @relation(fields: [projectId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  asset     Asset     @relation(fields: [assetId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
 
   @@unique([assetId, type])
   @@index([workspaceId, projectId])

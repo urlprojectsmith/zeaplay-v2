@@ -225,6 +225,7 @@ export class AuthService {
                     agencyId: true,
                     name: true,
                     slug: true,
+                    timezone: true,
                     status: true,
                     memberships: {
                       where: { userId, status: MembershipStatus.ACTIVE },
@@ -314,6 +315,7 @@ function mapAgencyMemberships(
         agencyId: string;
         name: string;
         slug: string;
+        timezone: string;
         status: WorkspaceStatus;
         memberships: { id: string; role: { key: string } }[];
       }[];
@@ -332,6 +334,7 @@ function mapAgencyMemberships(
       agencyId: workspace.agencyId,
       name: workspace.name,
       slug: workspace.slug,
+      timezone: workspace.timezone,
       status: workspace.status,
       membershipId: workspace.memberships[0]?.id ?? null,
       role: workspace.memberships[0]?.role.key ?? null,

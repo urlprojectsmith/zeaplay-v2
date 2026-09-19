@@ -8,7 +8,12 @@ import { WorkspaceTasksPage } from '../components/workspace/tasks/WorkspaceTasks
 import { toggleRelationshipSelection } from '../components/workspace/tasks/AllTasksBrowser';
 import { apiClient } from '../services/api';
 import type { StatusEntityType, WorkspaceStatusDefinition } from '../services/workspace-statuses';
-import { taskDueAtFromLocalDate, type WorkspaceTask } from '../services/workspace-tasks';
+import {
+  taskDueAtFromLocalDate,
+  type TaskCommentSummary,
+  type WorkspaceTagSummary,
+  type WorkspaceTask,
+} from '../services/workspace-tasks';
 import { useSessionStore } from '../stores/session';
 
 const listRecentWorkspaceTasks = vi.fn();
@@ -22,6 +27,25 @@ const addWorkspaceTaskBlockedBy = vi.fn();
 const removeWorkspaceTaskBlockedBy = vi.fn();
 const addWorkspaceTaskRelated = vi.fn();
 const removeWorkspaceTaskRelated = vi.fn();
+const listWorkspaceTaskComments = vi.fn();
+const listWorkspaceTaskCommentReplies = vi.fn();
+const createWorkspaceTaskComment = vi.fn();
+const createWorkspaceTaskCommentReply = vi.fn();
+const updateWorkspaceTaskComment = vi.fn();
+const deleteWorkspaceTaskComment = vi.fn();
+const addWorkspaceTaskCommentReaction = vi.fn();
+const removeWorkspaceTaskCommentReaction = vi.fn();
+const listWorkspaceTags = vi.fn();
+const getTaskKanbanSettings = vi.fn();
+const moveWorkspaceTaskKanban = vi.fn();
+const updateTaskKanbanColumnSetting = vi.fn();
+const createWorkspaceTag = vi.fn();
+const updateWorkspaceTag = vi.fn();
+const archiveWorkspaceTag = vi.fn();
+const reactivateWorkspaceTag = vi.fn();
+const getTaskTags = vi.fn();
+const addTaskTags = vi.fn();
+const removeTaskTags = vi.fn();
 const createTaskMock = vi.fn();
 const createSubtaskMock = vi.fn();
 const updateTaskParentMock = vi.fn();
@@ -34,10 +58,12 @@ const listWorkspaceProjects = vi.fn();
 const listWorkspaceUsers = vi.fn();
 const listDepartments = vi.fn();
 const listWorkspaceStatuses = vi.fn();
+const listWorkspaceRoles = vi.fn();
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
 const routerReplace = vi.fn();
 let currentSearchParams = new URLSearchParams();
+const isoDate = '2026-01-01T00:00:00.000Z';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/workspace/tasks',
@@ -73,6 +99,16 @@ vi.mock('../services/workspace-statuses', async () => {
   };
 });
 
+vi.mock('../services/workspace-roles', async () => {
+  const actual = await vi.importActual<typeof import('../services/workspace-roles')>(
+    '../services/workspace-roles',
+  );
+  return {
+    ...actual,
+    listWorkspaceRoles: (...args: unknown[]) => listWorkspaceRoles(...args),
+  };
+});
+
 vi.mock('../services/workspace-tasks', async () => {
   const actual = await vi.importActual<typeof import('../services/workspace-tasks')>(
     '../services/workspace-tasks',
@@ -90,6 +126,29 @@ vi.mock('../services/workspace-tasks', async () => {
     removeWorkspaceTaskBlockedBy: (...args: unknown[]) => removeWorkspaceTaskBlockedBy(...args),
     addWorkspaceTaskRelated: (...args: unknown[]) => addWorkspaceTaskRelated(...args),
     removeWorkspaceTaskRelated: (...args: unknown[]) => removeWorkspaceTaskRelated(...args),
+    listWorkspaceTaskComments: (...args: unknown[]) => listWorkspaceTaskComments(...args),
+    listWorkspaceTaskCommentReplies: (...args: unknown[]) =>
+      listWorkspaceTaskCommentReplies(...args),
+    createWorkspaceTaskComment: (...args: unknown[]) => createWorkspaceTaskComment(...args),
+    createWorkspaceTaskCommentReply: (...args: unknown[]) =>
+      createWorkspaceTaskCommentReply(...args),
+    updateWorkspaceTaskComment: (...args: unknown[]) => updateWorkspaceTaskComment(...args),
+    deleteWorkspaceTaskComment: (...args: unknown[]) => deleteWorkspaceTaskComment(...args),
+    addWorkspaceTaskCommentReaction: (...args: unknown[]) =>
+      addWorkspaceTaskCommentReaction(...args),
+    removeWorkspaceTaskCommentReaction: (...args: unknown[]) =>
+      removeWorkspaceTaskCommentReaction(...args),
+    listWorkspaceTags: (...args: unknown[]) => listWorkspaceTags(...args),
+    getTaskKanbanSettings: (...args: unknown[]) => getTaskKanbanSettings(...args),
+    moveWorkspaceTaskKanban: (...args: unknown[]) => moveWorkspaceTaskKanban(...args),
+    updateTaskKanbanColumnSetting: (...args: unknown[]) => updateTaskKanbanColumnSetting(...args),
+    createWorkspaceTag: (...args: unknown[]) => createWorkspaceTag(...args),
+    updateWorkspaceTag: (...args: unknown[]) => updateWorkspaceTag(...args),
+    archiveWorkspaceTag: (...args: unknown[]) => archiveWorkspaceTag(...args),
+    reactivateWorkspaceTag: (...args: unknown[]) => reactivateWorkspaceTag(...args),
+    getTaskTags: (...args: unknown[]) => getTaskTags(...args),
+    addTaskTags: (...args: unknown[]) => addTaskTags(...args),
+    removeTaskTags: (...args: unknown[]) => removeTaskTags(...args),
     createWorkspaceTask: (...args: unknown[]) => createTaskMock(...args),
     createWorkspaceSubtask: (...args: unknown[]) => createSubtaskMock(...args),
     updateWorkspaceTaskParent: (...args: unknown[]) => updateTaskParentMock(...args),
@@ -105,6 +164,7 @@ vi.mock('../services/workspace-tasks', async () => {
 describe('Phase 7.2 task creation experience', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDefaultTags();
     currentSearchParams = new URLSearchParams();
     localStorage.clear();
     useSessionStore.setState({
@@ -113,6 +173,38 @@ describe('Phase 7.2 task creation experience', () => {
       hydrated: true,
       accessToken: 'token',
       user: { id: 'admin-1', email: 'admin@zeaplay.test' },
+      agencies: [
+        {
+          id: 'agency-1',
+          name: 'Agency',
+          slug: 'agency',
+          status: 'ACTIVE',
+          role: 'OWNER',
+          membershipId: 'agency-membership-1',
+          workspaces: [
+            {
+              id: 'workspace-1',
+              agencyId: 'agency-1',
+              name: 'Workspace',
+              slug: 'workspace',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'membership-a',
+              timezone: 'UTC',
+            },
+            {
+              id: 'workspace-2',
+              agencyId: 'agency-1',
+              name: 'Workspace 2',
+              slug: 'workspace-2',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'membership-b',
+              timezone: 'UTC',
+            },
+          ],
+        },
+      ],
     });
     listRecentWorkspaceTasks.mockResolvedValue({ items: [], page: 1, pageSize: 5, total: 0 });
     listWorkspaceTasks.mockResolvedValue({
@@ -120,6 +212,21 @@ describe('Phase 7.2 task creation experience', () => {
       page: 1,
       pageSize: 20,
       total: 0,
+    });
+    getTaskKanbanSettings.mockResolvedValue({
+      columns: [
+        { status: status('status-task', 'TASK', 'To Do'), wipLimit: null },
+        { status: status('status-review', 'TASK', 'Review', false), wipLimit: 1 },
+      ],
+    });
+    moveWorkspaceTaskKanban.mockImplementation((_workspaceId: string, taskId: string) =>
+      Promise.resolve(
+        taskFixture({ id: taskId, status: status('status-review', 'TASK', 'Review', false) }),
+      ),
+    );
+    updateTaskKanbanColumnSetting.mockResolvedValue({
+      statusDefinitionId: 'status-review',
+      wipLimit: 2,
     });
     getWorkspaceTask.mockResolvedValue(
       taskFixture({
@@ -133,6 +240,45 @@ describe('Phase 7.2 task creation experience', () => {
     listWorkspaceTaskBlockedBy.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
     listWorkspaceTaskBlocks.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
     listWorkspaceTaskRelated.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskComments.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    });
+    listWorkspaceTaskCommentReplies.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    });
+    createWorkspaceTaskComment.mockResolvedValue(commentFixture({ id: 'comment-created' }));
+    createWorkspaceTaskCommentReply.mockResolvedValue(
+      commentFixture({ id: 'comment-reply-created', parentCommentId: 'comment-root' }),
+    );
+    updateWorkspaceTaskComment.mockResolvedValue(commentFixture({ id: 'comment-root' }));
+    deleteWorkspaceTaskComment.mockResolvedValue(
+      commentFixture({ id: 'comment-root', body: null, deleted: true, deletedAt: isoDate }),
+    );
+    addWorkspaceTaskCommentReaction.mockResolvedValue({ changed: true, reactionType: 'LIKE' });
+    removeWorkspaceTaskCommentReaction.mockResolvedValue({ changed: true, reactionType: 'LIKE' });
+    listWorkspaceTaskComments.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskCommentReplies.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    });
+    createWorkspaceTaskComment.mockResolvedValue(commentFixture({ id: 'comment-created' }));
+    createWorkspaceTaskCommentReply.mockResolvedValue(
+      commentFixture({ id: 'comment-reply-created', parentCommentId: 'comment-root' }),
+    );
+    updateWorkspaceTaskComment.mockResolvedValue(commentFixture({ id: 'comment-root' }));
+    deleteWorkspaceTaskComment.mockResolvedValue(
+      commentFixture({ id: 'comment-root', body: null, deleted: true, deletedAt: isoDate }),
+    );
+    addWorkspaceTaskCommentReaction.mockResolvedValue({ changed: true, reactionType: 'LIKE' });
+    removeWorkspaceTaskCommentReaction.mockResolvedValue({ changed: true, reactionType: 'LIKE' });
     listWorkspaceUsers.mockImplementation(({ workspaceId }: { workspaceId: string }) =>
       Promise.resolve({
         items:
@@ -202,6 +348,69 @@ describe('Phase 7.2 task creation experience', () => {
     expect(screen.getByLabelText('Due Date *')).toBeInTheDocument();
     expect(screen.queryByLabelText('Description')).not.toBeInTheDocument();
     expect(screen.queryByText('Followers')).not.toBeInTheDocument();
+  });
+
+  it('renders Kanban from Task statuses and moves cards through the fallback status selector', async () => {
+    currentSearchParams = new URLSearchParams('view=kanban&search=alpha');
+    listWorkspaceTasks.mockImplementation(
+      (_workspaceId: string, params: { statusDefinitionId?: string }) => {
+        if (params.statusDefinitionId === 'status-task') {
+          return Promise.resolve({
+            items: [taskFixture({ id: 'task-alpha', title: 'Alpha launch task' })],
+            page: 1,
+            pageSize: 20,
+            total: 1,
+          });
+        }
+        if (params.statusDefinitionId === 'status-review') {
+          return Promise.resolve({
+            items: [
+              taskFixture({
+                id: 'task-review',
+                title: 'Review checklist',
+                status: status('status-review', 'TASK', 'Review', false),
+              }),
+              taskFixture({
+                id: 'task-review-two',
+                title: 'Review follow-up',
+                status: status('status-review', 'TASK', 'Review', false),
+              }),
+            ],
+            page: 1,
+            pageSize: 20,
+            total: 2,
+          });
+        }
+        return Promise.resolve({ items: [], page: 1, pageSize: 20, total: 0 });
+      },
+    );
+
+    renderWithProviders(<WorkspaceTasksPage />);
+
+    expect(await screen.findByRole('heading', { name: 'To Do' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Review' })).toBeInTheDocument();
+    expect(await screen.findByText('Alpha launch task')).toBeInTheDocument();
+    expect(screen.getByText('2 / 1 - WIP limit exceeded')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(listWorkspaceTasks).toHaveBeenCalledWith(
+        'workspace-1',
+        expect.objectContaining({
+          search: 'alpha',
+          sortBy: 'kanbanRank',
+          statusDefinitionId: 'status-task',
+        }),
+      ),
+    );
+
+    await selectSelectOption('Move to status', 'Review');
+    await waitFor(() =>
+      expect(moveWorkspaceTaskKanban).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-alpha',
+        expect.objectContaining({ statusDefinitionId: 'status-review' }),
+      ),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith('Task moved');
   });
 
   it('reveals supported advanced fields and updates the live preview', async () => {
@@ -418,6 +627,7 @@ describe('Phase 7.2 task creation experience', () => {
 describe('Phase 7.3A all tasks list/table foundation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDefaultTags();
     currentSearchParams = new URLSearchParams();
     localStorage.clear();
     useSessionStore.setState({
@@ -426,6 +636,38 @@ describe('Phase 7.3A all tasks list/table foundation', () => {
       hydrated: true,
       accessToken: 'token',
       user: { id: 'admin-1', email: 'admin@zeaplay.test' },
+      agencies: [
+        {
+          id: 'agency-1',
+          name: 'Agency',
+          slug: 'agency',
+          status: 'ACTIVE',
+          role: 'OWNER',
+          membershipId: 'agency-membership-1',
+          workspaces: [
+            {
+              id: 'workspace-1',
+              agencyId: 'agency-1',
+              name: 'Workspace',
+              slug: 'workspace',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'membership-a',
+              timezone: 'UTC',
+            },
+            {
+              id: 'workspace-2',
+              agencyId: 'agency-1',
+              name: 'Workspace 2',
+              slug: 'workspace-2',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'membership-b',
+              timezone: 'UTC',
+            },
+          ],
+        },
+      ],
     });
     listWorkspaceTasks.mockResolvedValue({
       items: [taskFixture({ id: 'task-alpha', title: 'Alpha launch task' })],
@@ -595,12 +837,22 @@ describe('Phase 7.3A all tasks list/table foundation', () => {
     });
 
     fireEvent.change(screen.getByLabelText('Search people'), { target: { value: 'An' } });
+    await waitFor(() =>
+      expect(listWorkspaceUsers).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'An', workspaceId: 'workspace-1' }),
+      ),
+    );
     await selectSelectOption('Assignee', 'Anya');
     expect(routerReplace).toHaveBeenLastCalledWith('/workspace/tasks?assignee=membership-a', {
       scroll: false,
     });
 
     fireEvent.change(screen.getByLabelText('Search projects'), { target: { value: 'La' } });
+    await waitFor(() =>
+      expect(listWorkspaceProjects).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'La', workspaceId: 'workspace-1' }),
+      ),
+    );
     await selectSelectOption('Project', 'Launch');
     expect(routerReplace).toHaveBeenLastCalledWith('/workspace/tasks?project=project-1', {
       scroll: false,
@@ -744,6 +996,7 @@ describe('Phase 7.3A all tasks list/table foundation', () => {
 describe('Phase 7.3B all tasks grid and compact views', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDefaultTags();
     currentSearchParams = new URLSearchParams();
     localStorage.clear();
     useSessionStore.setState({
@@ -752,6 +1005,38 @@ describe('Phase 7.3B all tasks grid and compact views', () => {
       hydrated: true,
       accessToken: 'token',
       user: { id: 'admin-1', email: 'admin@zeaplay.test' },
+      agencies: [
+        {
+          id: 'agency-1',
+          name: 'Agency',
+          slug: 'agency',
+          status: 'ACTIVE',
+          role: 'OWNER',
+          membershipId: 'agency-membership-1',
+          workspaces: [
+            {
+              id: 'workspace-1',
+              agencyId: 'agency-1',
+              name: 'Workspace',
+              slug: 'workspace',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'membership-a',
+              timezone: 'UTC',
+            },
+            {
+              id: 'workspace-2',
+              agencyId: 'agency-1',
+              name: 'Workspace 2',
+              slug: 'workspace-2',
+              status: 'ACTIVE',
+              role: 'MEMBER',
+              membershipId: 'membership-b',
+              timezone: 'UTC',
+            },
+          ],
+        },
+      ],
     });
     listWorkspaceTasks.mockResolvedValue({
       items: [taskFixture({ id: 'task-alpha', title: 'Alpha launch task' })],
@@ -1286,6 +1571,7 @@ describe('Phase 7.2 task service payload construction', () => {
       sortBy: 'updatedAt',
       sortDirection: 'asc',
       priority: 'HIGH',
+      tagId: 'tag-bug',
       dueFrom: actual.taskDueBoundaryFromLocalDate('2026-09-01', 'start'),
       dueTo: actual.taskDueBoundaryFromLocalDate('2026-09-30', 'end'),
     });
@@ -1298,6 +1584,7 @@ describe('Phase 7.2 task service payload construction', () => {
         sortBy: 'updatedAt',
         sortDirection: 'asc',
         priority: 'HIGH',
+        tagId: 'tag-bug',
         dueFrom: new Date(2026, 8, 1, 0, 0, 0, 0).toISOString(),
         dueTo: new Date(2026, 8, 30, 23, 59, 59, 999).toISOString(),
       }),
@@ -1354,6 +1641,33 @@ describe('Phase 7.2 task service payload construction', () => {
       'related',
       { page: 4, pageSize: 10 },
     ]);
+    expect(
+      actual.taskKeys.comments('workspace-1', 'task-parent', { page: 1, pageSize: 10 }),
+    ).toEqual([
+      'workspace',
+      'workspace-1',
+      'tasks',
+      'detail',
+      'task-parent',
+      'comments',
+      { page: 1, pageSize: 10 },
+    ]);
+    expect(
+      actual.taskKeys.replies('workspace-1', 'task-parent', 'comment-1', {
+        page: 2,
+        pageSize: 10,
+      }),
+    ).toEqual([
+      'workspace',
+      'workspace-1',
+      'tasks',
+      'detail',
+      'task-parent',
+      'comments',
+      'comment-1',
+      'replies',
+      { page: 2, pageSize: 10 },
+    ]);
 
     await actual.listWorkspaceTasks('workspace-1', normalized);
     expect(requestSpy).toHaveBeenCalledWith(
@@ -1362,6 +1676,7 @@ describe('Phase 7.2 task service payload construction', () => {
     const [requestUrl] = requestSpy.mock.calls[0] ?? [];
     expect(requestUrl).toContain('search=billing');
     expect(requestUrl).toContain('pageSize=25');
+    expect(requestUrl).toContain('tagId=tag-bug');
     requestSpy.mockRestore();
   });
 
@@ -1419,6 +1734,144 @@ describe('Phase 7.2 task service payload construction', () => {
       '/workspaces/workspace-1/tasks/task-current/related/remove',
       expect.objectContaining({ method: 'POST' }),
     );
+    await actual.listWorkspaceTaskComments('workspace-1', 'task-current', {
+      page: 1,
+      pageSize: 10,
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/comments?page=1&pageSize=10',
+    );
+    await actual.listWorkspaceTaskCommentReplies('workspace-1', 'task-current', 'comment-1', {
+      page: 2,
+      pageSize: 10,
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/comments/comment-1/replies?page=2&pageSize=10',
+    );
+    await actual.createWorkspaceTaskComment('workspace-1', 'task-current', {
+      body: ' Hi @Anya ',
+      visibility: 'INTERNAL',
+      mentionedMembershipIds: ['membership-a', 'membership-a'],
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/comments',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          body: 'Hi @Anya',
+          visibility: 'INTERNAL',
+          mentionedMembershipIds: ['membership-a'],
+        }),
+      }),
+    );
+    await actual.addWorkspaceTaskCommentReaction(
+      'workspace-1',
+      'task-current',
+      'comment-1',
+      'LIKE',
+    );
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/comments/comment-1/reactions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    requestSpy.mockRestore();
+  });
+
+  it('calls workspace tag catalog and task tag APIs with scoped keys and explicit payloads', async () => {
+    const requestSpy = vi.spyOn(apiClient, 'request').mockResolvedValue({
+      data: { items: [], page: 1, pageSize: 10, total: 0 },
+      meta: {},
+    } as never);
+    const actual = await vi.importActual<typeof import('../services/workspace-tasks')>(
+      '../services/workspace-tasks',
+    );
+
+    expect(actual.taskKeys.tags('workspace-1', 'task-current')).toEqual([
+      'workspace',
+      'workspace-1',
+      'tasks',
+      'detail',
+      'task-current',
+      'tags',
+    ]);
+    expect(
+      actual.taskKeys.tagCatalog('workspace-1', {
+        page: 1,
+        pageSize: 10,
+        search: 'bug',
+        status: 'ACTIVE',
+        sortBy: 'name',
+        sortDirection: 'asc',
+      }),
+    ).toEqual([
+      'workspace',
+      'workspace-1',
+      'tags',
+      {
+        page: 1,
+        pageSize: 10,
+        search: 'bug',
+        status: 'ACTIVE',
+        sortBy: 'name',
+        sortDirection: 'asc',
+      },
+    ]);
+
+    await actual.listWorkspaceTags('workspace-1', {
+      page: 1,
+      pageSize: 10,
+      search: ' bug ',
+      status: 'ACTIVE',
+      sortBy: 'name',
+      sortDirection: 'asc',
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tags?page=1&pageSize=10&sortBy=name&sortDirection=asc&search=bug&status=ACTIVE',
+    );
+    await actual.createWorkspaceTag('workspace-1', { name: ' Bug ', color: '#dc2626' });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tags',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ name: 'Bug', color: '#dc2626' }),
+      }),
+    );
+    await actual.updateWorkspaceTag('workspace-1', 'tag-bug', { name: 'Bug Fix', color: null });
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tags/tag-bug',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ name: 'Bug Fix', color: null }),
+      }),
+    );
+    await actual.archiveWorkspaceTag('workspace-1', 'tag-bug');
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tags/tag-bug/archive',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    await actual.reactivateWorkspaceTag('workspace-1', 'tag-bug');
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tags/tag-bug/reactivate',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    await actual.getTaskTags('workspace-1', 'task-current');
+    expect(requestSpy).toHaveBeenCalledWith('/workspaces/workspace-1/tasks/task-current/tags');
+    await actual.addTaskTags('workspace-1', 'task-current', ['tag-a', 'tag-a', 'tag-b']);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/tags/add',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ tagIds: ['tag-a', 'tag-b'] }),
+      }),
+    );
+    await actual.removeTaskTags('workspace-1', 'task-current', ['tag-a']);
+    expect(requestSpy).toHaveBeenCalledWith(
+      '/workspaces/workspace-1/tasks/task-current/tags/remove',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ tagIds: ['tag-a'] }),
+      }),
+    );
     requestSpy.mockRestore();
   });
 
@@ -1458,6 +1911,7 @@ describe('Phase 7.2 task service payload construction', () => {
 describe('Phase 7.3C2 task bulk selection UX', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDefaultTags();
     currentSearchParams = new URLSearchParams();
     localStorage.clear();
     useSessionStore.setState({
@@ -1757,6 +2211,7 @@ describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDefaultTags();
     currentSearchParams = new URLSearchParams();
     localStorage.clear();
     useSessionStore.setState({
@@ -1793,6 +2248,18 @@ describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
     listWorkspaceTaskBlockedBy.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
     listWorkspaceTaskBlocks.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
     listWorkspaceTaskRelated.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    listWorkspaceTaskComments.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    });
+    listWorkspaceTaskCommentReplies.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+    });
     listWorkspaceUsers.mockResolvedValue({
       items: [user('membership-a', 'Anya')],
       page: 1,
@@ -1825,6 +2292,16 @@ describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
       changedCount: 1,
       unchangedCount: 0,
     });
+    createWorkspaceTaskComment.mockResolvedValue(commentFixture({ id: 'comment-created' }));
+    createWorkspaceTaskCommentReply.mockResolvedValue(
+      commentFixture({ id: 'comment-reply-created', parentCommentId: 'comment-root' }),
+    );
+    updateWorkspaceTaskComment.mockResolvedValue(commentFixture({ id: 'comment-root' }));
+    deleteWorkspaceTaskComment.mockResolvedValue(
+      commentFixture({ id: 'comment-root', body: null, deleted: true, deletedAt: isoDate }),
+    );
+    addWorkspaceTaskCommentReaction.mockResolvedValue({ changed: true, reactionType: 'LIKE' });
+    removeWorkspaceTaskCommentReaction.mockResolvedValue({ changed: true, reactionType: 'LIKE' });
     updateTaskParentMock.mockImplementation((_workspaceId: string, taskId: string, parentTaskId) =>
       Promise.resolve(taskFixture({ id: taskId, parentTaskId })),
     );
@@ -1841,10 +2318,12 @@ describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
     expect(screen.getByRole('tab', { name: 'Subtasks' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Dependencies' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Related' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Comments' })).toBeInTheDocument();
     expect(listWorkspaceSubtasks).not.toHaveBeenCalled();
     expect(listWorkspaceTaskBlockedBy).not.toHaveBeenCalled();
     expect(listWorkspaceTaskBlocks).not.toHaveBeenCalled();
     expect(listWorkspaceTaskRelated).not.toHaveBeenCalled();
+    expect(listWorkspaceTaskComments).not.toHaveBeenCalled();
 
     await clickTab('Dependencies');
     expect(await screen.findByText('Blocked By')).toBeInTheDocument();
@@ -1868,6 +2347,7 @@ describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
       expect.objectContaining({ page: 1, pageSize: 10 }),
     );
     expect(listWorkspaceSubtasks).not.toHaveBeenCalled();
+    expect(listWorkspaceTaskComments).not.toHaveBeenCalled();
 
     await clickTab('Subtasks');
     expect(await screen.findByText('Child task')).toBeInTheDocument();
@@ -1899,6 +2379,398 @@ describe('Phase 7.4B1 task relationship shell and subtasks UX', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'View Parent' }));
     await waitFor(() => expect(getWorkspaceTask).toHaveBeenCalledWith('workspace-1', 'task-root'));
     expect((await screen.findAllByText('Root task')).length).toBeGreaterThan(0);
+  });
+
+  it('opens Comments lazily, posts normal and internal comments, and sends selected mention IDs only', async () => {
+    listWorkspaceTaskComments.mockResolvedValue({
+      items: [
+        commentFixture({
+          id: 'comment-root',
+          body: 'Kickoff note for @Anya',
+          visibility: 'INTERNAL',
+          mentions: [
+            {
+              membershipId: 'membership-a',
+              userId: 'membership-a-user',
+              name: 'Anya',
+              email: 'anya@zeaplay.test',
+            },
+          ],
+        }),
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    listWorkspaceUsers.mockResolvedValue({
+      items: [user('membership-a', 'Anya'), user('membership-c', 'Chen')],
+      page: 1,
+      pageSize: 8,
+      total: 2,
+    });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    expect(listWorkspaceTaskComments).not.toHaveBeenCalled();
+
+    await clickTab('Comments');
+    expect(await screen.findByText('Kickoff note for @Anya')).toBeInTheDocument();
+    expect(screen.getByText('Internal')).toBeInTheDocument();
+    expect(listWorkspaceTaskComments).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      expect.objectContaining({ page: 1, pageSize: 10 }),
+    );
+
+    const textarea = screen.getByLabelText('Write a comment');
+    fireEvent.change(textarea, { target: { value: 'Manual @Chen and selected @A' } });
+    expect(await screen.findByRole('listbox', { name: 'Mention people' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('option', { name: 'Anya' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Internal comment/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Post comment' }));
+
+    await waitFor(() =>
+      expect(createWorkspaceTaskComment).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        expect.objectContaining({
+          visibility: 'INTERNAL',
+          mentionedMembershipIds: ['membership-a'],
+        }),
+      ),
+    );
+    const payload = createWorkspaceTaskComment.mock.calls.at(-1)?.[2] as {
+      mentionedMembershipIds: string[];
+      body: string;
+      visibility: string;
+    };
+    expect(payload.body).toContain('@Anya');
+    expect(payload.mentionedMembershipIds).not.toContain('membership-c');
+    await waitFor(() => expect(textarea).toHaveValue(''));
+    expect(screen.getByRole('checkbox', { name: /Internal comment/i })).not.toBeChecked();
+    expect(payload.visibility).toBe('INTERNAL');
+  });
+
+  it('preserves failed comment drafts and prevents duplicate pending create requests', async () => {
+    createWorkspaceTaskComment.mockRejectedValueOnce(
+      Object.assign(new Error('Forbidden'), { status: 403 }),
+    );
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Comments');
+    const textarea = screen.getByLabelText('Write a comment');
+    fireEvent.change(textarea, { target: { value: 'Draft that should remain @A' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'Anya' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Internal comment/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Post comment' }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Comment could not be posted.'));
+    expect((textarea as HTMLTextAreaElement).value).toContain('Draft that should remain');
+    expect(screen.getByRole('checkbox', { name: /Internal comment/i })).toBeChecked();
+    expect(screen.getByText('@Anya')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Post comment' })).not.toBeDisabled(),
+    );
+
+    let resolveCreate: (value: TaskCommentSummary) => void = () => undefined;
+    createWorkspaceTaskComment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    fireEvent.change(textarea, { target: { value: 'Pending create once' } });
+    const submit = screen.getByRole('button', { name: 'Post comment' });
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    fireEvent.submit(submit.closest('form')!);
+    await waitFor(() => expect(createWorkspaceTaskComment).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveCreate(commentFixture({ id: 'comment-pending' }));
+      await Promise.resolve();
+    });
+  });
+
+  it('lazy-loads replies, replies inline, edits, deletes, and toggles multiple reactions', async () => {
+    listWorkspaceTaskComments.mockResolvedValue({
+      items: [
+        commentFixture({
+          id: 'comment-root',
+          body: 'Root comment',
+          directReplyCount: 1,
+          reactionCounts: { LIKE: 1, LOVE: 0, CELEBRATE: 0, EYES: 0, CHECK: 0 },
+        }),
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    listWorkspaceTaskCommentReplies.mockResolvedValue({
+      items: [
+        commentFixture({
+          id: 'comment-reply',
+          parentCommentId: 'comment-root',
+          body: 'Existing reply',
+        }),
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    await clickTab('Comments');
+    expect(await screen.findByText('Root comment')).toBeInTheDocument();
+    expect(listWorkspaceTaskCommentReplies).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'View 1 replies' }));
+    expect(await screen.findByText('Existing reply')).toBeInTheDocument();
+    expect(listWorkspaceTaskCommentReplies).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      'comment-root',
+      expect.objectContaining({ page: 1, pageSize: 10 }),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reply' })[0]!);
+    fireEvent.change(screen.getByLabelText('Write a reply'), { target: { value: 'Inline reply' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Post reply' }));
+    await waitFor(() =>
+      expect(createWorkspaceTaskCommentReply).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        'comment-root',
+        expect.objectContaining({ body: 'Inline reply', visibility: 'NORMAL' }),
+      ),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]!);
+    fireEvent.change(screen.getByLabelText('Edit comment'), { target: { value: 'Root edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(updateWorkspaceTaskComment).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        'comment-root',
+        { body: 'Root edited' },
+      ),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: /React with Like/i })[0]!);
+    await waitFor(() =>
+      expect(addWorkspaceTaskCommentReaction).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        'comment-root',
+        'LIKE',
+      ),
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: /React with Love/i })[0]!);
+    await waitFor(() =>
+      expect(addWorkspaceTaskCommentReaction).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        'comment-root',
+        'LOVE',
+      ),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete comment' })[0]!);
+    await waitFor(() =>
+      expect(deleteWorkspaceTaskComment).toHaveBeenCalledWith(
+        'workspace-1',
+        'task-root',
+        'comment-root',
+      ),
+    );
+  });
+
+  it('renders task overview tags, adds multiple active tags once, and removes archived tags', async () => {
+    getTaskTags.mockResolvedValue([
+      tagFixture({ id: 'tag-bug', name: 'Bug', status: 'ACTIVE' }),
+      tagFixture({ id: 'tag-legacy', name: 'Legacy', status: 'ARCHIVED', color: null }),
+    ]);
+    listWorkspaceTags.mockResolvedValue({
+      items: [
+        tagFixture({ id: 'tag-feature', name: 'Feature' }),
+        tagFixture({ id: 'tag-bug', name: 'Bug' }),
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+    });
+    addTaskTags.mockResolvedValue({ requestedCount: 1, changedCount: 1, unchangedCount: 0 });
+    removeTaskTags.mockResolvedValue({ requestedCount: 1, changedCount: 1, unchangedCount: 0 });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+
+    expect(await screen.findByText('Bug')).toBeInTheDocument();
+    expect(screen.getByText('Legacy')).toBeInTheDocument();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+    expect(getTaskTags).toHaveBeenCalledWith('workspace-1', 'task-root');
+    expect(listWorkspaceTags).not.toHaveBeenCalledWith(
+      'workspace-1',
+      expect.objectContaining({ status: 'ACTIVE' }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Tags' }));
+    expect(await screen.findByRole('dialog', { name: 'Add Tags' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('option', { name: /Feature/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Tags' }));
+    await waitFor(() =>
+      expect(addTaskTags).toHaveBeenCalledWith('workspace-1', 'task-root', ['tag-feature']),
+    );
+    expect(addTaskTags).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Legacy from task' }));
+    await waitFor(() =>
+      expect(removeTaskTags).toHaveBeenCalledWith('workspace-1', 'task-root', ['tag-legacy']),
+    );
+  });
+
+  it('preserves selected tags across search, enforces assignment limits, and reports no-op or stale results safely', async () => {
+    const manyTags = Array.from({ length: 51 }, (_, index) =>
+      tagFixture({ id: `tag-${index + 1}`, name: `Tag ${index + 1}` }),
+    );
+    getTaskTags.mockResolvedValue([tagFixture({ id: 'tag-legacy', name: 'Legacy' })]);
+    listWorkspaceTags.mockResolvedValue({
+      items: manyTags,
+      page: 1,
+      pageSize: 10,
+      total: manyTags.length,
+    });
+    addTaskTags.mockResolvedValue({ requestedCount: 50, changedCount: 0, unchangedCount: 50 });
+    removeTaskTags.mockResolvedValue({ requestedCount: 1, changedCount: 0, unchangedCount: 1 });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Tags' }));
+    expect(await screen.findByRole('listbox', { name: 'Tag search results' })).toBeInTheDocument();
+
+    const options = await screen.findAllByRole('option');
+    for (const option of options.slice(0, 50)) fireEvent.click(option);
+    fireEvent.click(options[50]!);
+    expect(toastError).toHaveBeenCalledWith('You can select up to 50 tags.');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search tags' }), {
+      target: { value: 'changed search' },
+    });
+    const selectedTags = screen.getByLabelText('Selected tags');
+    expect(within(selectedTags).getByText('Tag 1')).toBeInTheDocument();
+    expect(within(selectedTags).getByText('Tag 50')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Tags' }));
+    await waitFor(() => expect(addTaskTags).toHaveBeenCalledTimes(1));
+    expect(addTaskTags).toHaveBeenCalledWith(
+      'workspace-1',
+      'task-root',
+      manyTags.slice(0, 50).map((tag) => tag.id),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith('No new tags were added.');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Legacy from task' }));
+    await waitFor(() => expect(removeTaskTags).toHaveBeenCalledTimes(1));
+    expect(toastSuccess).toHaveBeenCalledWith('No tags were removed.');
+
+    const archivedError = new Error('archived tag cannot be assigned') as Error & {
+      status?: number;
+    };
+    archivedError.status = 422;
+    addTaskTags.mockRejectedValueOnce(archivedError);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Tags' }));
+    fireEvent.click((await screen.findAllByRole('option'))[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Tags' }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('Archived tags cannot be assigned to tasks.'),
+    );
+    expect(screen.getByRole('dialog', { name: 'Add Tags' })).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Selected tags')).getByText('Tag 1')).toBeInTheDocument();
+  });
+
+  it('manages workspace tags with search, create, edit, archive, and reactivate', async () => {
+    listWorkspaceTags.mockResolvedValue({
+      items: [
+        tagFixture({ id: 'tag-bug', name: 'Bug', status: 'ACTIVE' }),
+        tagFixture({ id: 'tag-legacy', name: 'Legacy', status: 'ARCHIVED' }),
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderWithProviders(<WorkspaceTasksPage />);
+    fireEvent.click(await firstByLabelText('Open task details: Root task'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage Tags' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Manage Tags' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Tag Name'), { target: { value: 'QA' } });
+    fireEvent.change(screen.getByLabelText('Tag Color'), { target: { value: '#22C55E' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Tag' }));
+    await waitFor(() =>
+      expect(createWorkspaceTag).toHaveBeenCalledWith('workspace-1', {
+        name: 'QA',
+        color: '#22C55E',
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Tag: Bug' }));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Tag Name'), { target: { value: 'Bug Fixed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(updateWorkspaceTag).toHaveBeenCalledWith(
+        'workspace-1',
+        'tag-bug',
+        expect.objectContaining({ name: 'Bug Fixed' }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive: Bug' }));
+    await waitFor(() => expect(archiveWorkspaceTag).toHaveBeenCalledWith('workspace-1', 'tag-bug'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reactivate: Legacy' }));
+    await waitFor(() =>
+      expect(reactivateWorkspaceTag).toHaveBeenCalledWith('workspace-1', 'tag-legacy'),
+    );
+  });
+
+  it('filters All Tasks by tag through URL state and clears tenant-bound tag filter on workspace switch', async () => {
+    currentSearchParams = new URLSearchParams('tagId=tag-bug&priority=HIGH&view=grid');
+    listWorkspaceTags.mockResolvedValue({
+      items: [tagFixture({ id: 'tag-bug', name: 'Bug' })],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+
+    renderWithProviders(<WorkspaceTasksPage />);
+
+    await waitFor(() =>
+      expect(listWorkspaceTasks).toHaveBeenCalledWith(
+        'workspace-1',
+        expect.objectContaining({ tagId: 'tag-bug', priority: 'HIGH' }),
+      ),
+    );
+    expect(await screen.findByText('Filter by Tag: Bug')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove filter Filter by Tag: Bug/ }));
+    expect(routerReplace).toHaveBeenCalledWith('/workspace/tasks?priority=HIGH&view=grid', {
+      scroll: false,
+    });
+
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith('/workspace/tasks?priority=HIGH&view=grid', {
+        scroll: false,
+      }),
+    );
   });
 
   it('keeps root and nested pagination bounded, isolated, and keyed by parent', async () => {
@@ -2549,8 +3421,12 @@ async function selectProject(name: string) {
 }
 
 async function selectSelectOption(label: string, option: string) {
-  fireEvent.click(screen.getByRole('combobox', { name: label }));
-  fireEvent.click(await screen.findByRole('option', { name: option }));
+  fireEvent.click(screen.getAllByRole('combobox', { name: label })[0]!);
+  const item = await screen.findByRole('option', { name: option });
+  fireEvent.click(item);
+  await waitFor(() =>
+    expect(screen.queryByRole('option', { name: option })).not.toBeInTheDocument(),
+  );
 }
 
 async function clickTab(name: string) {
@@ -2630,6 +3506,100 @@ function user(membershipId: string, name: string) {
   };
 }
 
+function commentFixture(overrides: Partial<TaskCommentSummary> = {}): TaskCommentSummary {
+  return {
+    id: 'comment-root',
+    workspaceId: 'workspace-1',
+    taskId: 'task-root',
+    parentCommentId: null,
+    body: 'Root comment',
+    visibility: 'NORMAL',
+    deleted: false,
+    editedAt: null,
+    deletedAt: null,
+    createdAt: isoDate,
+    updatedAt: isoDate,
+    author: {
+      membershipId: 'membership-a',
+      userId: 'membership-a-user',
+      name: 'Anya',
+      email: 'anya@zeaplay.test',
+    },
+    mentions: [],
+    directReplyCount: 0,
+    reactionCounts: { LIKE: 0, LOVE: 0, CELEBRATE: 0, EYES: 0, CHECK: 0 },
+    currentUserReactions: [],
+    ...overrides,
+  };
+}
+
+function tagFixture(overrides: Partial<WorkspaceTagSummary> = {}): WorkspaceTagSummary {
+  return {
+    id: 'tag-bug',
+    workspaceId: 'workspace-1',
+    name: 'Bug',
+    color: '#DC2626',
+    status: 'ACTIVE',
+    createdAt: isoDate,
+    updatedAt: isoDate,
+    ...overrides,
+  };
+}
+
+function mockDefaultTags() {
+  getTaskTags.mockResolvedValue([]);
+  listWorkspaceTags.mockResolvedValue({
+    items: [tagFixture(), tagFixture({ id: 'tag-archived', name: 'Legacy', status: 'ARCHIVED' })],
+    page: 1,
+    pageSize: 10,
+    total: 2,
+  });
+  createWorkspaceTag.mockResolvedValue(tagFixture({ id: 'tag-created', name: 'Created' }));
+  updateWorkspaceTag.mockResolvedValue(tagFixture({ id: 'tag-bug', name: 'Bug Fixed' }));
+  archiveWorkspaceTag.mockResolvedValue(tagFixture({ id: 'tag-bug', status: 'ARCHIVED' }));
+  reactivateWorkspaceTag.mockResolvedValue(tagFixture({ id: 'tag-archived', status: 'ACTIVE' }));
+  addTaskTags.mockResolvedValue({ requestedCount: 1, changedCount: 1, unchangedCount: 0 });
+  removeTaskTags.mockResolvedValue({ requestedCount: 1, changedCount: 1, unchangedCount: 0 });
+  listWorkspaceRoles.mockResolvedValue([
+    {
+      id: 'role-owner',
+      key: 'OWNER',
+      name: 'Owner',
+      description: null,
+      scope: 'WORKSPACE',
+      isSystem: true,
+      isActive: true,
+      workspaceId: null,
+      permissions: [
+        {
+          id: 'permission-tasks-update',
+          key: 'tasks.update',
+          description: null,
+          createdAt: isoDate,
+        },
+        { id: 'permission-tags-view', key: 'tags.view', description: null, createdAt: isoDate },
+        { id: 'permission-tags-create', key: 'tags.create', description: null, createdAt: isoDate },
+        { id: 'permission-tags-update', key: 'tags.update', description: null, createdAt: isoDate },
+        {
+          id: 'permission-tags-archive',
+          key: 'tags.archive',
+          description: null,
+          createdAt: isoDate,
+        },
+        { id: 'permission-tags-assign', key: 'tags.assign', description: null, createdAt: isoDate },
+        {
+          id: 'permission-comments-internal',
+          key: 'tasks.comments.internal',
+          description: null,
+          createdAt: isoDate,
+        },
+      ],
+      createdAt: isoDate,
+      updatedAt: isoDate,
+    },
+  ]);
+}
+
 function status(
   id: string,
   entityType: StatusEntityType,
@@ -2666,6 +3636,7 @@ function taskFixtureBase(): WorkspaceTask {
     title: 'Alpha launch task',
     description: 'Launch checklist',
     priority: 'HIGH',
+    kanbanRank: '1024',
     status: status('status-task', 'TASK', 'To Do'),
     department: {
       id: 'department-1',
@@ -2678,6 +3649,7 @@ function taskFixtureBase(): WorkspaceTask {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
+    plannedStartAt: null,
     dueAt: new Date(2026, 8, 30, 9, 30).toISOString(),
     assignees: [
       { id: 'membership-a', user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' } },

@@ -18,14 +18,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
       exception instanceof HttpException ? exception.getResponse() : undefined;
 
     response.status(status).json({
-      code: this.resolveCode(status),
+      code: this.resolveCode(status, exceptionResponse),
       message: this.resolveMessage(exceptionResponse, status),
       requestId,
       validation: this.resolveValidation(exceptionResponse),
+      details: this.resolveDetails(exceptionResponse),
     });
   }
 
-  private resolveCode(status: number) {
+  private resolveCode(status: number, exceptionResponse: unknown) {
+    if (
+      typeof exceptionResponse === 'object' &&
+      exceptionResponse &&
+      'code' in exceptionResponse &&
+      typeof (exceptionResponse as { code: unknown }).code === 'string'
+    ) {
+      return (exceptionResponse as { code: string }).code;
+    }
     if (status === HttpStatus.BAD_REQUEST) return ErrorCodes.VALIDATION_ERROR;
     if (status === HttpStatus.UNAUTHORIZED) return ErrorCodes.UNAUTHENTICATED;
     if (status === HttpStatus.FORBIDDEN) return ErrorCodes.UNAUTHORIZED;
@@ -58,6 +67,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
     ) {
       const message = (exceptionResponse as { message: unknown }).message;
       return Array.isArray(message) ? message : undefined;
+    }
+    return undefined;
+  }
+
+  private resolveDetails(exceptionResponse: unknown) {
+    if (
+      typeof exceptionResponse === 'object' &&
+      exceptionResponse &&
+      'details' in exceptionResponse
+    ) {
+      return (exceptionResponse as { details: unknown }).details;
     }
     return undefined;
   }

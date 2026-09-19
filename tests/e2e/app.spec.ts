@@ -404,6 +404,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       title: 'Seed alpha task',
       description: null,
       priority: 'MEDIUM',
+      kanbanRank: '1024',
       status: taskStatus,
       department: null,
       dueAt: '2026-09-30T00:00:00.000Z',
@@ -425,6 +426,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       title: 'Seed beta task',
       description: null,
       priority: 'LOW',
+      kanbanRank: '2048',
       status: taskStatus,
       department: null,
       dueAt: '2026-10-01T00:00:00.000Z',
@@ -448,6 +450,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       title: `Extra task ${index}`,
       description: null,
       priority: 'MEDIUM',
+      kanbanRank: String((index + 2) * 1024),
       status: taskStatus,
       department: null,
       dueAt: '2026-10-15T00:00:00.000Z',
@@ -466,9 +469,172 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
   }
   const dependencies = new Map<string, Set<string>>();
   const relatedPairs = new Set<string>();
+  const tags: Array<Record<string, unknown>> = [
+    {
+      id: 'tag-bug',
+      workspaceId: 'workspace-1',
+      name: 'Bug',
+      color: '#DC2626',
+      status: 'ACTIVE',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'tag-feature',
+      workspaceId: 'workspace-1',
+      name: 'Feature',
+      color: '#2563EB',
+      status: 'ACTIVE',
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'tag-legacy',
+      workspaceId: 'workspace-1',
+      name: 'Legacy',
+      color: '#64748B',
+      status: 'ARCHIVED',
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  const taskTags = new Map<string, Set<string>>([
+    ['task-seed-alpha', new Set(['tag-bug', 'tag-legacy'])],
+    ['task-seed-beta', new Set(['tag-feature'])],
+  ]);
+  const recurrenceSeries: Array<Record<string, unknown>> = [
+    {
+      id: 'series-alpha',
+      workspaceId: 'workspace-1',
+      status: 'ACTIVE',
+      title: 'Seed alpha task',
+      description: null,
+      priority: 'MEDIUM',
+      statusDefinitionId: taskStatus.id,
+      departmentId: null,
+      timezone: 'Asia/Calcutta',
+      frequency: 'DAILY',
+      interval: 1,
+      customIntervalUnit: null,
+      startLocalDate: '2026-09-20',
+      localTime: '09:00',
+      selectedWeekdays: [],
+      monthlyDay: null,
+      endMode: 'NEVER',
+      untilLocalDate: null,
+      maxOccurrences: null,
+      nextOccurrenceAt: '2026-09-21T03:30:00.000Z',
+      lastGeneratedAt: now,
+      generatedCount: 1,
+      endedAt: null,
+      lastErrorCode: null,
+      assigneeMembershipIds: [],
+      followerMembershipIds: [],
+      projectIds: [],
+      tagIds: [],
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  tasks[0].recurrenceSeriesId = 'series-alpha';
+  tasks[0].recurrenceScheduledFor = '2026-09-20T03:30:00.000Z';
+  tasks[0].recurrenceSequence = 1;
+  tasks[0].recurrenceIsException = false;
+  const templates: Array<Record<string, unknown>> = [
+    {
+      id: 'template-alpha',
+      workspaceId: 'workspace-1',
+      name: 'Launch template',
+      title: 'Templated launch task',
+      description: 'Template description',
+      priority: 'HIGH',
+      status: 'ACTIVE',
+      statusDefinitionId: taskStatus.id,
+      departmentId: null,
+      assigneeMembershipIds: ['membership-anya'],
+      followerMembershipIds: [],
+      projectIds: [],
+      tagIds: ['tag-feature'],
+      archivedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  const attachments = new Map<string, Array<Record<string, unknown>>>([
+    [
+      'task-seed-alpha',
+      [
+        {
+          id: 'attachment-existing-url',
+          workspaceId: 'workspace-1',
+          taskId: 'task-seed-alpha',
+          type: 'URL',
+          displayName: 'Existing Brief',
+          url: 'https://example.com/existing-brief',
+          file: null,
+          attachedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    ],
+  ]);
+  const emptyReactionCounts = () => ({ LIKE: 0, LOVE: 0, CELEBRATE: 0, EYES: 0, CHECK: 0 });
+  const comments = new Map<string, Array<Record<string, unknown>>>([
+    [
+      'task-seed-alpha',
+      [
+        {
+          id: 'comment-root',
+          workspaceId: 'workspace-1',
+          taskId: 'task-seed-alpha',
+          parentCommentId: null,
+          body: 'Initial discussion note',
+          visibility: 'NORMAL',
+          deleted: false,
+          editedAt: null,
+          deletedAt: null,
+          createdAt: now,
+          updatedAt: now,
+          author: {
+            membershipId: 'workspace-membership-1',
+            userId: 'user-1',
+            name: 'Owner',
+            email: 'owner@zeaplay.test',
+          },
+          mentions: [],
+          directReplyCount: 0,
+          reactionCounts: emptyReactionCounts(),
+          currentUserReactions: [],
+        },
+      ],
+    ],
+  ]);
   const canonicalRelatedKey = (left: string, right: string) =>
     [left, right].sort((a, b) => a.localeCompare(b)).join(':');
   const findTask = (taskId: string) => tasks.find((item) => item.id === taskId);
+  const taskComments = (taskId: string) => comments.get(taskId) ?? [];
+  const visibleComments = (taskId: string, parentCommentId: string | null) =>
+    taskComments(taskId).filter((comment) => comment.parentCommentId === parentCommentId);
+  const recomputeCommentCounts = (taskId: string) => {
+    const items = taskComments(taskId);
+    for (const comment of items) {
+      comment.directReplyCount = items.filter(
+        (reply) => reply.parentCommentId === comment.id,
+      ).length;
+    }
+  };
+  const pageComments = (items: Array<Record<string, unknown>>, url: string) => {
+    const params = new URL(url).searchParams;
+    const pageNumber = Number(params.get('page') ?? 1);
+    const pageSize = Number(params.get('pageSize') ?? 10);
+    return {
+      items: items.slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      page: pageNumber,
+      pageSize,
+      total: items.length,
+    };
+  };
   const taskWithCounts = (task: Record<string, unknown>) => {
     const taskId = String(task.id);
     const blockedByCount = dependencies.get(taskId)?.size ?? 0;
@@ -510,8 +676,109 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
   await page.route(/.*\/workspaces\/workspace-1\/users(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: users, page: 1, pageSize: 10, total: users.length });
   });
+  await page.route(/.*\/workspaces\/workspace-1\/roles$/, async (route) => {
+    await fulfillApi(route, [
+      {
+        id: 'role-admin',
+        key: 'admin',
+        name: 'Admin',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [
+          {
+            id: 'permission-tasks-update',
+            key: 'tasks.update',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-tags-view',
+            key: 'tags.view',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-tags-create',
+            key: 'tags.create',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-tags-update',
+            key: 'tags.update',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-tags-archive',
+            key: 'tags.archive',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-tags-assign',
+            key: 'tags.assign',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-comments-internal',
+            key: 'tasks.comments.internal',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-task-attachments-view',
+            key: 'tasks.attachments.view',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-task-attachments-add',
+            key: 'tasks.attachments.add',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-task-attachments-remove',
+            key: 'tasks.attachments.remove',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-task-attachments-download',
+            key: 'tasks.attachments.download',
+            description: null,
+            createdAt: now,
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+  });
   await page.route(/.*\/workspaces\/workspace-2\/users(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: [], page: 1, pageSize: 10, total: 0 });
+  });
+  await page.route(/.*\/workspaces\/workspace-2\/roles$/, async (route) => {
+    await fulfillApi(route, [
+      {
+        id: 'role-member',
+        key: 'member',
+        name: 'Member',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
   });
   await page.route(/.*\/workspaces\/workspace-1\/departments(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: [], page: 1, pageSize: 100, total: 0 });
@@ -528,6 +795,64 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
   await page.route(/.*\/projects(\?.*)?$/, async (route) => {
     await fulfillApi(route, { items: [], page: 1, pageSize: 10, total: 0 });
   });
+  await page.route(/.*\/workspaces\/workspace-1\/tags(\?.*)?$/, async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST') {
+      const body = request.postDataJSON() as { name: string; color?: string | null };
+      const tag = {
+        id: `tag-${body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${tags.length + 1}`,
+        workspaceId: 'workspace-1',
+        name: body.name,
+        color: body.color ?? null,
+        status: 'ACTIVE',
+        createdAt: now,
+        updatedAt: now,
+      };
+      tags.unshift(tag);
+      await fulfillApi(route, tag, 201);
+      return;
+    }
+    const url = new URL(request.url());
+    const search = url.searchParams.get('search')?.toLowerCase() ?? '';
+    const status = url.searchParams.get('status');
+    const pageNumber = Number(url.searchParams.get('page') ?? 1);
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 10);
+    const filtered = tags.filter((tag) => {
+      if (status && tag.status !== status) return false;
+      if (search && !String(tag.name).toLowerCase().includes(search)) return false;
+      return true;
+    });
+    await fulfillApi(route, {
+      items: filtered.slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      page: pageNumber,
+      pageSize,
+      total: filtered.length,
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tags\/([^/]+)(\/archive|\/reactivate)?$/,
+    async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const parts = url.pathname.split('/');
+      const tagId =
+        parts.at(-1) === 'archive' || parts.at(-1) === 'reactivate' ? parts.at(-2) : parts.at(-1);
+      const tag = tags.find((item) => item.id === tagId);
+      if (!tag) {
+        await fulfillApi(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (url.pathname.endsWith('/archive')) tag.status = 'ARCHIVED';
+      else if (url.pathname.endsWith('/reactivate')) tag.status = 'ACTIVE';
+      else if (request.method() === 'PATCH') {
+        const body = request.postDataJSON() as { name?: string; color?: string | null };
+        if (body.name !== undefined) tag.name = body.name;
+        if (body.color !== undefined) tag.color = body.color;
+      }
+      tag.updatedAt = now;
+      await fulfillApi(route, tag);
+    },
+  );
   await page.route(/.*\/workspaces\/workspace-1\/tasks\/bulk\/priority$/, async (route) => {
     const body = route.request().postDataJSON() as { taskIds: string[]; priority: string };
     if (body.priority === 'URGENT') {
@@ -664,6 +989,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
           title: body.title,
           description: null,
           priority: 'MEDIUM',
+          kanbanRank: String((tasks.length + 1) * 1024),
           status: taskStatus,
           department: null,
           dueAt: body.dueAt,
@@ -714,6 +1040,43 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
     task.updatedAt = now;
     await fulfillApi(route, taskWithCounts(task));
   });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/kanban\/settings$/, async (route) => {
+    await fulfillApi(route, {
+      columns: taskStatuses.map((status) => ({
+        status,
+        wipLimit: status.id === 'status-task-completed' ? 1 : null,
+      })),
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/kanban\/columns\/([^/]+)$/,
+    async (route) => {
+      const statusDefinitionId = route.request().url().split('/').pop() ?? '';
+      const body = route.request().postDataJSON() as { wipLimit: number | null };
+      await fulfillApi(route, { statusDefinitionId, wipLimit: body.wipLimit ?? null });
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/kanban-position$/,
+    async (route) => {
+      const taskId =
+        route
+          .request()
+          .url()
+          .match(/tasks\/([^/]+)\/kanban-position/)?.[1] ?? '';
+      const body = route.request().postDataJSON() as { statusDefinitionId: string };
+      const task = findTask(taskId);
+      const nextStatus = taskStatuses.find((status) => status.id === body.statusDefinitionId);
+      if (!task || !nextStatus) {
+        await fulfillApi(route, { message: 'Not found' }, 404);
+        return;
+      }
+      task.status = nextStatus;
+      task.kanbanRank = String((tasks.length + 10) * 1024);
+      task.updatedAt = now;
+      await fulfillApi(route, taskWithCounts(task));
+    },
+  );
   await page.route(
     /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/blocked-by(\/remove)?(\?.*)?$/,
     async (route) => {
@@ -798,25 +1161,455 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       await fulfillApi(route, pageResult(items, route.request().url()));
     },
   );
-  await page.route(/.*\/workspaces\/workspace-1\/tasks\/(?!bulk$)[^/]+$/, async (route) => {
-    const taskId = route.request().url().split('/').pop();
-    const task = tasks.find((item) => item.id === taskId);
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/comments(?:\?.*)?$/,
+    async (route) => {
+      const request = route.request();
+      const taskId = request.url().match(/tasks\/([^/]+)\/comments/)?.[1] ?? '';
+      if (request.method() === 'POST') {
+        const body = request.postDataJSON() as {
+          body: string;
+          visibility?: string;
+          mentionedMembershipIds?: string[];
+        };
+        const created = {
+          id: `comment-${Date.now()}`,
+          workspaceId: 'workspace-1',
+          taskId,
+          parentCommentId: null,
+          body: body.body,
+          visibility: body.visibility ?? 'NORMAL',
+          deleted: false,
+          editedAt: null,
+          deletedAt: null,
+          createdAt: now,
+          updatedAt: now,
+          author: {
+            membershipId: 'workspace-membership-1',
+            userId: 'user-1',
+            name: 'Owner',
+            email: 'owner@zeaplay.test',
+          },
+          mentions: (body.mentionedMembershipIds ?? []).map((membershipId) => {
+            const member = users.find((user) => user.membershipId === membershipId);
+            return {
+              membershipId,
+              userId: member?.id ?? membershipId,
+              name: member?.name ?? null,
+              email: member?.email ?? `${membershipId}@zeaplay.test`,
+            };
+          }),
+          directReplyCount: 0,
+          reactionCounts: emptyReactionCounts(),
+          currentUserReactions: [],
+        };
+        const next = taskComments(taskId);
+        next.push(created);
+        comments.set(taskId, next);
+        recomputeCommentCounts(taskId);
+        await fulfillApi(route, created, 201);
+        return;
+      }
+      recomputeCommentCounts(taskId);
+      await fulfillApi(route, pageComments(visibleComments(taskId, null), request.url()));
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/comments\/([^/]+)\/replies(?:\?.*)?$/,
+    async (route) => {
+      const request = route.request();
+      const match = request.url().match(/tasks\/([^/]+)\/comments\/([^/]+)\/replies/);
+      const taskId = match?.[1] ?? '';
+      const commentId = match?.[2] ?? '';
+      if (request.method() === 'POST') {
+        const body = request.postDataJSON() as { body: string; visibility?: string };
+        const created = {
+          id: `reply-${Date.now()}`,
+          workspaceId: 'workspace-1',
+          taskId,
+          parentCommentId: commentId,
+          body: body.body,
+          visibility: body.visibility ?? 'NORMAL',
+          deleted: false,
+          editedAt: null,
+          deletedAt: null,
+          createdAt: now,
+          updatedAt: now,
+          author: {
+            membershipId: 'workspace-membership-1',
+            userId: 'user-1',
+            name: 'Owner',
+            email: 'owner@zeaplay.test',
+          },
+          mentions: [],
+          directReplyCount: 0,
+          reactionCounts: emptyReactionCounts(),
+          currentUserReactions: [],
+        };
+        taskComments(taskId).push(created);
+        recomputeCommentCounts(taskId);
+        await fulfillApi(route, created, 201);
+        return;
+      }
+      recomputeCommentCounts(taskId);
+      await fulfillApi(route, pageComments(visibleComments(taskId, commentId), request.url()));
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/comments\/([^/]+)\/reactions(\/remove)?$/,
+    async (route) => {
+      const request = route.request();
+      const match = request.url().match(/tasks\/([^/]+)\/comments\/([^/]+)\/reactions/);
+      const taskId = match?.[1] ?? '';
+      const commentId = match?.[2] ?? '';
+      const reactionType = (request.postDataJSON() as { reactionType: string }).reactionType;
+      const comment = taskComments(taskId).find((item) => item.id === commentId);
+      if (comment) {
+        const counts = comment.reactionCounts as Record<string, number>;
+        const current = new Set(comment.currentUserReactions as string[]);
+        if (request.url().endsWith('/remove')) {
+          if (current.delete(reactionType)) {
+            counts[reactionType] = Math.max(0, (counts[reactionType] ?? 0) - 1);
+          }
+        } else if (!current.has(reactionType)) {
+          current.add(reactionType);
+          counts[reactionType] = (counts[reactionType] ?? 0) + 1;
+        }
+        comment.currentUserReactions = [...current];
+      }
+      await fulfillApi(route, { changed: true, reactionType });
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/comments\/([^/]+)$/,
+    async (route) => {
+      const request = route.request();
+      const match = request.url().match(/tasks\/([^/]+)\/comments\/([^/]+)$/);
+      const taskId = match?.[1] ?? '';
+      const commentId = match?.[2] ?? '';
+      const comment = taskComments(taskId).find((item) => item.id === commentId);
+      if (!comment) {
+        await fulfillApi(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (request.method() === 'PATCH') {
+        const body = request.postDataJSON() as { body: string };
+        comment.body = body.body;
+        comment.editedAt = now;
+        await fulfillApi(route, comment);
+        return;
+      }
+      if (request.method() === 'DELETE') {
+        comment.body = null;
+        comment.deleted = true;
+        comment.deletedAt = now;
+        await fulfillApi(route, comment);
+        return;
+      }
+      await fulfillApi(route, comment);
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/tags(\/add|\/remove)?$/,
+    async (route) => {
+      const request = route.request();
+      const match = request.url().match(/tasks\/([^/]+)\/tags/);
+      const taskId = match?.[1] ?? '';
+      const current = taskTags.get(taskId) ?? new Set<string>();
+      taskTags.set(taskId, current);
+      if (request.method() === 'POST') {
+        const body = request.postDataJSON() as { tagIds: string[] };
+        let changedCount = 0;
+        for (const tagId of body.tagIds) {
+          if (request.url().endsWith('/remove')) {
+            if (current.delete(tagId)) changedCount += 1;
+          } else {
+            const tag = tags.find((item) => item.id === tagId);
+            if (!tag || tag.status === 'ARCHIVED') continue;
+            if (!current.has(tagId)) {
+              current.add(tagId);
+              changedCount += 1;
+            }
+          }
+        }
+        await fulfillApi(route, {
+          requestedCount: body.tagIds.length,
+          changedCount,
+          unchangedCount: body.tagIds.length - changedCount,
+        });
+        return;
+      }
+      await fulfillApi(
+        route,
+        [...current]
+          .map((tagId) => tags.find((tag) => tag.id === tagId))
+          .filter((tag): tag is Record<string, unknown> => Boolean(tag)),
+      );
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/attachments\/([^/?]+)(\?.*)?$/,
+    async (route) => {
+      const request = route.request();
+      const match = request.url().match(/tasks\/([^/]+)\/attachments\/([^/?]+)/);
+      const taskId = match?.[1] ?? '';
+      const attachmentId = match?.[2] ?? '';
+      if (attachmentId === 'url' || attachmentId === 'link' || attachmentId === 'upload-init') {
+        await route.fallback();
+        return;
+      }
+      const current = attachments.get(taskId) ?? [];
+      if (request.method() === 'DELETE') {
+        const index = current.findIndex((attachment) => attachment.id === attachmentId);
+        if (index >= 0) current.splice(index, 1);
+        await fulfillApi(route, { changed: index >= 0 });
+        return;
+      }
+      await fulfillApi(route, { message: 'Not found' }, 404);
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/attachments(\/url)?(\?.*)?$/,
+    async (route) => {
+      const request = route.request();
+      const match = request.url().match(/tasks\/([^/]+)\/attachments/);
+      const taskId = match?.[1] ?? '';
+      const current = attachments.get(taskId) ?? [];
+      attachments.set(taskId, current);
+      if (request.method() === 'POST' && request.url().includes('/attachments/url')) {
+        const body = request.postDataJSON() as { url: string; displayName?: string };
+        const attachment = {
+          id: `attachment-url-${current.length + 1}`,
+          workspaceId: 'workspace-1',
+          taskId,
+          type: 'URL',
+          displayName: body.displayName || body.url,
+          url: body.url,
+          file: null,
+          attachedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        };
+        current.unshift(attachment);
+        await fulfillApi(route, attachment, 201);
+        return;
+      }
+      await fulfillApi(route, pageResult(current, request.url()));
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/recurrence(\?.*)?$/, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const search = url.searchParams.get('search')?.toLowerCase() ?? '';
+    const status = url.searchParams.get('status');
+    const pageNumber = Number(url.searchParams.get('page') ?? 1);
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 20);
+    const filtered = recurrenceSeries.filter((series) => {
+      if (status && series.status !== status) return false;
+      if (search && !String(series.title).toLowerCase().includes(search)) return false;
+      return true;
+    });
+    await fulfillApi(route, {
+      items: filtered.slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      page: pageNumber,
+      pageSize,
+      total: filtered.length,
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/recurrence\/([^/]+)\/(pause|resume|end)$/,
+    async (route) => {
+      const match = route
+        .request()
+        .url()
+        .match(/recurrence\/([^/]+)\/(pause|resume|end)$/);
+      const series = recurrenceSeries.find((item) => item.id === match?.[1]);
+      if (!series) {
+        await fulfillApi(route, { message: 'Not found' }, 404);
+        return;
+      }
+      const action = match?.[2];
+      series.status = action === 'pause' ? 'PAUSED' : action === 'resume' ? 'ACTIVE' : 'ENDED';
+      if (action === 'end') series.endedAt = now;
+      series.updatedAt = now;
+      await fulfillApi(route, series);
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/templates(\?.*)?$/, async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      const template = {
+        id: `template-${templates.length + 1}`,
+        workspaceId: 'workspace-1',
+        name: body.name,
+        title: body.title,
+        description: body.description ?? null,
+        priority: body.priority ?? 'MEDIUM',
+        status: 'ACTIVE',
+        statusDefinitionId: body.statusDefinitionId ?? taskStatus.id,
+        departmentId: body.departmentId ?? null,
+        assigneeMembershipIds: body.assigneeMembershipIds ?? [],
+        followerMembershipIds: body.followerMembershipIds ?? [],
+        projectIds: body.projectIds ?? [],
+        tagIds: body.tagIds ?? [],
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      templates.unshift(template);
+      await fulfillApi(route, template, 201);
+      return;
+    }
+    const url = new URL(request.url());
+    const search = url.searchParams.get('search')?.toLowerCase() ?? '';
+    const status = url.searchParams.get('status');
+    const pageNumber = Number(url.searchParams.get('page') ?? 1);
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 20);
+    const filtered = templates.filter((template) => {
+      if (status && template.status !== status) return false;
+      if (search && !String(template.name).toLowerCase().includes(search)) return false;
+      return true;
+    });
+    await fulfillApi(route, {
+      items: filtered.slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      page: pageNumber,
+      pageSize,
+      total: filtered.length,
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/templates\/([^/]+)(\/archive|\/reactivate)?$/,
+    async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const parts = url.pathname.split('/');
+      const templateId =
+        parts.at(-1) === 'archive' || parts.at(-1) === 'reactivate' ? parts.at(-2) : parts.at(-1);
+      const template = templates.find((item) => item.id === templateId);
+      if (!template) {
+        await fulfillApi(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (url.pathname.endsWith('/archive')) {
+        template.status = 'ARCHIVED';
+        template.archivedAt = now;
+      } else if (url.pathname.endsWith('/reactivate')) {
+        template.status = 'ACTIVE';
+        template.archivedAt = null;
+      } else if (request.method() === 'PATCH') {
+        Object.assign(template, request.postDataJSON(), { updatedAt: now });
+      }
+      await fulfillApi(route, template);
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/recurrence$/, async (route) => {
+    const request = route.request();
+    const taskId = request.url().match(/tasks\/([^/]+)\/recurrence/)?.[1] ?? '';
+    const task = findTask(taskId);
     if (!task) {
       await fulfillApi(route, { message: 'Not found' }, 404);
       return;
     }
-    await fulfillApi(route, {
-      ...taskWithCounts(task),
-      createdBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
-      updatedBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
-    });
+    const body = request.postDataJSON() as Record<string, unknown>;
+    const series = {
+      id: `series-${recurrenceSeries.length + 1}`,
+      workspaceId: 'workspace-1',
+      status: 'ACTIVE',
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      statusDefinitionId: (task.status as { id: string }).id,
+      departmentId: null,
+      timezone: body.timezone,
+      frequency: body.frequency,
+      interval: body.interval ?? 1,
+      customIntervalUnit: body.customIntervalUnit ?? null,
+      startLocalDate: body.startLocalDate,
+      localTime: body.localTime,
+      selectedWeekdays: body.selectedWeekdays ?? [],
+      monthlyDay: body.monthlyDay ?? null,
+      endMode: body.endMode,
+      untilLocalDate: body.untilLocalDate ?? null,
+      maxOccurrences: body.maxOccurrences ?? null,
+      nextOccurrenceAt: '2026-09-22T03:30:00.000Z',
+      lastGeneratedAt: now,
+      generatedCount: 1,
+      endedAt: null,
+      lastErrorCode: null,
+      assigneeMembershipIds: [],
+      followerMembershipIds: [],
+      projectIds: [],
+      tagIds: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    recurrenceSeries.unshift(series);
+    task.recurrenceSeriesId = series.id;
+    task.recurrenceScheduledFor = '2026-09-22T03:30:00.000Z';
+    task.recurrenceSequence = 1;
+    task.recurrenceIsException = false;
+    await fulfillApi(route, taskWithCounts(task));
   });
+  await page.route(/.*\/workspaces\/workspace-1\/tasks\/([^/]+)\/templates$/, async (route) => {
+    const taskId =
+      route
+        .request()
+        .url()
+        .match(/tasks\/([^/]+)\/templates/)?.[1] ?? '';
+    const task = findTask(taskId);
+    const body = route.request().postDataJSON() as { name: string };
+    if (!task) {
+      await fulfillApi(route, { message: 'Not found' }, 404);
+      return;
+    }
+    const template = {
+      id: `template-${templates.length + 1}`,
+      workspaceId: 'workspace-1',
+      name: body.name,
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      status: 'ACTIVE',
+      statusDefinitionId: (task.status as { id: string }).id,
+      departmentId: null,
+      assigneeMembershipIds: [],
+      followerMembershipIds: [],
+      projectIds: [],
+      tagIds: [],
+      archivedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    templates.unshift(template);
+    await fulfillApi(route, template, 201);
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tasks\/(?!(bulk|recurrence|templates)(\?|$))[^/]+$/,
+    async (route) => {
+      const taskId = route.request().url().split('/').pop();
+      const task = tasks.find((item) => item.id === taskId);
+      if (!task) {
+        await fulfillApi(route, { message: 'Not found' }, 404);
+        return;
+      }
+      if (route.request().method() === 'PATCH') {
+        Object.assign(task, route.request().postDataJSON(), { updatedAt: now });
+      }
+      await fulfillApi(route, {
+        ...taskWithCounts(task),
+        createdBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
+        updatedBy: { id: 'admin-1', email: 'admin@zeaplay.test', name: 'Admin' },
+      });
+    },
+  );
   await page.route(/.*\/workspaces\/workspace-1\/tasks(\?.*)?$/, async (route) => {
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON() as {
         title: string;
         dueAt: string;
         assigneeMembershipIds: string[];
+        recurrence?: Record<string, unknown>;
       };
       const task = {
         id: 'task-e2e',
@@ -824,6 +1617,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
         title: body.title,
         description: null,
         priority: 'MEDIUM',
+        kanbanRank: String((tasks.length + 1) * 1024),
         status: taskStatus,
         department: null,
         dueAt: body.dueAt,
@@ -836,9 +1630,51 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
         followers: [],
         projects: [],
         counts: { assignees: body.assigneeMembershipIds.length, followers: 0, projects: 0 },
+        recurrenceSeriesId: null,
+        recurrenceScheduledFor: null,
+        recurrenceSequence: null,
+        recurrenceIsException: false,
         createdAt: now,
         updatedAt: now,
       };
+      if (body.recurrence) {
+        const series = {
+          id: `series-${recurrenceSeries.length + 1}`,
+          workspaceId: 'workspace-1',
+          status: 'ACTIVE',
+          title: body.title,
+          description: null,
+          priority: 'MEDIUM',
+          statusDefinitionId: taskStatus.id,
+          departmentId: null,
+          timezone: body.recurrence.timezone,
+          frequency: body.recurrence.frequency,
+          interval: body.recurrence.interval ?? 1,
+          customIntervalUnit: body.recurrence.customIntervalUnit ?? null,
+          startLocalDate: body.recurrence.startLocalDate,
+          localTime: body.recurrence.localTime,
+          selectedWeekdays: body.recurrence.selectedWeekdays ?? [],
+          monthlyDay: body.recurrence.monthlyDay ?? null,
+          endMode: body.recurrence.endMode,
+          untilLocalDate: body.recurrence.untilLocalDate ?? null,
+          maxOccurrences: body.recurrence.maxOccurrences ?? null,
+          nextOccurrenceAt: '2026-09-23T03:30:00.000Z',
+          lastGeneratedAt: now,
+          generatedCount: 1,
+          endedAt: null,
+          lastErrorCode: null,
+          assigneeMembershipIds: body.assigneeMembershipIds,
+          followerMembershipIds: [],
+          projectIds: [],
+          tagIds: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        recurrenceSeries.unshift(series);
+        task.recurrenceSeriesId = series.id;
+        task.recurrenceScheduledFor = '2026-09-22T03:30:00.000Z';
+        task.recurrenceSequence = 1;
+      }
       tasks.unshift(task);
       await fulfillApi(route, task);
       return;
@@ -846,6 +1682,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
     const url = new URL(route.request().url());
     const search = url.searchParams.get('search')?.toLowerCase() ?? '';
     const statusDefinitionId = url.searchParams.get('statusDefinitionId');
+    const tagId = url.searchParams.get('tagId');
     const pageNumber = Number(url.searchParams.get('page') ?? 1);
     const pageSize = Number(url.searchParams.get('pageSize') ?? 20);
     const filtered = tasks.filter((task) => {
@@ -856,6 +1693,7 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
       ) {
         return false;
       }
+      if (tagId && !taskTags.get(String(task.id))?.has(tagId)) return false;
       return true;
     });
     await fulfillApi(route, {
@@ -1064,6 +1902,126 @@ test('authenticated task creation supports the quick-create flow', async ({ page
   await expect(page.getByText('No matching tasks')).toBeVisible();
 });
 
+test('authenticated recurrence and template UX supports lifecycle, scope, and reuse', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+  page.on('dialog', (dialog) => dialog.accept());
+
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Create Task' }).click();
+  await page.getByLabel('Title *').fill('Daily recurring task');
+  await page.getByRole('button', { name: /Anya/ }).click();
+  await page.getByLabel('Due Date *').fill('2026-09-30');
+  await page.getByRole('button', { name: 'Add more details' }).click();
+  await page.getByRole('combobox', { name: 'Repeat' }).click();
+  await page
+    .getByRole('option', { name: 'Daily' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByLabel('Start Date').fill('2026-09-20');
+  await page.getByRole('textbox', { name: 'Time', exact: true }).fill('09:00');
+  await page.getByRole('button', { name: 'Create Task' }).click();
+  await expect(page.getByText('Task created')).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByText('Daily recurring task').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Daily recurring task' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Recurring');
+  await expect(page.getByRole('dialog')).toContainText('Pattern');
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(page.getByText('Recurrence updated').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect(page.getByText('Recurrence updated').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Task' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Apply changes to');
+  await page.getByLabel(/This task only/).check();
+  await page.getByLabel('Title').fill('Daily recurring edited');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Task updated')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'Seed beta task' }).click();
+  await page.getByRole('button', { name: 'Make Recurring' }).click();
+  await page.getByLabel('Start Date').fill('2026-10-01');
+  await page.getByRole('textbox', { name: 'Time', exact: true }).fill('10:00');
+  await page.getByRole('button', { name: 'Make Recurring' }).click();
+  await expect(page.getByText('Recurrence updated').first()).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await page.goto('/workspace/tasks/recurring');
+  await expect(page.getByRole('heading', { name: 'Recurring Tasks' })).toBeVisible();
+  await expect(page.getByText('Seed alpha task').first()).toBeVisible();
+  await page.getByRole('combobox', { name: 'Series Status' }).click();
+  await page
+    .getByRole('option', { name: 'Active' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await expect(page.getByText('Generated Count').first()).toBeVisible();
+
+  await page.goto('/workspace/tasks/templates');
+  await expect(page.getByRole('heading', { name: 'Task Templates' })).toBeVisible();
+  await expect(page.getByText('Launch template')).toBeVisible();
+  await page.getByRole('button', { name: 'Create Template' }).click();
+  await page.getByLabel('Template Name').fill('E2E template');
+  await page.getByLabel('Title').fill('E2E template task');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Template updated').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Use Template' }).first().click();
+  await expect(page.getByRole('dialog')).toContainText('Create Task');
+  await expect(page.getByLabel('Title *')).toHaveValue(/E2E template task|Templated launch task/);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Archive Template' }).first().click();
+  await expect(page.getByText('Template updated').first()).toBeVisible();
+  await page.getByRole('combobox', { name: 'Status' }).click();
+  await page
+    .getByRole('option', { name: 'Archived' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Reactivate Template' }).first().click();
+  await expect(page.getByText('Template updated').first()).toBeVisible();
+
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  await page.getByRole('button', { name: 'Save as Template' }).click();
+  await page.getByLabel('Template Name').fill('Saved from task');
+  await page.getByRole('button', { name: 'Save as Template' }).click();
+  await expect(page.getByText('Template saved')).toBeVisible();
+});
+
+test('authenticated task Kanban supports status columns, fallback move, persistence, and detail open', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  await page.goto('/workspace/tasks?view=kanban');
+  await expect(page.getByRole('heading', { name: 'To Do' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Completed' })).toBeVisible();
+  await expect(page.getByText('Seed alpha task').first()).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Move to status' }).first().click();
+  await page
+    .getByRole('option', { name: 'Completed' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await expect(page.getByText('Task moved')).toBeVisible();
+  await expect(
+    page.locator('section', { hasText: 'Completed' }).getByText('Seed alpha task'),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(
+    page.locator('section', { hasText: 'Completed' }).getByText('Seed alpha task'),
+  ).toBeVisible();
+  await page
+    .locator('section', { hasText: 'Completed' })
+    .getByRole('button', { name: 'Open task details: Seed alpha task' })
+    .click();
+  await expect(page.getByRole('dialog').filter({ hasText: 'Task details' })).toBeVisible();
+
+  await page.setViewportSize({ width: 375, height: 760 });
+  await page.goto('/workspace/tasks?view=kanban');
+  await expect(page.getByRole('combobox', { name: 'Move to status' }).first()).toBeVisible();
+});
+
 test('authenticated task detail tabs lazy-load only the active relationship surface', async ({
   page,
 }) => {
@@ -1074,6 +2032,7 @@ test('authenticated task detail tabs lazy-load only the active relationship surf
   let blockedByRequests = 0;
   let blocksRequests = 0;
   let relatedRequests = 0;
+  let commentRequests = 0;
   page.on('request', (request) => {
     const url = request.url();
     if (url.includes('/workspaces/workspace-1/tasks/task-seed-alpha/subtasks')) {
@@ -1088,30 +2047,187 @@ test('authenticated task detail tabs lazy-load only the active relationship surf
     if (url.includes('/workspaces/workspace-1/tasks/task-seed-alpha/related')) {
       relatedRequests += 1;
     }
+    if (url.match(/\/workspaces\/workspace-1\/tasks\/task-seed-alpha\/comments(\?|$)/)) {
+      commentRequests += 1;
+    }
   });
 
   await page.goto('/workspace/tasks');
   await page.getByRole('button', { name: 'Seed alpha task' }).click();
-  await expect(page.getByRole('dialog')).toContainText('Task details');
+  const detailDialog = page.getByRole('dialog').filter({ hasText: 'Task details' });
+  await expect(detailDialog).toContainText('Task details');
+  await expect(detailDialog.getByText('Bug')).toBeVisible();
+  await expect(detailDialog.getByText('Existing Brief')).toBeVisible();
+  await expect(detailDialog.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   await expect
-    .poll(() => subtaskRequests + blockedByRequests + blocksRequests + relatedRequests)
+    .poll(
+      () =>
+        subtaskRequests + blockedByRequests + blocksRequests + relatedRequests + commentRequests,
+    )
     .toBe(0);
 
-  await page.getByRole('tab', { name: 'Subtasks' }).click();
-  await expect(page.getByText('No subtasks')).toBeVisible();
+  await detailDialog.getByRole('tab', { name: 'Subtasks' }).click();
+  await expect(detailDialog.getByText('No subtasks')).toBeVisible();
   expect(subtaskRequests).toBe(1);
   expect(blockedByRequests + blocksRequests + relatedRequests).toBe(0);
 
-  await page.getByRole('tab', { name: 'Dependencies' }).click();
-  await expect(page.getByText('Blocked By')).toBeVisible();
-  await expect(page.getByText('Blocks')).toBeVisible();
+  await detailDialog.getByRole('tab', { name: 'Overview' }).click();
+  await expect(detailDialog.getByText('Existing Brief')).toBeVisible();
+  expect(subtaskRequests).toBe(1);
+
+  await detailDialog.getByRole('tab', { name: 'Dependencies' }).click();
+  await expect(detailDialog.getByText('Blocked By')).toBeVisible();
+  await expect(detailDialog.getByText('Blocks')).toBeVisible();
   expect(blockedByRequests).toBe(1);
   expect(blocksRequests).toBe(1);
   expect(relatedRequests).toBe(0);
 
-  await page.getByRole('tab', { name: 'Related' }).click();
-  await expect(page.getByRole('heading', { name: 'Related Tasks', exact: true })).toBeVisible();
+  await detailDialog.getByRole('tab', { name: 'Related' }).click();
+  await expect(
+    detailDialog.getByRole('heading', { name: 'Related Tasks', exact: true }),
+  ).toBeVisible();
   expect(relatedRequests).toBe(1);
+  expect(commentRequests).toBe(0);
+
+  await detailDialog.getByRole('tab', { name: 'Comments' }).click();
+  await expect(detailDialog.getByText('Initial discussion note')).toBeVisible();
+  expect(commentRequests).toBe(1);
+
+  await detailDialog.getByRole('tab', { name: 'Overview' }).click();
+  await expect(detailDialog.getByText('Bug')).toBeVisible();
+  await expect(detailDialog.getByText('Existing Brief')).toBeVisible();
+  expect(subtaskRequests).toBe(1);
+  expect(blockedByRequests).toBe(1);
+  expect(blocksRequests).toBe(1);
+  expect(relatedRequests).toBe(1);
+  expect(commentRequests).toBe(1);
+});
+
+test('authenticated task comments support mention, reply, edit, reaction, and tombstone flow', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  await page.getByRole('tab', { name: 'Comments' }).click();
+  await expect(page.getByText('Initial discussion note')).toBeVisible();
+
+  await page.getByLabel('Write a comment').fill('Please review @A');
+  await page.getByRole('option', { name: 'Anya' }).click();
+  await page.getByRole('checkbox', { name: /Internal comment/i }).click();
+  await page.getByRole('button', { name: 'Post comment' }).click();
+  await expect(page.getByText('Comment posted')).toBeVisible();
+  await expect(page.getByText(/Please review/)).toBeVisible();
+  await expect(page.getByText('@Anya').first()).toBeVisible();
+  await expect(page.getByText('Internal').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reply' }).last().click();
+  await page.getByLabel('Write a reply').fill('Reply from E2E');
+  await page.getByRole('button', { name: 'Post reply' }).click();
+  await expect(page.getByText('Reply posted')).toBeVisible();
+  await expect(page.getByText('Reply from E2E')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit' }).first().click();
+  await page.getByLabel('Edit comment').fill('Edited E2E discussion note');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Comment updated')).toBeVisible();
+  await expect(page.getByText('Edited', { exact: true })).toBeVisible();
+
+  await page
+    .getByRole('button', { name: /React with Like/i })
+    .first()
+    .click();
+  await expect(page.getByRole('button', { name: /Remove reaction Like/i }).first()).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Delete comment' }).first().click();
+  await expect(
+    page.getByRole('region', { name: 'Comments' }).getByText('Comment deleted'),
+  ).toBeVisible();
+  await expect(page.getByText('Reply from E2E')).toBeVisible();
+});
+
+test('authenticated task tags support assignment, catalog management, and list filtering', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+
+  await page.goto('/workspace/tasks');
+  await page.getByRole('button', { name: 'Seed alpha task' }).click();
+  const detailDialog = page.getByRole('dialog').filter({ hasText: 'Task details' });
+  await expect(detailDialog.getByText('Bug')).toBeVisible();
+  await expect(detailDialog.getByText('Legacy')).toBeVisible();
+  await expect(detailDialog.getByText('Archived')).toBeVisible();
+  await expect(detailDialog.getByText('Existing Brief')).toBeVisible();
+
+  await detailDialog.getByRole('button', { name: 'Add Link' }).click();
+  const addLinkDialog = page.getByRole('dialog').filter({ hasText: 'Attach an external URL' });
+  await addLinkDialog.getByLabel('URL').fill('https://example.com/phase-7-4d');
+  await addLinkDialog.getByLabel('Display name').fill('Phase 7.4D Link');
+  await addLinkDialog.getByRole('button', { name: 'Add Link' }).click();
+  await expect(page.getByText('Link attached')).toBeVisible();
+  await expect(detailDialog.getByText('Phase 7.4D Link')).toBeVisible();
+  await expect(detailDialog.getByRole('button', { name: 'Open Link' }).first()).toBeVisible();
+  await detailDialog.getByRole('button', { name: 'Remove Phase 7.4D Link from task' }).click();
+  await expect(page.getByText('Attachment removed from task')).toBeVisible();
+  await expect(detailDialog.getByText('Phase 7.4D Link')).toHaveCount(0);
+
+  await detailDialog.getByRole('button', { name: 'Add Tags' }).click();
+  const addTagsDialog = page.getByRole('dialog').filter({ hasText: 'Add Tags' });
+  await addTagsDialog.getByRole('textbox', { name: 'Search tags' }).fill('Feature');
+  await addTagsDialog.getByRole('option', { name: /Feature/ }).click();
+  await addTagsDialog.getByRole('button', { name: 'Add Tags' }).click();
+  await expect(page.getByText('1 tags added.')).toBeVisible();
+  await expect(detailDialog.getByText('Feature')).toBeVisible();
+
+  await detailDialog.getByRole('button', { name: 'Remove Legacy from task' }).click();
+  await expect(page.getByText('1 tag removed.')).toBeVisible();
+  await expect(detailDialog.getByText('Legacy')).toHaveCount(0);
+
+  await detailDialog.getByRole('button', { name: 'Manage Tags' }).click();
+  const manageTagsDialog = page.getByRole('dialog').filter({ hasText: 'Manage Tags' });
+  await manageTagsDialog.getByLabel('Tag Name').fill('QA');
+  await manageTagsDialog.getByLabel('Tag Color').fill('#16A34A');
+  await manageTagsDialog.getByRole('button', { name: 'Create Tag' }).click();
+  await expect(page.getByText('Tag created')).toBeVisible();
+  await expect(manageTagsDialog.getByText('QA')).toBeVisible();
+
+  await manageTagsDialog.getByRole('button', { name: 'Edit Tag: QA' }).click();
+  await manageTagsDialog.getByLabel('Tag Name').fill('QA Ready');
+  await manageTagsDialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Tag updated')).toBeVisible();
+  await expect(manageTagsDialog.getByText('QA Ready')).toBeVisible();
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await manageTagsDialog.getByRole('button', { name: 'Archive: QA Ready' }).click();
+  await expect(page.getByText('Tag archived')).toBeVisible();
+  await manageTagsDialog.getByRole('combobox', { name: 'Tag status' }).click();
+  await page
+    .getByRole('option', { name: 'Archived' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await manageTagsDialog.getByRole('button', { name: 'Reactivate: QA Ready' }).click();
+  await expect(page.getByText('Tag reactivated')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await page.getByRole('textbox', { name: 'Search tags' }).fill('Bug');
+  await page.getByRole('combobox', { name: 'Filter by Tag' }).click();
+  await page
+    .getByRole('option', { name: 'Bug' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await expect(page).toHaveURL(/tagId=tag-bug/);
+  await expect(page.getByText('Seed alpha task').first()).toBeVisible();
+  await expect(page.getByText('Seed beta task')).toHaveCount(0);
 });
 
 test('authenticated task detail supports subtask create, reparent, detach, and mobile widths', async ({

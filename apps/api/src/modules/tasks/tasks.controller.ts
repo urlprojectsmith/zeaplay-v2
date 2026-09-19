@@ -18,6 +18,8 @@ import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionGuard } from '../../common/authorization/permission.guard';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
+import { ReqContext } from '../../common/decorators/request-context.decorator';
+import type { RequestContext } from '@zea-play/types';
 import {
   AGENCY_HEADER,
   CurrentWorkspaceTenant,
@@ -29,21 +31,55 @@ import {
   BulkTaskMembershipsDto,
   BulkTaskPriorityDto,
   BulkTaskStatusDto,
+  CompletionPolicyDto,
   CreateTaskCommentDto,
+  CreateTaskFromTemplateDto,
+  CreateTaskTimeEntryDto,
+  CreateTaskUrlAttachmentDto,
   CreateTaskDto,
+  CreateTaskTemplateDto,
   ReplaceTaskMembershipsDto,
   ReplaceTaskProjectsDto,
+  ReplaceTaskWorkloadAllocationsDto,
+  SaveTaskAsTemplateDto,
+  TaskActivityQueryDto,
+  StartTaskTimerDto,
+  TaskAttachmentIdsDto,
+  TaskAttachmentParamsDto,
+  TaskCalendarQueryDto,
+  TaskCompletionDecisionDto,
+  TaskCompletionQueryDto,
+  TaskCompletionSubmissionParamsDto,
+  TaskGanttQueryDto,
+  TaskKanbanColumnParamsDto,
+  TaskKanbanMoveDto,
   TaskCommentParamsDto,
   TaskParamsDto,
   TaskCommentReactionDto,
+  TaskRecurrenceQueryDto,
+  TaskTagIdsDto,
+  TaskTimeEntryParamsDto,
+  TaskTimeReportQueryDto,
+  TaskTemplateQueryDto,
+  TaskReportsQueryDto,
   TaskQueryDto,
   TaskRelationshipIdsDto,
+  TaskWorkloadQueryDto,
+  SubmitTaskCompletionDto,
+  UpdateTaskScheduleDto,
+  UpdateWorkspaceMemberCapacityDto,
+  UpdateTaskKanbanColumnSettingDto,
   UpdateTaskCommentDto,
+  UpdateTaskRecurrenceDto,
   UpdateTaskDto,
   UpdateTaskParentDto,
   UpdateTaskStatusDto,
+  UpdateTaskTemplateDto,
+  UpdateTaskTimeEntryDto,
 } from './dto/task.dto';
 import { TasksService } from './tasks.service';
+import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
+import { UploadInitDto } from '../assets/dto/upload-init.dto';
 
 @ApiTags('workspace tasks')
 @ApiBearerAuth()
@@ -66,6 +102,196 @@ export class TasksController {
     return this.tasks.list(tenant, query);
   }
 
+  @Get('recurrence')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listRecurrenceSeries(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskRecurrenceQueryDto,
+  ) {
+    return this.tasks.listRecurrenceSeries(tenant, query);
+  }
+
+  @Patch('recurrence/:seriesId/pause')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  pauseRecurrence(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('seriesId') seriesId: string,
+  ) {
+    return this.tasks.pauseRecurrence(tenant, seriesId);
+  }
+
+  @Patch('recurrence/:seriesId/resume')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  resumeRecurrence(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('seriesId') seriesId: string,
+  ) {
+    return this.tasks.resumeRecurrence(tenant, seriesId);
+  }
+
+  @Patch('recurrence/:seriesId/end')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  endRecurrence(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('seriesId') seriesId: string,
+  ) {
+    return this.tasks.endRecurrence(tenant, seriesId);
+  }
+
+  @Get('templates')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listTemplates(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskTemplateQueryDto,
+  ) {
+    return this.tasks.listTemplates(tenant, query);
+  }
+
+  @Get('time/report')
+  @RequirePermissions(PermissionKeys.tasksView)
+  timeReport(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskTimeReportQueryDto,
+  ) {
+    return this.tasks.timeReport(tenant, query);
+  }
+
+  @Get('workload')
+  @RequirePermissions(PermissionKeys.tasksView)
+  workload(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskWorkloadQueryDto,
+  ) {
+    return this.tasks.workload(tenant, query);
+  }
+
+  @Get('calendar')
+  @RequirePermissions(PermissionKeys.tasksView)
+  calendar(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskCalendarQueryDto,
+  ) {
+    return this.tasks.calendar(tenant, query);
+  }
+
+  @Get('gantt')
+  @RequirePermissions(PermissionKeys.tasksView)
+  gantt(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskGanttQueryDto,
+  ) {
+    return this.tasks.gantt(tenant, query);
+  }
+
+  @Get('reports/summary')
+  @RequirePermissions(PermissionKeys.tasksView)
+  reportsSummary(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskReportsQueryDto,
+  ) {
+    return this.tasks.reportsSummary(tenant, query);
+  }
+
+  @Get('reports/export')
+  @RequirePermissions(PermissionKeys.tasksView)
+  reportsExport(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskReportsQueryDto,
+  ) {
+    return this.tasks.reportsCsv(tenant, query);
+  }
+
+  @Get('activity')
+  @RequirePermissions(PermissionKeys.tasksView)
+  activity(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskActivityQueryDto,
+  ) {
+    return this.tasks.activity(tenant, query);
+  }
+
+  @Get('activity/export')
+  @RequirePermissions(PermissionKeys.tasksView)
+  activityExport(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskActivityQueryDto,
+  ) {
+    return this.tasks.activityCsv(tenant, query);
+  }
+
+  @Put('workload/capacity/:membershipId')
+  @RequirePermissions(PermissionKeys.tasksManage)
+  updateCapacity(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('membershipId') membershipId: string,
+    @Body() dto: UpdateWorkspaceMemberCapacityDto,
+  ) {
+    return this.tasks.updateMemberCapacity(tenant, membershipId, dto);
+  }
+
+  @Post('templates')
+  @RequirePermissions(PermissionKeys.tasksCreate)
+  createTemplate(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: CreateTaskTemplateDto,
+  ) {
+    return this.tasks.createTemplate(tenant, dto);
+  }
+
+  @Patch('templates/:templateId')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  updateTemplate(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('templateId') templateId: string,
+    @Body() dto: UpdateTaskTemplateDto,
+  ) {
+    return this.tasks.updateTemplate(tenant, templateId, dto);
+  }
+
+  @Post('templates/:templateId/use')
+  @RequirePermissions(PermissionKeys.tasksCreate)
+  createFromTemplate(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('templateId') templateId: string,
+    @Body() dto: CreateTaskFromTemplateDto,
+  ) {
+    return this.tasks.createFromTemplate(tenant, templateId, dto);
+  }
+
+  @Patch('templates/:templateId/archive')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  archiveTemplate(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('templateId') templateId: string,
+  ) {
+    return this.tasks.archiveTemplate(tenant, templateId);
+  }
+
+  @Patch('templates/:templateId/reactivate')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  reactivateTemplate(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('templateId') templateId: string,
+  ) {
+    return this.tasks.reactivateTemplate(tenant, templateId);
+  }
+
+  @Get('kanban/settings')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listKanbanSettings(@CurrentWorkspaceTenant() tenant: WorkspaceTenantContext) {
+    return this.tasks.listKanbanSettings(tenant);
+  }
+
+  @Patch('kanban/columns/:statusDefinitionId')
+  @RequirePermissions(PermissionKeys.tasksManage)
+  updateKanbanColumnSetting(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskKanbanColumnParamsDto,
+    @Body() dto: UpdateTaskKanbanColumnSettingDto,
+  ) {
+    return this.tasks.updateKanbanColumnSetting(tenant, params.statusDefinitionId, dto);
+  }
+
   @Patch('bulk/status')
   @RequirePermissions(PermissionKeys.tasksUpdate)
   bulkUpdateStatus(
@@ -73,6 +299,15 @@ export class TasksController {
     @Body() dto: BulkTaskStatusDto,
   ) {
     return this.tasks.bulkUpdateStatus(tenant, dto);
+  }
+
+  @Get('completion/approvals')
+  @RequirePermissions(PermissionKeys.taskCompletionApprove)
+  listApprovalQueue(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: TaskCompletionQueryDto,
+  ) {
+    return this.tasks.listCompletionApprovalQueue(tenant, query);
   }
 
   @Patch('bulk/priority')
@@ -111,6 +346,26 @@ export class TasksController {
     return this.tasks.bulkRemove(tenant, dto);
   }
 
+  @Patch(':taskId/kanban-position')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  moveKanbanTask(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskKanbanMoveDto,
+  ) {
+    return this.tasks.moveKanbanTask(tenant, params.taskId, dto);
+  }
+
+  @Patch(':taskId/schedule')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  updateSchedule(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: UpdateTaskScheduleDto,
+  ) {
+    return this.tasks.updateSchedule(tenant, params.taskId, dto);
+  }
+
   @Post(':taskId/subtasks')
   @RequirePermissions(PermissionKeys.tasksCreate)
   createSubtask(
@@ -119,6 +374,144 @@ export class TasksController {
     @Body() dto: CreateTaskDto,
   ) {
     return this.tasks.createSubtask(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/recurrence')
+  @RequirePermissions(PermissionKeys.tasksUpdate)
+  makeRecurring(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: UpdateTaskRecurrenceDto,
+  ) {
+    return this.tasks.makeRecurring(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/templates')
+  @RequirePermissions(PermissionKeys.tasksCreate)
+  saveTaskAsTemplate(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: SaveTaskAsTemplateDto,
+  ) {
+    return this.tasks.saveTaskAsTemplate(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/time/start')
+  @RequirePermissions(PermissionKeys.taskTimeTrack)
+  startTimer(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: StartTaskTimerDto,
+  ) {
+    return this.tasks.startTimer(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/time')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listTaskTimeEntries(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskTimeReportQueryDto,
+  ) {
+    return this.tasks.listTaskTimeEntries(tenant, params.taskId, query);
+  }
+
+  @Post(':taskId/time')
+  @RequirePermissions(PermissionKeys.taskTimeTrack)
+  addManualTime(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: CreateTaskTimeEntryDto,
+  ) {
+    return this.tasks.createManualTimeEntry(tenant, params.taskId, dto);
+  }
+
+  @Patch(':taskId/time/:timeEntryId')
+  @RequirePermissions(PermissionKeys.tasksView)
+  updateTimeEntry(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskTimeEntryParamsDto,
+    @Body() dto: UpdateTaskTimeEntryDto,
+  ) {
+    return this.tasks.updateTimeEntry(tenant, params.taskId, params.timeEntryId, dto);
+  }
+
+  @Delete(':taskId/time/:timeEntryId')
+  @RequirePermissions(PermissionKeys.tasksView)
+  deleteTimeEntry(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskTimeEntryParamsDto,
+  ) {
+    return this.tasks.deleteTimeEntry(tenant, params.taskId, params.timeEntryId);
+  }
+
+  @Get(':taskId/workload-allocations')
+  @RequirePermissions(PermissionKeys.tasksView)
+  getWorkloadAllocations(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+  ) {
+    return this.tasks.getTaskWorkloadAllocations(tenant, params.taskId);
+  }
+
+  @Put(':taskId/workload-allocations')
+  @RequirePermissions(PermissionKeys.tasksManage)
+  replaceWorkloadAllocations(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: ReplaceTaskWorkloadAllocationsDto,
+  ) {
+    return this.tasks.replaceWorkloadAllocations(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/completion-policy')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCompletionView)
+  getCompletionPolicy(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+  ) {
+    return this.tasks.getCompletionPolicy(tenant, params.taskId);
+  }
+
+  @Put(':taskId/completion-policy')
+  @RequirePermissions(PermissionKeys.tasksUpdate, PermissionKeys.taskCompletionManagePolicy)
+  upsertCompletionPolicy(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: CompletionPolicyDto,
+  ) {
+    return this.tasks.upsertCompletionPolicy(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/completion-submissions')
+  @RequirePermissions(PermissionKeys.tasksUpdate, PermissionKeys.taskCompletionSubmit)
+  submitCompletion(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: SubmitTaskCompletionDto,
+    @Query('statusDefinitionId') statusDefinitionId: string,
+  ) {
+    return this.tasks.submitCompletion(tenant, params.taskId, statusDefinitionId, dto);
+  }
+
+  @Get(':taskId/completion-submissions')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskCompletionView)
+  listCompletionSubmissions(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskCompletionQueryDto,
+  ) {
+    return this.tasks.listCompletionSubmissions(tenant, params.taskId, query);
+  }
+
+  @Post(':taskId/completion-submissions/:submissionId/decisions')
+  @RequirePermissions(PermissionKeys.tasksUpdate, PermissionKeys.taskCompletionApprove)
+  decideCompletion(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskCompletionSubmissionParamsDto,
+    @Body() dto: TaskCompletionDecisionDto,
+  ) {
+    return this.tasks.decideCompletion(tenant, params.taskId, params.submissionId, dto);
   }
 
   @Get(':taskId/subtasks')
@@ -291,6 +684,115 @@ export class TasksController {
     return this.tasks.removeCommentReaction(tenant, params.taskId, params.commentId, dto);
   }
 
+  @Get(':taskId/tags')
+  @RequirePermissions(PermissionKeys.tasksView)
+  listTaskTags(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+  ) {
+    return this.tasks.listTaskTags(tenant, params.taskId);
+  }
+
+  @Post(':taskId/tags/add')
+  @RequirePermissions(PermissionKeys.tasksUpdate, PermissionKeys.tagsAssign)
+  addTaskTags(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskTagIdsDto,
+  ) {
+    return this.tasks.addTaskTags(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/tags/remove')
+  @RequirePermissions(PermissionKeys.tasksUpdate, PermissionKeys.tagsAssign)
+  removeTaskTags(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskTagIdsDto,
+  ) {
+    return this.tasks.removeTaskTags(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/attachments')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskAttachmentsView)
+  listAttachments(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Query() query: TaskQueryDto,
+  ) {
+    return this.tasks.listAttachments(tenant, params.taskId, query);
+  }
+
+  @Post(':taskId/attachments/upload-init')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskAttachmentsAdd)
+  initAttachmentUpload(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: UploadInitDto,
+    @ReqContext() context: RequestContext,
+  ) {
+    return this.tasks.initAttachmentUpload(tenant, params.taskId, dto, context.correlationId);
+  }
+
+  @Post(':taskId/attachments/:attachmentId/upload-complete')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskAttachmentsAdd)
+  completeAttachmentUpload(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskAttachmentParamsDto,
+    @Body() dto: UploadCompleteDto,
+    @ReqContext() context: RequestContext,
+  ) {
+    return this.tasks.completeAttachmentUpload(
+      tenant,
+      params.taskId,
+      params.attachmentId,
+      dto,
+      context.correlationId,
+    );
+  }
+
+  @Post(':taskId/attachments/url')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskAttachmentsAdd)
+  addUrlAttachment(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: CreateTaskUrlAttachmentDto,
+  ) {
+    return this.tasks.addUrlAttachment(tenant, params.taskId, dto);
+  }
+
+  @Post(':taskId/attachments/link')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskAttachmentsAdd)
+  linkAttachments(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskParamsDto,
+    @Body() dto: TaskAttachmentIdsDto,
+  ) {
+    return this.tasks.linkAttachments(tenant, params.taskId, dto);
+  }
+
+  @Get(':taskId/attachments/:attachmentId/download')
+  @RequirePermissions(
+    PermissionKeys.tasksView,
+    PermissionKeys.taskAttachmentsView,
+    PermissionKeys.taskAttachmentsDownload,
+  )
+  downloadAttachment(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskAttachmentParamsDto,
+  ) {
+    return this.tasks.downloadAttachment(tenant, params.taskId, params.attachmentId);
+  }
+
+  @Delete(':taskId/attachments/:attachmentId')
+  @RequirePermissions(PermissionKeys.tasksView, PermissionKeys.taskAttachmentsRemove)
+  removeAttachment(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: TaskAttachmentParamsDto,
+  ) {
+    return this.tasks.removeAttachment(tenant, params.taskId, params.attachmentId);
+  }
+
   @Get(':taskId')
   @RequirePermissions(PermissionKeys.tasksView)
   get(@CurrentWorkspaceTenant() tenant: WorkspaceTenantContext, @Param() params: TaskParamsDto) {
@@ -314,7 +816,7 @@ export class TasksController {
     @Param() params: TaskParamsDto,
     @Body() dto: UpdateTaskStatusDto,
   ) {
-    return this.tasks.updateStatus(tenant, params.taskId, dto.statusDefinitionId);
+    return this.tasks.updateStatus(tenant, params.taskId, dto.statusDefinitionId, dto.completion);
   }
 
   @Put(':taskId/assignees')

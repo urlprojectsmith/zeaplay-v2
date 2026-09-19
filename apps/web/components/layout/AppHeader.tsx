@@ -9,6 +9,7 @@ import { LanguageSwitcher } from '../navigation/LanguageSwitcher';
 import { ProfileMenu } from '../navigation/ProfileMenu';
 import { ThemeSwitcher } from '../navigation/ThemeSwitcher';
 import { WorkspaceSwitcher } from '../navigation/WorkspaceSwitcher';
+import { GlobalTimerIndicator } from '../workspace/tasks/GlobalTimerIndicator';
 import { Breadcrumbs } from './Breadcrumbs';
 
 export function AppHeader({
@@ -67,6 +68,7 @@ export function AppHeader({
           <ThemeSwitcher />
           <LanguageSwitcher />
         </div>
+        {config.scope === 'workspace' ? <GlobalTimerIndicator /> : null}
         <Button
           aria-label={t(locale, 'common.notifications')}
           size="icon"

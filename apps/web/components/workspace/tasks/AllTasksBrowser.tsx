@@ -1,6 +1,23 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
   Button,
@@ -32,11 +49,14 @@ import {
   TabsList,
   TabsTrigger,
   Textarea,
+  cn,
 } from '@zea-play/ui';
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  BarChart3,
+  CalendarDays,
   CheckSquare,
   ChevronDown,
   ChevronLeft,
@@ -44,11 +64,14 @@ import {
   CornerDownRight,
   MoreHorizontal,
   Filter,
+  GripVertical,
   Grid2X2,
+  KanbanSquare,
   List,
   MoveRight,
   Plus,
   Rows3,
+  Settings2,
   Trash2,
   X,
 } from 'lucide-react';
@@ -72,40 +95,83 @@ import {
   bulkRemoveTaskAssignees,
   bulkUpdateTaskPriority,
   bulkUpdateTaskStatus,
+  completeTaskAttachmentUpload,
   createWorkspaceSubtask,
+  decideTaskCompletion,
+  endTaskRecurrence,
+  getTaskCalendar,
+  getTaskGantt,
+  getTaskCompletionPolicy,
+  getTaskKanbanSettings,
   getWorkspaceTask,
+  initTaskAttachmentUpload,
+  listTaskCompletionApprovals,
+  listTaskCompletionSubmissions,
+  listTaskRecurrenceSeries,
   listWorkspaceTaskBlockedBy,
   listWorkspaceTaskBlocks,
   listWorkspaceTaskRelated,
   listWorkspaceSubtasks,
   listWorkspaceProjects,
   listWorkspaceTasks,
+  listWorkspaceTags,
+  makeWorkspaceTaskRecurring,
+  moveWorkspaceTaskKanban,
+  pauseTaskRecurrence,
+  resumeTaskRecurrence,
   normalizeTaskListParams,
   removeWorkspaceTaskBlockedBy,
   removeWorkspaceTaskRelated,
+  saveTaskAsTemplate,
+  submitTaskCompletion,
   taskCreationKeys,
   taskDueAtFromLocalDate,
   taskDueBoundaryFromLocalDate,
   taskKeys,
+  updateTaskKanbanColumnSetting,
+  updateTaskCompletionPolicy,
+  updateWorkspaceTask,
   updateWorkspaceTaskParent,
+  updateTaskSchedule,
   type CreateTaskPayload,
+  type NormalizedTaskListParams,
+  type TaskRecurrenceCustomUnit,
+  type TaskRecurrenceEditScope,
+  type TaskRecurrenceEndMode,
+  type TaskRecurrenceFrequency,
+  type TaskRecurrenceSeries,
   type TaskPriority,
+  type TaskCompletionPolicy,
+  type TaskCompletionProofRequirementMode,
+  type TaskCompletionProofType,
+  type TaskAttachmentSummary,
   type TaskRelationshipResult,
   type TaskSortBy,
   type TaskSortDirection,
+  type TaskKanbanColumn,
   type WorkspaceProject,
+  type WorkspaceTagSummary,
   type WorkspaceTask,
   type WorkspaceTaskRelationship,
 } from '../../../services/workspace-tasks';
 import { useSessionStore } from '../../../stores/session';
+import { TaskCommentsPanel } from './comments/TaskCommentsPanel';
+import { TaskTagsSection } from './tags/TaskTagsSection';
+import { TaskAttachmentsSection } from './attachments/TaskAttachmentsSection';
 
 const priorities = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 const pageSizes = [10, 25, 50] as const;
 const sortFields = ['createdAt', 'updatedAt', 'dueAt', 'title'] as const;
 const noneValue = '__none__';
+const recurrenceOptions = ['DAILY', 'WEEKDAYS', 'WEEKLY', 'MONTHLY', 'CUSTOM'] as const;
+const recurrenceEndModes = ['NEVER', 'ON_DATE', 'AFTER_COUNT'] as const;
+const customRecurrenceUnits = ['DAY', 'WEEK', 'MONTH'] as const;
+const editScopes = ['THIS_OCCURRENCE', 'THIS_AND_FUTURE', 'ENTIRE_SERIES'] as const;
 const viewPreferenceKey = 'zea-play-all-tasks-view';
-const tenantFilterParams = ['status', 'assignee', 'department', 'project', 'createdBy'];
+const tenantFilterParams = ['status', 'assignee', 'department', 'project', 'createdBy', 'tagId'];
 const genericFilterParams = ['priority', 'dueFrom', 'dueTo'];
+const maxCompletionProofFileBytes = 25 * 1024 * 1024;
+const largeCompletionProofFileBytes = 2 * 1024 * 1024;
 
 export function toggleRelationshipSelection(
   current: WorkspaceTaskRelationship[],
@@ -141,11 +207,13 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
   const [bulkMembershipIds, setBulkMembershipIds] = useState<string[]>([]);
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
+  const [tagSearch, setTagSearch] = useState('');
   const [preferredView, setPreferredView] = useState<TaskView>('list');
   const [preferenceReady, setPreferenceReady] = useState(false);
   const debouncedAssigneeSearch = useDebouncedValue(assigneeSearch.trim(), 300);
   const debouncedBulkAssigneeSearch = useDebouncedValue(bulkAssigneeSearch.trim(), 300);
   const debouncedProjectSearch = useDebouncedValue(projectSearch.trim(), 300);
+  const debouncedTagSearch = useDebouncedValue(tagSearch.trim(), 300);
 
   const urlState = useMemo(() => readTaskUrlState(searchParams), [searchParamString]);
   const activeView = urlState.view ?? (preferenceReady ? preferredView : 'list');
@@ -162,6 +230,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         assigneeMembershipId: urlState.assignee,
         departmentId: urlState.department,
         projectId: urlState.project,
+        tagId: urlState.tagId,
         dueFrom: urlState.dueFrom
           ? taskDueBoundaryFromLocalDate(urlState.dueFrom, 'start')
           : undefined,
@@ -176,17 +245,47 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
       urlState.pageSize,
       urlState.priority,
       urlState.project,
+      urlState.tagId,
       urlState.search,
       urlState.sortBy,
       urlState.sortDirection,
       urlState.status,
     ],
   );
+  const kanbanBaseParams = useMemo(
+    () =>
+      normalizeTaskListParams({
+        page: 1,
+        pageSize: 25,
+        search: urlState.search,
+        sortBy: 'kanbanRank',
+        sortDirection: 'asc',
+        priority: urlState.priority,
+        assigneeMembershipId: urlState.assignee,
+        departmentId: urlState.department,
+        projectId: urlState.project,
+        tagId: urlState.tagId,
+        dueFrom: urlState.dueFrom
+          ? taskDueBoundaryFromLocalDate(urlState.dueFrom, 'start')
+          : undefined,
+        dueTo: urlState.dueTo ? taskDueBoundaryFromLocalDate(urlState.dueTo, 'end') : undefined,
+      }),
+    [
+      urlState.assignee,
+      urlState.department,
+      urlState.dueFrom,
+      urlState.dueTo,
+      urlState.priority,
+      urlState.project,
+      urlState.tagId,
+      urlState.search,
+    ],
+  );
 
   const tasksQuery = useQuery({
     queryKey: taskKeys.list(workspaceId, listParams),
     queryFn: () => listWorkspaceTasks(workspaceId as string, listParams),
-    enabled: Boolean(workspaceId),
+    enabled: Boolean(workspaceId && ['list', 'grid', 'compact'].includes(activeView)),
   });
 
   const statusesQuery = useQuery({
@@ -225,6 +324,27 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         search: debouncedProjectSearch.length >= 2 ? debouncedProjectSearch : undefined,
       }),
     enabled: Boolean(workspaceId),
+  });
+
+  const tagsQuery = useQuery({
+    queryKey: taskKeys.tagCatalog(workspaceId, {
+      page: 1,
+      pageSize: 10,
+      search: debouncedTagSearch,
+      sortBy: 'name',
+      sortDirection: 'asc',
+    }),
+    queryFn: () =>
+      listWorkspaceTags(workspaceId as string, {
+        page: 1,
+        pageSize: 10,
+        search: debouncedTagSearch.length >= 2 ? debouncedTagSearch : undefined,
+        sortBy: 'name',
+        sortDirection: 'asc',
+      }),
+    enabled: Boolean(
+      workspaceId && (filterOpen || urlState.tagId || debouncedTagSearch.length >= 2),
+    ),
   });
 
   const bulkAssigneesQuery = useQuery({
@@ -307,6 +427,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     setSelectedTask(null);
     setAssigneeSearch('');
     setProjectSearch('');
+    setTagSearch('');
     clearBulkState();
     const next = new URLSearchParams(searchParams.toString());
     let changed = false;
@@ -374,6 +495,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     const patch: Record<string, null> = { search: null, page: null };
     for (const key of [...tenantFilterParams, ...genericFilterParams]) patch[key] = null;
     setSearchInput('');
+    setTagSearch('');
     clearBulkState();
     setUrlState(router, pathname, searchParams, patch);
   }
@@ -442,7 +564,13 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
             {labels.allTasks}
           </h2>
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
-            {total} {labels.tasks}
+            {activeView === 'kanban'
+              ? labels.kanban
+              : activeView === 'calendar'
+                ? labels.calendar
+                : activeView === 'gantt'
+                  ? labels.gantt
+                  : `${total} ${labels.tasks}`}
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -477,10 +605,13 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
           departments={departmentsQuery.data?.items ?? []}
           assignees={assigneesQuery.data?.items ?? []}
           projects={projectsQuery.data?.items ?? []}
+          tags={tagsQuery.data?.items ?? []}
           assigneeSearch={assigneeSearch}
           projectSearch={projectSearch}
+          tagSearch={tagSearch}
           onAssigneeSearch={setAssigneeSearch}
           onProjectSearch={setProjectSearch}
+          onTagSearch={setTagSearch}
           onChange={updateState}
           onClearFilters={clearFilters}
           activeFilterCount={activeFilterCount}
@@ -503,10 +634,13 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
             departments={departmentsQuery.data?.items ?? []}
             assignees={assigneesQuery.data?.items ?? []}
             projects={projectsQuery.data?.items ?? []}
+            tags={tagsQuery.data?.items ?? []}
             assigneeSearch={assigneeSearch}
             projectSearch={projectSearch}
+            tagSearch={tagSearch}
             onAssigneeSearch={setAssigneeSearch}
             onProjectSearch={setProjectSearch}
+            onTagSearch={setTagSearch}
             onChange={updateState}
             onClearFilters={clearFilters}
             activeFilterCount={activeFilterCount}
@@ -521,11 +655,12 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         departments={departmentsQuery.data?.items ?? []}
         assignees={assigneesQuery.data?.items ?? []}
         projects={projectsQuery.data?.items ?? []}
+        tags={tagsQuery.data?.items ?? []}
         onRemove={(key) => updateState({ [key]: null, page: null })}
         onClear={clearFilters}
       />
 
-      {tasks.length > 0 ? (
+      {['list', 'grid', 'compact'].includes(activeView) && tasks.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 md:flex-row md:items-center md:justify-between">
           <Checkbox
             label={allCurrentPageSelected ? labels.deselectCurrentPage : labels.selectCurrentPage}
@@ -553,7 +688,35 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
 
       <Card>
         <CardContent className="p-0">
-          {tasksQuery.isLoading ? (
+          {activeView === 'calendar' ? (
+            <TaskCalendarView
+              workspaceId={workspaceId}
+              labels={labels}
+              filters={listParams}
+              onOpenDetail={(taskId) =>
+                workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
+              }
+            />
+          ) : activeView === 'gantt' ? (
+            <TaskGanttView
+              workspaceId={workspaceId}
+              labels={labels}
+              filters={listParams}
+              onOpenDetail={(taskId) =>
+                workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
+              }
+            />
+          ) : activeView === 'kanban' ? (
+            <TaskKanbanBoard
+              workspaceId={workspaceId}
+              labels={labels}
+              filters={kanbanBaseParams}
+              hasSearchOrFilters={hasSearchOrFilters}
+              onOpenDetail={(taskId) =>
+                workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
+              }
+            />
+          ) : tasksQuery.isLoading ? (
             <TaskResultsSkeleton view={activeView} />
           ) : tasksQuery.isError ? (
             <div className="p-6">
@@ -597,15 +760,17 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         </CardContent>
       </Card>
 
-      <TaskPagination
-        labels={labels}
-        page={urlState.page}
-        pageSize={urlState.pageSize}
-        total={total}
-        totalPages={totalPages}
-        onPage={(page) => updateState({ page })}
-        onPageSize={(pageSize) => updateState({ pageSize, page: null })}
-      />
+      {['kanban', 'calendar', 'gantt'].includes(activeView) ? null : (
+        <TaskPagination
+          labels={labels}
+          page={urlState.page}
+          pageSize={urlState.pageSize}
+          total={total}
+          totalPages={totalPages}
+          onPage={(page) => updateState({ page })}
+          onPageSize={(pageSize) => updateState({ pageSize, page: null })}
+        />
+      )}
 
       <TaskDetailDialog
         labels={labels}
@@ -746,10 +911,13 @@ function TaskViewSwitcher({
     { value: 'list' as const, label: labels.viewList, icon: List },
     { value: 'grid' as const, label: labels.viewGrid, icon: Grid2X2 },
     { value: 'compact' as const, label: labels.viewCompact, icon: Rows3 },
+    { value: 'kanban' as const, label: labels.kanban, icon: KanbanSquare },
+    { value: 'calendar' as const, label: labels.calendar, icon: CalendarDays },
+    { value: 'gantt' as const, label: labels.gantt, icon: BarChart3 },
   ];
   return (
     <div
-      className="inline-flex rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-1"
+      className="flex max-w-full flex-wrap rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-1"
       role="group"
       aria-label={labels.taskView}
     >
@@ -761,7 +929,7 @@ function TaskViewSwitcher({
             key={option.value}
             type="button"
             className={[
-              'inline-flex min-h-10 items-center gap-2 rounded px-3 text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]',
+              'inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded px-2 text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] sm:flex-none sm:px-3',
               selected
                 ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
                 : 'text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--surface-muted))] hover:text-[hsl(var(--foreground))]',
@@ -785,10 +953,13 @@ function TaskFilterControls({
   departments,
   assignees,
   projects,
+  tags,
   assigneeSearch,
   projectSearch,
+  tagSearch,
   onAssigneeSearch,
   onProjectSearch,
+  onTagSearch,
   onChange,
   onClearFilters,
   activeFilterCount,
@@ -799,10 +970,13 @@ function TaskFilterControls({
   departments: Department[];
   assignees: WorkspaceUser[];
   projects: WorkspaceProject[];
+  tags: WorkspaceTagSummary[];
   assigneeSearch: string;
   projectSearch: string;
+  tagSearch: string;
   onAssigneeSearch: (value: string) => void;
   onProjectSearch: (value: string) => void;
+  onTagSearch: (value: string) => void;
   onChange: (patch: Record<string, string | number | null>) => void;
   onClearFilters: () => void;
   activeFilterCount: number;
@@ -907,6 +1081,19 @@ function TaskFilterControls({
           onSearch={onProjectSearch}
           onChange={(value) => onChange({ project: value, page: null })}
         />
+        <RelationFilter
+          label={labels.filterByTag}
+          searchLabel={labels.searchTags}
+          search={tagSearch}
+          selectedId={state.tagId}
+          items={tags.map((tag) => ({
+            id: tag.id,
+            label: tag.status === 'ARCHIVED' ? `${tag.name} (${labels.archived})` : tag.name,
+          }))}
+          anyLabel={labels.anyTag}
+          onSearch={onTagSearch}
+          onChange={(value) => onChange({ tagId: value, page: null })}
+        />
         <Input
           label={labels.dueFrom}
           type="date"
@@ -989,6 +1176,7 @@ function ActiveFilterChips({
   departments,
   assignees,
   projects,
+  tags,
   onRemove,
   onClear,
 }: {
@@ -998,12 +1186,13 @@ function ActiveFilterChips({
   departments: Department[];
   assignees: WorkspaceUser[];
   projects: WorkspaceProject[];
+  tags: WorkspaceTagSummary[];
   onRemove: (key: string) => void;
   onClear: () => void;
 }) {
   const chips = activeFilters(state).map((key) => ({
     key,
-    label: activeFilterLabel(key, state, labels, statuses, departments, assignees, projects),
+    label: activeFilterLabel(key, state, labels, statuses, departments, assignees, projects, tags),
   }));
   if (!chips.length) return null;
   return (
@@ -1028,6 +1217,842 @@ function ActiveFilterChips({
         {labels.clearFilters}
       </Button>
     </div>
+  );
+}
+
+function TaskCalendarView({
+  workspaceId,
+  labels,
+  filters,
+  onOpenDetail,
+}: {
+  workspaceId: string | null;
+  labels: AllTaskLabels;
+  filters: NormalizedTaskListParams;
+  onOpenDetail: (taskId: string) => void;
+}) {
+  const [mode, setMode] = useState<'MONTH' | 'WEEK'>('MONTH');
+  const [date, setDate] = useState(() => localInputDate(new Date()));
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [dayDetailPage, setDayDetailPage] = useState(1);
+  const params = {
+    view: mode,
+    date,
+    search: filters.search,
+    priority: filters.priority,
+    assigneeMembershipId: filters.assigneeMembershipId,
+    departmentId: filters.departmentId,
+    projectId: filters.projectId,
+    tagId: filters.tagId,
+    page: 1,
+    pageSize: 50,
+  };
+  const calendarQuery = useQuery({
+    queryKey: taskKeys.calendar(workspaceId, params),
+    queryFn: () => getTaskCalendar(workspaceId as string, params),
+    enabled: Boolean(workspaceId),
+  });
+  const dayDetailParams = selectedDay
+    ? {
+        ...params,
+        view: 'DAY' as const,
+        date: selectedDay,
+        page: dayDetailPage,
+        pageSize: 20,
+      }
+    : null;
+  const dayDetailQuery = useQuery({
+    queryKey: taskKeys.calendar(workspaceId, dayDetailParams ?? { ...params, view: 'DAY', date }),
+    queryFn: () => getTaskCalendar(workspaceId as string, dayDetailParams!),
+    enabled: Boolean(workspaceId && dayDetailParams),
+  });
+  const days = calendarQuery.data?.days ?? [];
+  const selectedDayTasks =
+    dayDetailQuery.data?.days.find((day) => day.date === selectedDay)?.tasks ?? [];
+  const dayDetailTotal = dayDetailQuery.data?.total ?? 0;
+  const dayDetailPageSize = dayDetailQuery.data?.pageSize ?? 20;
+  const dayDetailTotalPages = Math.max(1, Math.ceil(dayDetailTotal / dayDetailPageSize));
+  useEffect(() => {
+    setDayDetailPage(1);
+  }, [
+    selectedDay,
+    filters.search,
+    filters.priority,
+    filters.assigneeMembershipId,
+    filters.departmentId,
+    filters.projectId,
+    filters.tagId,
+  ]);
+  return (
+    <div className="grid gap-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold">{labels.calendar}</h3>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {calendarQuery.data?.window.timezone ?? 'UTC'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant={mode === 'MONTH' ? 'primary' : 'secondary'}
+            onClick={() => setMode('MONTH')}
+          >
+            {labels.month}
+          </Button>
+          <Button
+            variant={mode === 'WEEK' ? 'primary' : 'secondary'}
+            onClick={() => setMode('WEEK')}
+          >
+            {labels.week}
+          </Button>
+          <Input
+            label={labels.date}
+            type="date"
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+          />
+          <Button variant="secondary" onClick={() => setDate(localInputDate(new Date()))}>
+            {labels.today}
+          </Button>
+        </div>
+      </div>
+      {calendarQuery.isLoading ? (
+        <TaskResultsSkeleton view="calendar" />
+      ) : calendarQuery.isError ? (
+        <EmptyState title={labels.unableToLoadTasks} description={labels.tryAgain} />
+      ) : mode === 'MONTH' ? (
+        <div className="grid min-w-[720px] grid-cols-7 gap-px overflow-x-auto rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--border))]">
+          {days.map((day) => (
+            <button
+              key={day.date}
+              type="button"
+              className="min-h-32 bg-[hsl(var(--surface))] p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+              onClick={() => setSelectedDay(day.date)}
+              aria-label={`${day.date}: ${day.total} ${labels.tasksDue}`}
+            >
+              <span className="block text-sm font-semibold">{day.date.slice(-2)}</span>
+              <span className="mt-2 block text-sm">
+                {day.total} {labels.tasksDue}
+              </span>
+              <span className="mt-1 block text-xs text-[hsl(var(--muted-foreground))]">
+                {labels.overdue}: {day.overdue}
+              </span>
+              <span className="mt-1 block text-xs text-[hsl(var(--muted-foreground))]">
+                H {day.priorityCounts.HIGH + day.priorityCounts.URGENT} / M{' '}
+                {day.priorityCounts.MEDIUM} / L {day.priorityCounts.LOW}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-7">
+          {days.map((day) => (
+            <section key={day.date} className="rounded-md border border-[hsl(var(--border))] p-3">
+              <h4 className="font-semibold">{day.date}</h4>
+              <div className="mt-2 grid gap-2">
+                {day.tasks.slice(0, 8).map((task) => (
+                  <button
+                    key={task.id}
+                    type="button"
+                    className="rounded-md border border-[hsl(var(--border))] p-2 text-left text-sm"
+                    onClick={() => onOpenDetail(task.id)}
+                  >
+                    <span className="block font-semibold">{task.title}</span>
+                    <span className="block text-xs text-[hsl(var(--muted-foreground))]">
+                      {task.status.name} / {task.priority} / {urgencyLabel(task.urgency, labels)}
+                    </span>
+                  </button>
+                ))}
+                {day.total > day.tasks.length ? (
+                  <Button variant="secondary" onClick={() => setSelectedDay(day.date)}>
+                    {labels.viewTasks}
+                  </Button>
+                ) : null}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+      <Dialog open={Boolean(selectedDay)} onOpenChange={(open) => !open && setSelectedDay(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{selectedDay}</DialogTitle>
+            <DialogDescription>{labels.tasksDue}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {dayDetailQuery.isLoading ? (
+              <Skeleton className="h-20 w-full" />
+            ) : selectedDayTasks.length ? (
+              selectedDayTasks.map((task) => (
+                <Button key={task.id} variant="secondary" onClick={() => onOpenDetail(task.id)}>
+                  {task.title}
+                </Button>
+              ))
+            ) : (
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.noTasks}</p>
+            )}
+          </div>
+          {dayDetailTotalPages > 1 ? (
+            <DialogFooter>
+              <div className="flex w-full items-center justify-between gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={dayDetailPage <= 1}
+                  onClick={() => setDayDetailPage((page) => Math.max(1, page - 1))}
+                >
+                  {labels.previous}
+                </Button>
+                <span className="text-sm text-[hsl(var(--muted-foreground))]">
+                  {labels.page} {dayDetailPage} / {dayDetailTotalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={dayDetailPage >= dayDetailTotalPages}
+                  onClick={() =>
+                    setDayDetailPage((page) => Math.min(dayDetailTotalPages, page + 1))
+                  }
+                >
+                  {labels.next}
+                </Button>
+              </div>
+            </DialogFooter>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function TaskGanttView({
+  workspaceId,
+  labels,
+  filters,
+  onOpenDetail,
+}: {
+  workspaceId: string | null;
+  labels: AllTaskLabels;
+  filters: NormalizedTaskListParams;
+  onOpenDetail: (taskId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [from, setFrom] = useState(() => localInputDate(startOfMonth(new Date())));
+  const [to, setTo] = useState(() => localInputDate(endOfMonth(new Date())));
+  const [editing, setEditing] = useState<WorkspaceTask | null>(null);
+  const params = {
+    from,
+    to,
+    search: filters.search,
+    priority: filters.priority,
+    assigneeMembershipId: filters.assigneeMembershipId,
+    departmentId: filters.departmentId,
+    projectId: filters.projectId,
+    tagId: filters.tagId,
+    page: 1,
+    pageSize: 50,
+  };
+  const ganttQuery = useQuery({
+    queryKey: taskKeys.gantt(workspaceId, params),
+    queryFn: () => getTaskGantt(workspaceId as string, params),
+    enabled: Boolean(workspaceId && from && to),
+  });
+  const scheduleMutation = useMutation({
+    mutationFn: (body: { taskId: string; plannedStartAt: string | null; dueAt: string | null }) =>
+      updateTaskSchedule(workspaceId as string, body.taskId, {
+        plannedStartAt: body.plannedStartAt,
+        dueAt: body.dueAt,
+      }),
+    onSuccess: () => {
+      toast.success(labels.updated);
+      if (workspaceId) void queryClient.invalidateQueries({ queryKey: taskKeys.all(workspaceId) });
+      setEditing(null);
+    },
+    onError: (error) => toast.error(safeTaskError(error, labels)),
+  });
+  const tasks = ganttQuery.data?.items ?? [];
+  return (
+    <div className="grid gap-4 overflow-x-auto p-4">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-semibold">{labels.gantt}</h3>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {labels.unscheduled}: {ganttQuery.data?.unscheduledCount ?? 0}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Input
+            label={labels.startDate}
+            type="date"
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+          />
+          <Input
+            label={labels.endDate}
+            type="date"
+            value={to}
+            onChange={(event) => setTo(event.target.value)}
+          />
+        </div>
+      </div>
+      {ganttQuery.isLoading ? (
+        <TaskResultsSkeleton view="gantt" />
+      ) : ganttQuery.isError ? (
+        <EmptyState title={labels.unableToLoadTasks} description={labels.tryAgain} />
+      ) : (
+        <div className="min-w-[760px] rounded-md border border-[hsl(var(--border))]">
+          {tasks.map((task) => (
+            <div
+              key={task.id}
+              className="grid grid-cols-[220px_1fr_auto] items-center gap-3 border-b border-[hsl(var(--border))] p-3 last:border-b-0"
+            >
+              <button className="text-left font-semibold" onClick={() => onOpenDetail(task.id)}>
+                {task.title}
+              </button>
+              <div className="h-6 rounded bg-[hsl(var(--muted))]">
+                <div
+                  className="h-6 rounded bg-[hsl(var(--primary))]"
+                  style={{ width: `${ganttWidth(task.plannedStartAt, task.dueAt, from, to)}%` }}
+                  aria-label={`${task.title}, ${labels.plannedStart}: ${task.plannedStartAt}, ${labels.endDate}: ${task.dueAt}, ${task.status.name}`}
+                />
+              </div>
+              <Button variant="secondary" onClick={() => setEditing(task)}>
+                {labels.scheduleTask}
+              </Button>
+            </div>
+          ))}
+          {!tasks.length ? <EmptyState title={labels.noTasks} /> : null}
+        </div>
+      )}
+      <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{labels.scheduleTask}</DialogTitle>
+            <DialogDescription>{editing?.title}</DialogDescription>
+          </DialogHeader>
+          {editing ? (
+            <form
+              className="grid gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                scheduleMutation.mutate({
+                  taskId: editing.id,
+                  plannedStartAt: localDateToIso(form.get('plannedStartAt') as string),
+                  dueAt: localDateToIso(form.get('dueAt') as string),
+                });
+              }}
+            >
+              <Input
+                name="plannedStartAt"
+                label={labels.startDate}
+                type="date"
+                defaultValue={editing.plannedStartAt?.slice(0, 10) ?? ''}
+              />
+              <Input
+                name="dueAt"
+                label={labels.endDate}
+                type="date"
+                defaultValue={editing.dueAt?.slice(0, 10) ?? ''}
+              />
+              <DialogFooter>
+                <Button type="submit" disabled={scheduleMutation.isPending}>
+                  {labels.save}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function TaskKanbanBoard({
+  workspaceId,
+  labels,
+  filters,
+  hasSearchOrFilters,
+  onOpenDetail,
+}: {
+  workspaceId: string | null;
+  labels: AllTaskLabels;
+  filters: NormalizedTaskListParams;
+  hasSearchOrFilters: boolean;
+  onOpenDetail: (taskId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [pageSizes, setPageSizes] = useState<Record<string, number>>({});
+  const [editingColumn, setEditingColumn] = useState<TaskKanbanColumn | null>(null);
+  const [completionRequest, setCompletionRequest] = useState<{
+    taskId: string;
+    statusDefinitionId: string;
+  } | null>(null);
+  const [wipInput, setWipInput] = useState('');
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const settingsQuery = useQuery({
+    queryKey: taskKeys.kanbanSettings(workspaceId),
+    queryFn: () => getTaskKanbanSettings(workspaceId as string),
+    enabled: Boolean(workspaceId),
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    setPageSizes({});
+    setEditingColumn(null);
+    setCompletionRequest(null);
+    setWipInput('');
+  }, [workspaceId]);
+
+  const columns = settingsQuery.data?.columns ?? [];
+  const columnQueries = useQueries({
+    queries: columns.map((column) => {
+      const params = {
+        ...filters,
+        page: 1,
+        pageSize: pageSizes[column.status.id] ?? 25,
+        statusDefinitionId: column.status.id,
+      };
+      return {
+        queryKey: taskKeys.kanbanColumn(workspaceId, column.status.id, params),
+        queryFn: () => listWorkspaceTasks(workspaceId as string, params),
+        enabled: Boolean(workspaceId),
+      };
+    }),
+  });
+  const taskById = useMemo(() => {
+    const map = new Map<string, WorkspaceTask>();
+    columnQueries.forEach((query) => {
+      query.data?.items.forEach((task) => map.set(task.id, task));
+    });
+    return map;
+  }, [columnQueries]);
+  const moveMutation = useMutation({
+    mutationFn: ({
+      taskId,
+      statusDefinitionId,
+      beforeTaskId,
+      afterTaskId,
+    }: {
+      taskId: string;
+      statusDefinitionId: string;
+      beforeTaskId?: string | null;
+      afterTaskId?: string | null;
+    }) =>
+      moveWorkspaceTaskKanban(workspaceId as string, taskId, {
+        statusDefinitionId,
+        beforeTaskId,
+        afterTaskId,
+      }),
+    onSuccess: () => {
+      toast.success(labels.taskMoved);
+      if (workspaceId) {
+        void queryClient.invalidateQueries({ queryKey: taskKeys.kanbanColumns(workspaceId) });
+      }
+    },
+    onError: (error) => {
+      if (isCompletionFlowRequired(error)) {
+        const details = completionFlowDetails(error);
+        if (details?.taskId && details.requestedTerminalStatusDefinitionId) {
+          setCompletionRequest({
+            taskId: details.taskId,
+            statusDefinitionId: details.requestedTerminalStatusDefinitionId,
+          });
+          toast.info(labels.completionRequired);
+          return;
+        }
+      }
+      toast.error(safeKanbanError(error, labels));
+    },
+  });
+  const wipMutation = useMutation({
+    mutationFn: ({
+      statusDefinitionId,
+      wipLimit,
+    }: {
+      statusDefinitionId: string;
+      wipLimit: number | null;
+    }) => updateTaskKanbanColumnSetting(workspaceId as string, statusDefinitionId, { wipLimit }),
+    onSuccess: () => {
+      toast.success(labels.wipLimitUpdated);
+      setEditingColumn(null);
+      if (workspaceId)
+        void queryClient.invalidateQueries({ queryKey: taskKeys.kanbanSettings(workspaceId) });
+    },
+    onError: (error) => toast.error(safeKanbanError(error, labels)),
+  });
+
+  function handleDragEnd(event: DragEndEvent) {
+    const taskId = String(event.active.id);
+    const overId = event.over?.id ? String(event.over.id) : '';
+    if (moveMutation.isPending) return;
+    if (!workspaceId || !overId) return;
+    const task = taskById.get(taskId);
+    if (!task) return;
+    if (overId.startsWith('column:')) {
+      const statusDefinitionId = overId.slice('column:'.length);
+      if (statusDefinitionId === task.status.id) return;
+      moveMutation.mutate({ taskId, statusDefinitionId });
+      return;
+    }
+    if (overId === taskId) return;
+    const overTask = taskById.get(overId);
+    if (!overTask) return;
+    moveMutation.mutate({
+      taskId,
+      statusDefinitionId: overTask.status.id,
+      beforeTaskId: overTask.id,
+    });
+  }
+
+  function openWipDialog(column: TaskKanbanColumn) {
+    setEditingColumn(column);
+    setWipInput(column.wipLimit ? String(column.wipLimit) : '');
+  }
+
+  function submitWip() {
+    if (!editingColumn) return;
+    const value = wipInput.trim();
+    const wipLimit = value ? Number(value) : null;
+    if (wipLimit !== null && (!Number.isInteger(wipLimit) || wipLimit < 1 || wipLimit > 999)) {
+      toast.error(labels.wipLimitInvalid);
+      return;
+    }
+    wipMutation.mutate({ statusDefinitionId: editingColumn.status.id, wipLimit });
+  }
+
+  if (settingsQuery.isLoading) {
+    return <TaskResultsSkeleton view="kanban" />;
+  }
+  if (settingsQuery.isError) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          title={labels.errorTitle}
+          description={safeTaskError(settingsQuery.error, labels)}
+        />
+      </div>
+    );
+  }
+  if (columns.length === 0) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          title={labels.noKanbanColumns}
+          description={labels.noKanbanColumnsDescription}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <div
+          className="flex min-h-[34rem] gap-3 overflow-x-auto p-3"
+          aria-label={labels.kanbanBoard}
+        >
+          {columns.map((column, index) => {
+            const query = columnQueries[index];
+            if (!query) return null;
+            return (
+              <TaskKanbanColumnView
+                key={column.status.id}
+                column={column}
+                labels={labels}
+                query={query}
+                pageSize={pageSizes[column.status.id] ?? 25}
+                statuses={columns.map((item) => item.status)}
+                hasSearchOrFilters={hasSearchOrFilters}
+                onLoadMore={() =>
+                  setPageSizes((current) => ({
+                    ...current,
+                    [column.status.id]: (current[column.status.id] ?? 25) + 25,
+                  }))
+                }
+                onOpenDetail={onOpenDetail}
+                onMove={(taskId, statusDefinitionId) =>
+                  !moveMutation.isPending && moveMutation.mutate({ taskId, statusDefinitionId })
+                }
+                moveDisabled={moveMutation.isPending}
+                onEditWip={() => openWipDialog(column)}
+              />
+            );
+          })}
+        </div>
+      </DndContext>
+      <Dialog
+        open={Boolean(editingColumn)}
+        onOpenChange={(open) => !open && setEditingColumn(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{labels.setWipLimit}</DialogTitle>
+            <DialogDescription>{labels.wipLimitDescription}</DialogDescription>
+          </DialogHeader>
+          <Input
+            label={labels.wipLimit}
+            type="number"
+            min={1}
+            max={999}
+            value={wipInput}
+            onChange={(event) => setWipInput(event.target.value)}
+            placeholder={labels.unlimited}
+          />
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setEditingColumn(null)}>
+              {labels.cancel}
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setWipInput('')}>
+              {labels.removeWipLimit}
+            </Button>
+            <Button type="button" onClick={submitWip} disabled={wipMutation.isPending}>
+              {labels.save}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {completionRequest ? (
+        <TaskCompletionDialog
+          labels={labels}
+          workspaceId={workspaceId}
+          taskId={completionRequest.taskId}
+          requestedTerminalStatusDefinitionId={completionRequest.statusDefinitionId}
+          open={Boolean(completionRequest)}
+          onOpenChange={(open) => {
+            if (!open) setCompletionRequest(null);
+          }}
+          onCompleted={() => {
+            if (workspaceId) {
+              void queryClient.invalidateQueries({ queryKey: taskKeys.kanbanColumns(workspaceId) });
+            }
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function TaskKanbanColumnView({
+  column,
+  labels,
+  query,
+  pageSize,
+  statuses,
+  hasSearchOrFilters,
+  onLoadMore,
+  onOpenDetail,
+  onMove,
+  moveDisabled,
+  onEditWip,
+}: {
+  column: TaskKanbanColumn;
+  labels: AllTaskLabels;
+  query: {
+    data?: PageResultLike<WorkspaceTask>;
+    isLoading: boolean;
+    isError: boolean;
+    error: unknown;
+  };
+  pageSize: number;
+  statuses: TaskKanbanColumn['status'][];
+  hasSearchOrFilters: boolean;
+  onLoadMore: () => void;
+  onOpenDetail: (taskId: string) => void;
+  onMove: (taskId: string, statusDefinitionId: string) => void;
+  moveDisabled: boolean;
+  onEditWip: () => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `column:${column.status.id}` });
+  const tasks = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+  const wipState = wipStateFor(total, column.wipLimit);
+  return (
+    <section
+      ref={setNodeRef}
+      className={[
+        'flex w-[20rem] shrink-0 flex-col rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-muted))]',
+        isOver ? 'ring-2 ring-[hsl(var(--ring))]' : '',
+      ].join(' ')}
+      aria-labelledby={`kanban-column-${column.status.id}`}
+    >
+      <header className="grid gap-2 border-b border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3">
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3
+              id={`kanban-column-${column.status.id}`}
+              className="flex min-w-0 items-center gap-2 text-sm font-semibold"
+            >
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: safeStatusColor(column.status.color) }}
+              />
+              <span className="truncate">{column.status.name}</span>
+            </h3>
+            <p className={wipState.className}>{wipState.label}</p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onEditWip}
+            aria-label={labels.setWipLimit}
+          >
+            <Settings2 aria-hidden="true" className="h-4 w-4" />
+          </Button>
+        </div>
+      </header>
+      <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+        <div className="grid flex-1 content-start gap-2 overflow-y-auto p-2">
+          {query.isLoading ? (
+            Array.from({ length: 4 }, (_, index) => (
+              <Skeleton key={index} className="h-32 w-full" />
+            ))
+          ) : query.isError ? (
+            <p className="rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 text-sm text-[hsl(var(--destructive))]">
+              {safeTaskError(query.error, labels)}
+            </p>
+          ) : tasks.length === 0 ? (
+            <p className="rounded-md border border-dashed border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4 text-sm text-[hsl(var(--muted-foreground))]">
+              {hasSearchOrFilters ? labels.noMatchingTasksDescription : labels.noTasksInStatus}
+            </p>
+          ) : (
+            tasks.map((task) => (
+              <TaskKanbanCard
+                key={task.id}
+                task={task}
+                labels={labels}
+                statuses={statuses}
+                onOpenDetail={onOpenDetail}
+                onMove={onMove}
+                moveDisabled={moveDisabled}
+              />
+            ))
+          )}
+        </div>
+      </SortableContext>
+      {total > pageSize ? (
+        <div className="border-t border-[hsl(var(--border))] p-2">
+          <Button type="button" variant="secondary" className="w-full" onClick={onLoadMore}>
+            {labels.loadMore}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+
+  function wipStateFor(count: number, limit: number | null) {
+    if (!limit) {
+      return {
+        label: `${count} ${labels.tasks}`,
+        className: 'text-xs text-[hsl(var(--muted-foreground))]',
+      };
+    }
+    if (count > limit) {
+      return {
+        label: `${count} / ${limit} - ${labels.wipLimitExceeded}`,
+        className: 'text-xs font-semibold text-[hsl(var(--destructive))]',
+      };
+    }
+    if (count === limit) {
+      return {
+        label: `${count} / ${limit} - ${labels.wipLimitReached}`,
+        className: 'text-xs font-semibold text-amber-700 dark:text-amber-300',
+      };
+    }
+    return {
+      label: `${count} / ${limit}`,
+      className: 'text-xs text-[hsl(var(--muted-foreground))]',
+    };
+  }
+}
+
+function TaskKanbanCard({
+  task,
+  labels,
+  statuses,
+  onOpenDetail,
+  onMove,
+  moveDisabled,
+}: {
+  task: WorkspaceTask;
+  labels: AllTaskLabels;
+  statuses: TaskKanbanColumn['status'][];
+  onOpenDetail: (taskId: string) => void;
+  onMove: (taskId: string, statusDefinitionId: string) => void;
+  moveDisabled: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+  });
+  return (
+    <article
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      data-dragging={isDragging ? 'true' : undefined}
+      className="grid gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 shadow-sm data-[dragging=true]:opacity-60"
+      aria-label={`${labels.task}: ${task.title}`}
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        <button
+          type="button"
+          className="mt-0.5 rounded p-1 text-[hsl(var(--muted-foreground))] outline-none hover:bg-[hsl(var(--surface-muted))] focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+          aria-label={`${labels.moveTask}: ${task.title}`}
+          disabled={moveDisabled}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical aria-hidden="true" className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+          onClick={() => onOpenDetail(task.id)}
+          aria-label={`${labels.openTaskDetails}: ${task.title}`}
+        >
+          <span className="line-clamp-2 text-sm font-semibold leading-snug" title={task.title}>
+            {task.title}
+          </span>
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Badge variant={priorityBadge(task.priority)}>{priorityLabel(task.priority, labels)}</Badge>
+        <DueStateBadge task={task} labels={labels} />
+        {task.completion?.pendingApproval ? (
+          <Badge variant="warning">{labels.pendingApproval}</Badge>
+        ) : null}
+      </div>
+      <div className="grid gap-1 text-xs text-[hsl(var(--muted-foreground))]">
+        <span>
+          {labels.dueDate}: <DueDateText task={task} labels={labels} />
+        </span>
+        <span>
+          {labels.assignees}: {assigneeSummary(task, labels)}
+        </span>
+        <span>
+          {labels.projects}: {projectSummary(task, labels)}
+        </span>
+      </div>
+      <Select
+        value={task.status.id}
+        onValueChange={(value) => value !== task.status.id && onMove(task.id, value)}
+        disabled={moveDisabled}
+      >
+        <SelectTrigger label={labels.moveToStatus}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {statuses.map((status) => (
+            <SelectItem key={status.id} value={status.id}>
+              {status.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </article>
   );
 }
 
@@ -1695,16 +2720,18 @@ function TaskDetailDialog({
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList
               aria-label={labels.taskRelationshipTabs}
-              className="grid w-full grid-cols-2 sm:grid-cols-4"
+              className="grid w-full grid-cols-2 sm:grid-cols-5"
             >
               <TabsTrigger value="overview">{labels.overview}</TabsTrigger>
               <TabsTrigger value="subtasks">{labels.subtasks}</TabsTrigger>
               <TabsTrigger value="dependencies">{labels.dependencies}</TabsTrigger>
               <TabsTrigger value="related">{labels.related}</TabsTrigger>
+              <TabsTrigger value="comments">{labels.comments}</TabsTrigger>
             </TabsList>
             <TabsContent value="overview">
               <TaskOverview
                 labels={labels}
+                workspaceId={workspaceId}
                 task={task}
                 onShowSubtasks={() => setActiveTab('subtasks')}
                 onSelectTask={onSelectTask}
@@ -1737,6 +2764,13 @@ function TaskDetailDialog({
                 onSelectTask={onSelectTask}
               />
             </TabsContent>
+            <TabsContent value="comments">
+              <TaskCommentsPanel
+                workspaceId={workspaceId}
+                task={task}
+                active={activeTab === 'comments'}
+              />
+            </TabsContent>
           </Tabs>
         ) : null}
       </DialogContent>
@@ -1746,15 +2780,107 @@ function TaskDetailDialog({
 
 function TaskOverview({
   labels,
+  workspaceId,
   task,
   onShowSubtasks,
   onSelectTask,
 }: {
   labels: AllTaskLabels;
+  workspaceId: string | null;
   task: WorkspaceTask;
   onShowSubtasks: () => void;
   onSelectTask: (taskId: string) => void;
 }) {
+  const queryClient = useQueryClient();
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [makeRecurringOpen, setMakeRecurringOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const recurrenceQuery = useQuery({
+    queryKey: taskKeys.recurrenceList(workspaceId, {
+      page: 1,
+      pageSize: 100,
+      search: task.title,
+    }),
+    queryFn: () =>
+      listTaskRecurrenceSeries(workspaceId as string, {
+        page: 1,
+        pageSize: 100,
+        search: task.title,
+      }),
+    enabled: Boolean(workspaceId && task.recurrenceSeriesId),
+  });
+  const recurrence = recurrenceQuery.data?.items.find(
+    (item) => item.id === task.recurrenceSeriesId,
+  );
+  const recurrenceAction = useMutation({
+    mutationFn: async (action: 'pause' | 'resume' | 'end') => {
+      if (!workspaceId || !task.recurrenceSeriesId) throw new Error(labels.noWorkspace);
+      if (action === 'pause') return pauseTaskRecurrence(workspaceId, task.recurrenceSeriesId);
+      if (action === 'resume') return resumeTaskRecurrence(workspaceId, task.recurrenceSeriesId);
+      return endTaskRecurrence(workspaceId, task.recurrenceSeriesId);
+    },
+    onSuccess: async () => {
+      toast.success(labels.recurrenceUpdated);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: taskKeys.recurrenceBase(workspaceId) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, task.id) }),
+      ]);
+    },
+    onError: () => toast.error(labels.recurrenceActionFailed),
+  });
+  const saveTemplateMutation = useMutation({
+    mutationFn: () => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      return saveTaskAsTemplate(workspaceId, task.id, templateName);
+    },
+    onSuccess: async () => {
+      toast.success(labels.templateSaved);
+      setTemplateOpen(false);
+      setTemplateName('');
+      await queryClient.invalidateQueries({ queryKey: taskKeys.templatesBase(workspaceId) });
+    },
+    onError: () => toast.error(labels.templateActionFailed),
+  });
+  const makeRecurringMutation = useMutation({
+    mutationFn: (form: RecurrenceFormState) => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      const payload = recurrencePayloadFromForm(form);
+      if (!payload) throw new Error(labels.recurrenceInvalid);
+      return makeWorkspaceTaskRecurring(workspaceId, task.id, payload);
+    },
+    onSuccess: async () => {
+      toast.success(labels.recurrenceUpdated);
+      setMakeRecurringOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, task.id) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.recurrenceBase(workspaceId) }),
+      ]);
+    },
+    onError: () => toast.error(labels.recurrenceActionFailed),
+  });
+  const editMutation = useMutation({
+    mutationFn: (form: EditTaskScopeFormState) => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      if (!form.scope) throw new Error(labels.selectEditScope);
+      return updateWorkspaceTask(workspaceId, task.id, {
+        title: form.title,
+        priority: form.priority,
+        recurrenceEditScope: form.scope,
+      });
+    },
+    onSuccess: async () => {
+      toast.success(labels.taskUpdated);
+      setEditOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, task.id) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.all(workspaceId) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.recurrenceBase(workspaceId) }),
+      ]);
+    },
+    onError: () => toast.error(labels.taskUpdateFailed),
+  });
+
   return (
     <div className="grid gap-5">
       <div className="grid gap-2">
@@ -1767,6 +2893,57 @@ function TaskOverview({
           <DueStateBadge task={task} labels={labels} />
         </div>
       </div>
+      <section className="grid gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-sm font-semibold">
+              {task.recurrenceSeriesId ? labels.recurring : labels.notRecurring}
+            </h4>
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+              {task.recurrenceSeriesId
+                ? labels.recurringTaskSummary
+                : labels.nonRecurringTaskSummary}
+            </p>
+          </div>
+          <Button type="button" variant="secondary" onClick={() => setTemplateOpen(true)}>
+            {labels.saveAsTemplate}
+          </Button>
+          {task.recurrenceSeriesId ? (
+            <Button type="button" variant="secondary" onClick={() => setEditOpen(true)}>
+              {labels.editTask}
+            </Button>
+          ) : (
+            <Button type="button" variant="secondary" onClick={() => setMakeRecurringOpen(true)}>
+              {labels.makeRecurring}
+            </Button>
+          )}
+        </div>
+        {task.recurrenceSeriesId ? (
+          recurrenceQuery.isLoading ? (
+            <Skeleton className="h-20 w-full" />
+          ) : recurrence ? (
+            <RecurringSummary
+              labels={labels}
+              series={recurrence}
+              scheduledFor={task.recurrenceScheduledFor ?? null}
+              onAction={(action) => {
+                if (action === 'end' && !window.confirm(labels.endRecurrenceConfirmation)) return;
+                if (action === 'pause' && !window.confirm(labels.pauseRecurrenceConfirmation))
+                  return;
+                if (action === 'resume' && !window.confirm(labels.resumeRecurrenceConfirmation))
+                  return;
+                recurrenceAction.mutate(action);
+              }}
+              busy={recurrenceAction.isPending}
+            />
+          ) : (
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+              {labels.recurrenceUnavailable}
+            </p>
+          )
+        ) : null}
+      </section>
+      <TaskCompletionSection labels={labels} workspaceId={workspaceId} task={task} />
       {task.parent ? (
         <div className="flex flex-col gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1789,6 +2966,10 @@ function TaskOverview({
         </section>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
+        <DetailRow
+          label={labels.plannedStart}
+          value={task.plannedStartAt ? formatDateTime(task.plannedStartAt) : labels.emptyDash}
+        />
         <DetailRow
           label={labels.dueDate}
           value={task.dueAt ? formatDateTime(task.dueAt) : labels.noDueDate}
@@ -1822,6 +3003,1107 @@ function TaskOverview({
         values={task.projects.map((project) => project.name)}
         empty={labels.emptyDash}
       />
+      <TaskTagsSection workspaceId={workspaceId} taskId={task.id} labels={labels} />
+      <TaskAttachmentsSection workspaceId={workspaceId} taskId={task.id} labels={labels} />
+      <MakeRecurringDialog
+        labels={labels}
+        open={makeRecurringOpen}
+        busy={makeRecurringMutation.isPending}
+        onOpenChange={setMakeRecurringOpen}
+        onSubmit={(form) => makeRecurringMutation.mutate(form)}
+      />
+      <EditRecurringTaskDialog
+        labels={labels}
+        task={task}
+        open={editOpen}
+        busy={editMutation.isPending}
+        onOpenChange={setEditOpen}
+        onSubmit={(form) => editMutation.mutate(form)}
+      />
+      <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{labels.saveAsTemplate}</DialogTitle>
+            <DialogDescription>{labels.saveTemplateDescription}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <Input
+              label={labels.templateName}
+              value={templateName}
+              onChange={(event) => setTemplateName(event.target.value)}
+            />
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+              {labels.saveTemplateCopyWarning}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setTemplateOpen(false)}>
+              {labels.cancel}
+            </Button>
+            <Button
+              type="button"
+              disabled={!templateName.trim() || saveTemplateMutation.isPending}
+              onClick={() => saveTemplateMutation.mutate()}
+            >
+              {labels.saveAsTemplate}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+type RecurrenceFormState = {
+  frequency: TaskRecurrenceFrequency;
+  startLocalDate: string;
+  localTime: string;
+  timezone: string;
+  selectedWeekdays: number[];
+  interval: number;
+  customIntervalUnit: TaskRecurrenceCustomUnit;
+  endMode: TaskRecurrenceEndMode;
+  untilLocalDate: string;
+  maxOccurrences: number;
+};
+
+type EditTaskScopeFormState = {
+  title: string;
+  priority: TaskPriority;
+  scope: TaskRecurrenceEditScope | '';
+};
+
+const completionProofTypes = ['TEXT', 'URL', 'CHECKLIST_CONFIRMATION', 'ATTACHMENT'] as const;
+
+function TaskCompletionSection({
+  labels,
+  workspaceId,
+  task,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  task: WorkspaceTask;
+}) {
+  const queryClient = useQueryClient();
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [targetStatusId, setTargetStatusId] = useState('');
+  const [policyDraft, setPolicyDraft] = useState<TaskCompletionPolicy | null>(null);
+  const [rejectingSubmissionId, setRejectingSubmissionId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const policyQuery = useQuery({
+    queryKey: taskKeys.completionPolicy(workspaceId, task.id),
+    queryFn: () => getTaskCompletionPolicy(workspaceId as string, task.id),
+    enabled: Boolean(workspaceId),
+  });
+  const submissionsQuery = useQuery({
+    queryKey: taskKeys.completionSubmissions(workspaceId, task.id, { page: 1, pageSize: 5 }),
+    queryFn: () =>
+      listTaskCompletionSubmissions(workspaceId as string, task.id, { page: 1, pageSize: 5 }),
+    enabled: Boolean(workspaceId),
+  });
+  const approvalsQuery = useQuery({
+    queryKey: taskKeys.completionApprovals(workspaceId, { page: 1, pageSize: 5 }),
+    queryFn: () => listTaskCompletionApprovals(workspaceId as string, { page: 1, pageSize: 5 }),
+    enabled: Boolean(workspaceId),
+  });
+  const statusesQuery = useQuery({
+    queryKey: taskCreationKeys.statuses(workspaceId),
+    queryFn: () => listWorkspaceStatuses(workspaceId as string, 'TASK', 'ACTIVE'),
+    enabled: Boolean(workspaceId),
+  });
+  const terminalStatuses = (statusesQuery.data ?? []).filter((status) => status.isTerminal);
+  const selectedPolicy = policyDraft ?? policyQuery.data;
+  const policyMutation = useMutation({
+    mutationFn: () => {
+      if (!workspaceId || !selectedPolicy) throw new Error(labels.noWorkspace);
+      return updateTaskCompletionPolicy(workspaceId, task.id, selectedPolicy);
+    },
+    onSuccess: async () => {
+      toast.success(labels.completionPolicySaved);
+      setPolicyOpen(false);
+      await queryClient.invalidateQueries({
+        queryKey: taskKeys.completionPolicy(workspaceId, task.id),
+      });
+    },
+    onError: () => toast.error(labels.completionActionFailed),
+  });
+  const decisionMutation = useMutation({
+    mutationFn: ({
+      submissionId,
+      decision,
+    }: {
+      submissionId: string;
+      decision: 'APPROVED' | 'REJECTED';
+    }) => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      return decideTaskCompletion(workspaceId, task.id, submissionId, {
+        decision,
+        reason: decision === 'REJECTED' ? rejectReason : undefined,
+      });
+    },
+    onSuccess: async () => {
+      toast.success(labels.completionDecisionSaved);
+      setRejectingSubmissionId(null);
+      setRejectReason('');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, task.id) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.all(workspaceId) }),
+        queryClient.invalidateQueries({
+          queryKey: taskKeys.completionSubmissions(workspaceId, task.id, { page: 1, pageSize: 5 }),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: taskKeys.completionApprovals(workspaceId, { page: 1, pageSize: 5 }),
+        }),
+      ]);
+    },
+    onError: () => toast.error(labels.completionActionFailed),
+  });
+
+  useEffect(() => {
+    if (!targetStatusId && terminalStatuses[0]) setTargetStatusId(terminalStatuses[0].id);
+  }, [targetStatusId, terminalStatuses]);
+
+  function openPolicyDialog() {
+    setPolicyDraft(policyQuery.data ?? null);
+    setPolicyOpen(true);
+  }
+
+  return (
+    <section className="grid gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="text-sm font-semibold">{labels.completionApproval}</h4>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {task.completion?.pendingApproval ? labels.pendingApproval : labels.completionReady}
+          </p>
+        </div>
+        <Button type="button" variant="secondary" onClick={openPolicyDialog}>
+          {labels.completionPolicy}
+        </Button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-2">
+          <Select value={targetStatusId} onValueChange={setTargetStatusId}>
+            <SelectTrigger label={labels.requestCompletionStatus}>
+              <SelectValue placeholder={labels.selectStatus} />
+            </SelectTrigger>
+            <SelectContent>
+              {terminalStatuses.map((status) => (
+                <SelectItem key={status.id} value={status.id}>
+                  {status.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.completionRequired}</p>
+          <Button
+            type="button"
+            disabled={!targetStatusId || task.status.isTerminal}
+            onClick={() => setCompletionOpen(true)}
+          >
+            {labels.submitForCompletion}
+          </Button>
+        </div>
+        <div className="grid gap-2">
+          <h5 className="text-sm font-semibold">{labels.completionHistory}</h5>
+          {(submissionsQuery.data?.items ?? []).length === 0 ? (
+            <p className="text-sm text-[hsl(var(--muted-foreground))]">
+              {labels.noCompletionHistory}
+            </p>
+          ) : (
+            submissionsQuery.data?.items.map((submission) => (
+              <div
+                key={submission.id}
+                className="rounded-md border border-[hsl(var(--border))] p-2 text-sm"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="neutral">v{submission.version}</Badge>
+                  <Badge variant="info">{completionStatusLabel(submission.status, labels)}</Badge>
+                  <span>{submission.requestedTerminalStatus.name}</span>
+                </div>
+                <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+                  {formatDateTime(submission.submittedAt)}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="grid gap-2">
+        <h5 className="text-sm font-semibold">{labels.approvalQueue}</h5>
+        {(approvalsQuery.data?.items ?? []).filter((item) => item.taskId === task.id).length ===
+        0 ? (
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.noApprovals}</p>
+        ) : (
+          approvalsQuery.data?.items
+            .filter((item) => item.taskId === task.id)
+            .map((submission) => (
+              <div
+                key={submission.id}
+                className="grid gap-2 rounded-md border border-[hsl(var(--border))] p-2"
+              >
+                <p className="text-sm font-medium">
+                  {labels.version} {submission.version}: {submission.requestedTerminalStatus.name}
+                </p>
+                {rejectingSubmissionId === submission.id ? (
+                  <Input
+                    label={labels.rejectionReason}
+                    value={rejectReason}
+                    onChange={(event) => setRejectReason(event.target.value)}
+                  />
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={() =>
+                      decisionMutation.mutate({ submissionId: submission.id, decision: 'APPROVED' })
+                    }
+                  >
+                    {labels.approve}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      rejectingSubmissionId === submission.id
+                        ? decisionMutation.mutate({
+                            submissionId: submission.id,
+                            decision: 'REJECTED',
+                          })
+                        : setRejectingSubmissionId(submission.id)
+                    }
+                    disabled={rejectingSubmissionId === submission.id && !rejectReason.trim()}
+                  >
+                    {labels.reject}
+                  </Button>
+                </div>
+              </div>
+            ))
+        )}
+      </div>
+      <CompletionPolicyDialog
+        labels={labels}
+        open={policyOpen}
+        policy={policyDraft}
+        busy={policyMutation.isPending}
+        onOpenChange={setPolicyOpen}
+        onChange={setPolicyDraft}
+        onSave={() => policyMutation.mutate()}
+      />
+      <TaskCompletionDialog
+        labels={labels}
+        workspaceId={workspaceId}
+        taskId={task.id}
+        requestedTerminalStatusDefinitionId={targetStatusId}
+        open={completionOpen}
+        onOpenChange={setCompletionOpen}
+        onCompleted={() => {
+          void queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, task.id) });
+        }}
+      />
+    </section>
+  );
+}
+
+function CompletionPolicyDialog({
+  labels,
+  open,
+  policy,
+  busy,
+  onOpenChange,
+  onChange,
+  onSave,
+}: {
+  labels: AllTaskLabels;
+  open: boolean;
+  policy: TaskCompletionPolicy | null;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (policy: TaskCompletionPolicy) => void;
+  onSave: () => void;
+}) {
+  if (!policy) return null;
+  const setMode = (mode: TaskCompletionProofRequirementMode) =>
+    onChange({
+      ...policy,
+      proofRequirementMode: mode,
+      requiredProofTypes: mode === 'SPECIFIC' ? policy.requiredProofTypes : [],
+    });
+  const toggleProofType = (type: TaskCompletionProofType, checked: boolean) =>
+    onChange({
+      ...policy,
+      requiredProofTypes: checked
+        ? [...new Set([...policy.requiredProofTypes, type])]
+        : policy.requiredProofTypes.filter((item) => item !== type),
+    });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{labels.completionPolicy}</DialogTitle>
+          <DialogDescription>{labels.completionPolicyDescription}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <Select
+            value={policy.proofRequirementMode}
+            onValueChange={(value) => setMode(value as TaskCompletionProofRequirementMode)}
+          >
+            <SelectTrigger label={labels.proofRequirement}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="NONE">{labels.proofNone}</SelectItem>
+              <SelectItem value="ANY">{labels.proofAny}</SelectItem>
+              <SelectItem value="SPECIFIC">{labels.proofSpecific}</SelectItem>
+            </SelectContent>
+          </Select>
+          {policy.proofRequirementMode === 'SPECIFIC' ? (
+            <div className="grid gap-2">
+              {completionProofTypes.map((type) => (
+                <label key={type} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={policy.requiredProofTypes.includes(type)}
+                    onCheckedChange={(value) => toggleProofType(type, value === true)}
+                  />
+                  {completionProofTypeLabel(type, labels)}
+                </label>
+              ))}
+            </div>
+          ) : null}
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={policy.approvalRequired}
+              onCheckedChange={(value) =>
+                onChange({
+                  ...policy,
+                  approvalRequired: value === true,
+                  approverMode: value === true ? (policy.approverMode ?? 'ANY_ONE') : null,
+                })
+              }
+            />
+            {labels.approvalRequired}
+          </label>
+          {policy.approvalRequired ? (
+            <>
+              <Select
+                value={policy.approverMode ?? 'ANY_ONE'}
+                onValueChange={(value) =>
+                  onChange({ ...policy, approverMode: value as 'ANY_ONE' | 'ALL_REQUIRED' })
+                }
+              >
+                <SelectTrigger label={labels.approverMode}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ANY_ONE">{labels.anyOneApprover}</SelectItem>
+                  <SelectItem value="ALL_REQUIRED">{labels.allApprovers}</SelectItem>
+                </SelectContent>
+              </Select>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={policy.includeTaskCreator}
+                  onCheckedChange={(value) =>
+                    onChange({ ...policy, includeTaskCreator: value === true })
+                  }
+                />
+                {labels.includeTaskCreator}
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={policy.includePermissionApprovers}
+                  onCheckedChange={(value) =>
+                    onChange({ ...policy, includePermissionApprovers: value === true })
+                  }
+                />
+                {labels.includePermissionApprovers}
+              </label>
+            </>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+            {labels.cancel}
+          </Button>
+          <Button type="button" disabled={busy} onClick={onSave}>
+            {labels.save}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TaskCompletionDialog({
+  labels,
+  workspaceId,
+  taskId,
+  requestedTerminalStatusDefinitionId,
+  open,
+  onOpenChange,
+  onCompleted,
+}: {
+  labels: AllTaskLabels;
+  workspaceId: string | null;
+  taskId: string;
+  requestedTerminalStatusDefinitionId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCompleted?: (task: WorkspaceTask) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [proofText, setProofText] = useState('');
+  const [proofUrl, setProofUrl] = useState('');
+  const [checklistConfirmed, setChecklistConfirmed] = useState(false);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [uploadedAttachment, setUploadedAttachment] = useState<TaskAttachmentSummary | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const policyQuery = useQuery({
+    queryKey: taskKeys.completionPolicy(workspaceId, taskId),
+    queryFn: () => getTaskCompletionPolicy(workspaceId as string, taskId),
+    enabled: Boolean(workspaceId && taskId && open),
+  });
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!workspaceId) throw new Error(labels.noWorkspace);
+      if (file.size > maxCompletionProofFileBytes) throw new Error(labels.fileTooLarge);
+      const init = await initTaskAttachmentUpload(workspaceId, taskId, {
+        filename: file.name,
+        displayName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+      });
+      await uploadCompletionProofFile(init.uploadUrl, file, setUploadProgress);
+      return completeTaskAttachmentUpload(workspaceId, taskId, init.attachment.id, {
+        sizeBytes: file.size,
+      });
+    },
+    onSuccess: async (attachment) => {
+      setUploadedAttachment(attachment);
+      setProofFile(null);
+      toast.success(labels.fileUploaded);
+      await queryClient.invalidateQueries({
+        queryKey: taskKeys.attachmentsBase(workspaceId, taskId),
+      });
+    },
+    onError: (error) => {
+      setUploadProgress(0);
+      toast.error(safeCompletionError(error, labels));
+    },
+  });
+  const submitMutation = useMutation({
+    mutationFn: () => {
+      if (!workspaceId || !requestedTerminalStatusDefinitionId)
+        throw new Error(labels.selectStatus);
+      return submitTaskCompletion(workspaceId, taskId, requestedTerminalStatusDefinitionId, {
+        proofItems: buildCompletionProofItems(
+          policyQuery.data,
+          proofText,
+          proofUrl,
+          checklistConfirmed,
+          uploadedAttachment?.id ?? null,
+        ),
+      });
+    },
+    onSuccess: async (task) => {
+      toast.success(
+        task.completion?.pendingApproval ? labels.waitingForApproval : labels.completionSubmitted,
+      );
+      setProofText('');
+      setProofUrl('');
+      setChecklistConfirmed(false);
+      setProofFile(null);
+      setUploadedAttachment(null);
+      setUploadProgress(0);
+      onOpenChange(false);
+      onCompleted?.(task);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: taskKeys.detail(workspaceId, taskId) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.all(workspaceId) }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.kanbanColumns(workspaceId) }),
+        queryClient.invalidateQueries({
+          queryKey: taskKeys.completionSubmissions(workspaceId, taskId, { page: 1, pageSize: 5 }),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: taskKeys.completionApprovals(workspaceId, { page: 1, pageSize: 5 }),
+        }),
+      ]);
+    },
+    onError: (error) => toast.error(safeCompletionError(error, labels)),
+  });
+
+  useEffect(() => {
+    if (!open) {
+      setProofText('');
+      setProofUrl('');
+      setChecklistConfirmed(false);
+      setProofFile(null);
+      setUploadedAttachment(null);
+      setUploadProgress(0);
+    }
+  }, [open, workspaceId, taskId, requestedTerminalStatusDefinitionId]);
+
+  const policy = policyQuery.data;
+  const proofTypes =
+    policy?.proofRequirementMode === 'SPECIFIC' ? policy.requiredProofTypes : completionProofTypes;
+  const showText = proofTypes.includes('TEXT');
+  const showUrl = proofTypes.includes('URL');
+  const showChecklist = proofTypes.includes('CHECKLIST_CONFIRMATION');
+  const showAttachment = proofTypes.includes('ATTACHMENT');
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{labels.submitProof}</DialogTitle>
+          <DialogDescription>{labels.completionRequired}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          {policyQuery.isLoading ? <Skeleton className="h-20 w-full" /> : null}
+          {showText ? (
+            <Textarea
+              label={labels.textProof}
+              value={proofText}
+              onChange={(event) => setProofText(event.target.value)}
+            />
+          ) : null}
+          {showUrl ? (
+            <Input
+              label={labels.urlProof}
+              value={proofUrl}
+              onChange={(event) => setProofUrl(event.target.value)}
+            />
+          ) : null}
+          {showChecklist ? (
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={checklistConfirmed}
+                onCheckedChange={(value) => setChecklistConfirmed(value === true)}
+              />
+              {labels.checklistProof}
+            </label>
+          ) : null}
+          {showAttachment ? (
+            <div className="grid gap-2 rounded-md border border-[hsl(var(--border))] p-3">
+              <Input
+                label={labels.uploadFileImage}
+                type="file"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setProofFile(file);
+                  setUploadedAttachment(null);
+                  setUploadProgress(0);
+                }}
+              />
+              {proofFile ? (
+                <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                  {proofFile.name} - {formatBytes(proofFile.size)}
+                </p>
+              ) : null}
+              {proofFile && proofFile.size > largeCompletionProofFileBytes ? (
+                <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                  {labels.largeFileSuggestion}
+                </p>
+              ) : null}
+              {proofFile && proofFile.size > maxCompletionProofFileBytes ? (
+                <p className="text-sm font-semibold text-[hsl(var(--destructive))]">
+                  {labels.fileTooLarge}
+                </p>
+              ) : null}
+              {uploadProgress > 0 ? (
+                <div
+                  className="h-2 rounded-full bg-[hsl(var(--surface-muted))]"
+                  role="progressbar"
+                  aria-label={labels.uploadFileImage}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={uploadProgress}
+                >
+                  <div
+                    className="h-2 rounded-full bg-[hsl(var(--primary))]"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              ) : null}
+              {uploadedAttachment ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[hsl(var(--surface-muted))] p-2 text-sm">
+                  <span>
+                    {labels.fileUploaded}: {uploadedAttachment.displayName}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    aria-label={labels.removeProofFile}
+                    onClick={() => {
+                      setUploadedAttachment(null);
+                      setUploadProgress(0);
+                    }}
+                  >
+                    <X aria-hidden="true" className="h-4 w-4" />
+                    {labels.removeProofFile}
+                  </Button>
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={
+                  !proofFile ||
+                  proofFile.size > maxCompletionProofFileBytes ||
+                  uploadMutation.isPending
+                }
+                onClick={() => proofFile && uploadMutation.mutate(proofFile)}
+              >
+                {uploadMutation.isPending ? labels.uploading : labels.uploadFileImage}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+            {labels.cancel}
+          </Button>
+          <Button
+            type="button"
+            disabled={
+              !requestedTerminalStatusDefinitionId ||
+              submitMutation.isPending ||
+              uploadMutation.isPending
+            }
+            onClick={() => submitMutation.mutate()}
+          >
+            {submitMutation.isPending ? labels.applying : labels.submitProof}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function buildCompletionProofItems(
+  policy: TaskCompletionPolicy | undefined,
+  textValue: string,
+  url: string,
+  checklistConfirmed: boolean,
+  attachmentId?: string | null,
+) {
+  const items = [];
+  const requiredTypes =
+    policy?.proofRequirementMode === 'SPECIFIC' ? policy.requiredProofTypes : completionProofTypes;
+  if (requiredTypes.includes('TEXT') && textValue.trim()) {
+    items.push({ type: 'TEXT' as const, textValue: textValue.trim() });
+  }
+  if (requiredTypes.includes('URL') && url.trim()) {
+    items.push({ type: 'URL' as const, url: url.trim() });
+  }
+  if (requiredTypes.includes('CHECKLIST_CONFIRMATION') && checklistConfirmed) {
+    items.push({ type: 'CHECKLIST_CONFIRMATION' as const, checklistConfirmed: true });
+  }
+  if (requiredTypes.includes('ATTACHMENT') && attachmentId) {
+    items.push({ type: 'ATTACHMENT' as const, attachmentId });
+  }
+  return items;
+}
+
+function completionProofTypeLabel(type: TaskCompletionProofType, labels: AllTaskLabels) {
+  if (type === 'TEXT') return labels.textProof;
+  if (type === 'URL') return labels.urlProof;
+  if (type === 'CHECKLIST_CONFIRMATION') return labels.checklistProof;
+  return labels.attachmentProof;
+}
+
+function completionStatusLabel(status: string, labels: AllTaskLabels) {
+  if (status === 'PENDING_APPROVAL') return labels.pendingApproval;
+  if (status === 'ACCEPTED') return labels.accepted;
+  return labels.rejected;
+}
+
+function MakeRecurringDialog({
+  labels,
+  open,
+  busy,
+  onOpenChange,
+  onSubmit,
+}: {
+  labels: AllTaskLabels;
+  open: boolean;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (form: RecurrenceFormState) => void;
+}) {
+  const workspaceTimezone = useSessionStore((state) => {
+    for (const agency of state.agencies) {
+      const workspace = agency.workspaces.find((item) => item.id === state.selectedWorkspaceId);
+      if (workspace) return workspace.timezone;
+    }
+    return 'UTC';
+  });
+  const [form, setForm] = useState(() => defaultRecurrenceForm(workspaceTimezone));
+
+  useEffect(() => {
+    if (open) setForm(defaultRecurrenceForm(workspaceTimezone));
+  }, [open, workspaceTimezone]);
+
+  const invalid =
+    !form.startLocalDate ||
+    !form.localTime ||
+    !form.timezone ||
+    (form.frequency === 'WEEKLY' && form.selectedWeekdays.length === 0) ||
+    (form.endMode === 'ON_DATE' &&
+      (!form.untilLocalDate || form.untilLocalDate < form.startLocalDate));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{labels.makeRecurring}</DialogTitle>
+          <DialogDescription>{labels.makeRecurringDescription}</DialogDescription>
+        </DialogHeader>
+        <RecurrenceEditor labels={labels} form={form} onChange={setForm} />
+        {invalid ? (
+          <p className="text-sm font-semibold text-[hsl(var(--danger))]">
+            {labels.fixRequiredFields}
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+            {labels.cancel}
+          </Button>
+          <Button type="button" disabled={invalid || busy} onClick={() => onSubmit(form)}>
+            {labels.makeRecurring}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditRecurringTaskDialog({
+  labels,
+  task,
+  open,
+  busy,
+  onOpenChange,
+  onSubmit,
+}: {
+  labels: AllTaskLabels;
+  task: WorkspaceTask;
+  open: boolean;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (form: EditTaskScopeFormState) => void;
+}) {
+  const [form, setForm] = useState<EditTaskScopeFormState>({
+    title: task.title,
+    priority: task.priority,
+    scope: '',
+  });
+
+  useEffect(() => {
+    if (open) setForm({ title: task.title, priority: task.priority, scope: '' });
+  }, [open, task.priority, task.title]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{labels.applyChangesTo}</DialogTitle>
+          <DialogDescription>{labels.editScopeDescription}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <Input
+            label={labels.titleLabel}
+            value={form.title}
+            onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+          />
+          <Select
+            value={form.priority}
+            onValueChange={(value) =>
+              setForm((current) => ({ ...current, priority: value as TaskPriority }))
+            }
+          >
+            <SelectTrigger label={labels.priority}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {priorities.map((priority) => (
+                <SelectItem key={priority} value={priority}>
+                  {labels[`priority${priority}`]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <fieldset className="grid gap-2">
+            <legend className="text-sm font-semibold">{labels.applyChangesTo}</legend>
+            {editScopes.map((scope) => (
+              <label
+                key={scope}
+                className="flex items-start gap-2 rounded-md border border-[hsl(var(--border))] p-3"
+              >
+                <input
+                  type="radio"
+                  name="recurrence-edit-scope"
+                  value={scope}
+                  checked={form.scope === scope}
+                  onChange={() => setForm((current) => ({ ...current, scope }))}
+                />
+                <span>
+                  <span className="block text-sm font-semibold">
+                    {editScopeLabel(scope, labels)}
+                  </span>
+                  <span className="block text-sm text-[hsl(var(--muted-foreground))]">
+                    {editScopeDescription(scope, labels)}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+            {labels.cancel}
+          </Button>
+          <Button
+            type="button"
+            disabled={!form.title.trim() || !form.scope || busy}
+            onClick={() => onSubmit(form)}
+          >
+            {labels.save}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RecurrenceEditor({
+  labels,
+  form,
+  onChange,
+}: {
+  labels: AllTaskLabels;
+  form: RecurrenceFormState;
+  onChange: (form: RecurrenceFormState) => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      <Select
+        value={form.frequency}
+        onValueChange={(value) =>
+          onChange({ ...form, frequency: value as TaskRecurrenceFrequency })
+        }
+      >
+        <SelectTrigger label={labels.repeat}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {recurrenceOptions.map((option) => (
+            <SelectItem key={option} value={option}>
+              {recurrenceFrequencyLabel(option, labels)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Input
+          label={labels.startDate}
+          type="date"
+          value={form.startLocalDate}
+          onChange={(event) => onChange({ ...form, startLocalDate: event.target.value })}
+        />
+        <Input
+          label={labels.time}
+          type="time"
+          value={form.localTime}
+          onChange={(event) => onChange({ ...form, localTime: event.target.value })}
+        />
+        <Input
+          label={labels.timezone}
+          value={form.timezone}
+          onChange={(event) => onChange({ ...form, timezone: event.target.value })}
+        />
+        {form.frequency === 'WEEKDAYS' ? (
+          <p className="self-end text-sm text-[hsl(var(--muted-foreground))]">
+            {labels.mondayFriday}
+          </p>
+        ) : null}
+      </div>
+      {form.frequency === 'WEEKLY' ? (
+        <div className="grid gap-2">
+          <p className="text-sm font-semibold">{labels.repeatOn}</p>
+          <div className="flex flex-wrap gap-2" role="group" aria-label={labels.repeatOn}>
+            {[1, 2, 3, 4, 5, 6, 7].map((day) => {
+              const selected = form.selectedWeekdays.includes(day);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  aria-pressed={selected}
+                  className={cn(
+                    'rounded-md border border-[hsl(var(--border))] px-3 py-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]',
+                    selected && 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]',
+                  )}
+                  onClick={() =>
+                    onChange({
+                      ...form,
+                      selectedWeekdays: selected
+                        ? form.selectedWeekdays.filter((value) => value !== day)
+                        : [...form.selectedWeekdays, day].sort((a, b) => a - b),
+                    })
+                  }
+                >
+                  {weekdayLabel(day, labels)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {form.frequency === 'MONTHLY' ? (
+        <p className="text-sm text-[hsl(var(--muted-foreground))]">{labels.monthlyClampHelper}</p>
+      ) : null}
+      {form.frequency === 'CUSTOM' ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input
+            label={labels.every}
+            type="number"
+            min={1}
+            max={365}
+            value={String(form.interval)}
+            onChange={(event) =>
+              onChange({ ...form, interval: Math.max(1, Number(event.target.value) || 1) })
+            }
+          />
+          <Select
+            value={form.customIntervalUnit}
+            onValueChange={(value) =>
+              onChange({ ...form, customIntervalUnit: value as TaskRecurrenceCustomUnit })
+            }
+          >
+            <SelectTrigger label={labels.intervalUnit}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {customRecurrenceUnits.map((unit) => (
+                <SelectItem key={unit} value={unit}>
+                  {customUnitLabel(unit, labels)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Select
+          value={form.endMode}
+          onValueChange={(value) => onChange({ ...form, endMode: value as TaskRecurrenceEndMode })}
+        >
+          <SelectTrigger label={labels.ends}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {recurrenceEndModes.map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {endModeLabel(mode, labels)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {form.endMode === 'ON_DATE' ? (
+          <Input
+            label={labels.endDate}
+            type="date"
+            value={form.untilLocalDate}
+            onChange={(event) => onChange({ ...form, untilLocalDate: event.target.value })}
+          />
+        ) : null}
+        {form.endMode === 'AFTER_COUNT' ? (
+          <Input
+            label={labels.occurrences}
+            type="number"
+            min={1}
+            max={1000}
+            value={String(form.maxOccurrences)}
+            onChange={(event) =>
+              onChange({
+                ...form,
+                maxOccurrences: Math.max(1, Number(event.target.value) || 1),
+              })
+            }
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RecurringSummary({
+  labels,
+  series,
+  scheduledFor,
+  busy,
+  onAction,
+}: {
+  labels: AllTaskLabels;
+  series: TaskRecurrenceSeries;
+  scheduledFor: string | null;
+  busy: boolean;
+  onAction: (action: 'pause' | 'resume' | 'end') => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <DetailRow label={labels.pattern} value={formatRecurrencePattern(series, labels)} />
+        <DetailRow label={labels.timezone} value={series.timezone} />
+        <DetailRow
+          label={labels.scheduledFor}
+          value={scheduledFor ? formatDateTime(scheduledFor) : labels.emptyDash}
+        />
+        <DetailRow
+          label={labels.seriesStatus}
+          value={recurrenceStatusLabel(series.status, labels)}
+        />
+        <DetailRow
+          label={labels.nextOccurrence}
+          value={
+            series.nextOccurrenceAt ? formatDateTime(series.nextOccurrenceAt) : labels.emptyDash
+          }
+        />
+        <DetailRow label={labels.generatedCount} value={String(series.generatedCount)} />
+      </div>
+      {series.lastErrorCode ? (
+        <p className="text-sm font-semibold text-[hsl(var(--danger))]">
+          {labels.needsAttention}: {series.lastErrorCode}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {series.status === 'ACTIVE' ? (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => onAction('pause')}
+          >
+            {labels.pause}
+          </Button>
+        ) : null}
+        {series.status === 'PAUSED' ? (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => onAction('resume')}
+          >
+            {labels.resume}
+          </Button>
+        ) : null}
+        {series.status !== 'ENDED' ? (
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => onAction('end')}>
+            {labels.endRecurrence}
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -3357,6 +5639,20 @@ function ProjectSelector({
 }
 
 function TaskResultsSkeleton({ view }: { view: TaskView }) {
+  if (view === 'kanban') {
+    return (
+      <div className="flex gap-3 overflow-x-auto p-3" aria-label="Board loading">
+        {Array.from({ length: 4 }, (_, column) => (
+          <div key={column} className="grid w-[20rem] shrink-0 gap-2">
+            <Skeleton className="h-16 w-full" />
+            {Array.from({ length: 4 }, (_, card) => (
+              <Skeleton key={card} className="h-32 w-full" />
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (view === 'grid') {
     return (
       <div
@@ -3462,6 +5758,117 @@ function priorityLabel(priority: TaskPriority, labels: AllTaskLabels) {
   return labels[`priority${priority}`];
 }
 
+function recurrenceStatusLabel(status: string, labels: AllTaskLabels) {
+  if (status === 'PAUSED') return labels.paused;
+  if (status === 'ENDED') return labels.ended;
+  if (status === 'ERROR') return labels.needsAttention;
+  return labels.active;
+}
+
+function formatRecurrencePattern(series: TaskRecurrenceSeries, labels: AllTaskLabels) {
+  if (series.frequency === 'DAILY') return labels.daily;
+  if (series.frequency === 'WEEKDAYS') return `${labels.weekdays} (${labels.mondayFriday})`;
+  if (series.frequency === 'WEEKLY') {
+    const names = series.selectedWeekdays.map((day) => weekdayLabel(day, labels)).join(', ');
+    return `${labels.weekly}: ${names || labels.emptyDash}`;
+  }
+  if (series.frequency === 'MONTHLY') return labels.monthly;
+  const unit =
+    series.customIntervalUnit === 'WEEK'
+      ? labels.weeks
+      : series.customIntervalUnit === 'MONTH'
+        ? labels.months
+        : labels.days;
+  return `${labels.every} ${series.interval} ${unit}`;
+}
+
+function weekdayLabel(day: number, labels: AllTaskLabels) {
+  const map: Record<number, string> = {
+    1: labels.monday,
+    2: labels.tuesday,
+    3: labels.wednesday,
+    4: labels.thursday,
+    5: labels.friday,
+    6: labels.saturday,
+    7: labels.sunday,
+  };
+  return map[day] ?? String(day);
+}
+
+function defaultRecurrenceForm(timezone = defaultTimezone()): RecurrenceFormState {
+  return {
+    frequency: 'DAILY',
+    startLocalDate: '',
+    localTime: '',
+    timezone,
+    selectedWeekdays: [],
+    interval: 1,
+    customIntervalUnit: 'DAY',
+    endMode: 'NEVER',
+    untilLocalDate: '',
+    maxOccurrences: 10,
+  };
+}
+
+function recurrencePayloadFromForm(form: RecurrenceFormState) {
+  if (!form.startLocalDate || !form.localTime || !form.timezone) return null;
+  return {
+    timezone: form.timezone,
+    frequency: form.frequency,
+    interval: form.frequency === 'CUSTOM' ? form.interval : 1,
+    ...(form.frequency === 'CUSTOM' ? { customIntervalUnit: form.customIntervalUnit } : {}),
+    startLocalDate: form.startLocalDate,
+    localTime: form.localTime,
+    ...(form.frequency === 'WEEKLY' ? { selectedWeekdays: form.selectedWeekdays } : {}),
+    ...(form.frequency === 'MONTHLY'
+      ? { monthlyDay: Number(form.startLocalDate.split('-')[2]) }
+      : {}),
+    endMode: form.endMode,
+    ...(form.endMode === 'ON_DATE' ? { untilLocalDate: form.untilLocalDate } : {}),
+    ...(form.endMode === 'AFTER_COUNT' ? { maxOccurrences: form.maxOccurrences } : {}),
+  };
+}
+
+function defaultTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+function recurrenceFrequencyLabel(value: TaskRecurrenceFrequency, labels: AllTaskLabels) {
+  if (value === 'WEEKDAYS') return labels.weekdays;
+  if (value === 'WEEKLY') return labels.weekly;
+  if (value === 'MONTHLY') return labels.monthly;
+  if (value === 'CUSTOM') return labels.custom;
+  return labels.daily;
+}
+
+function customUnitLabel(value: TaskRecurrenceCustomUnit, labels: AllTaskLabels) {
+  if (value === 'WEEK') return labels.weeks;
+  if (value === 'MONTH') return labels.months;
+  return labels.days;
+}
+
+function endModeLabel(value: TaskRecurrenceEndMode, labels: AllTaskLabels) {
+  if (value === 'ON_DATE') return labels.onDate;
+  if (value === 'AFTER_COUNT') return labels.afterOccurrences;
+  return labels.never;
+}
+
+function editScopeLabel(value: TaskRecurrenceEditScope, labels: AllTaskLabels) {
+  if (value === 'THIS_AND_FUTURE') return labels.thisAndFutureTasks;
+  if (value === 'ENTIRE_SERIES') return labels.editRecurrenceSeries;
+  return labels.thisTaskOnly;
+}
+
+function editScopeDescription(value: TaskRecurrenceEditScope, labels: AllTaskLabels) {
+  if (value === 'THIS_AND_FUTURE') return labels.thisAndFutureDescription;
+  if (value === 'ENTIRE_SERIES') return labels.entireSeriesDescription;
+  return labels.thisTaskOnlyDescription;
+}
+
 function sortLabel(sortBy: TaskSortBy, labels: AllTaskLabels) {
   if (sortBy === 'title') return labels.task;
   if (sortBy === 'dueAt') return labels.dueDate;
@@ -3473,6 +5880,40 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
     new Date(value),
   );
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatLabel(template: string, values: Record<string, string>) {
+  return Object.entries(values).reduce(
+    (formatted, [key, value]) => formatted.replace(`{${key}}`, value),
+    template,
+  );
+}
+
+function uploadCompletionProofFile(url: string, file: File, onProgress: (value: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('PUT', url);
+    if (file.type) request.setRequestHeader('Content-Type', file.type);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress(100);
+        resolve();
+      } else {
+        reject(new Error(`Upload failed with status ${request.status}`));
+      }
+    };
+    request.onerror = () => reject(new Error('Upload failed.'));
+    request.send(file);
+  });
 }
 
 function displayPerson(user: { email: string; name: string | null }) {
@@ -3495,7 +5936,76 @@ function safeTaskError(error: unknown, labels: AllTaskLabels) {
   return labels.taskLoadFailed;
 }
 
+function safeKanbanError(error: unknown, labels: AllTaskLabels) {
+  const status =
+    typeof error === 'object' && error && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  if (status === 401 || status === 403) return labels.permissionDenied;
+  if (status === 404) return labels.taskNotFound;
+  if (status === 409)
+    return error instanceof Error && error.message ? error.message : labels.unableToMoveTask;
+  if (status === 400 || status === 422) return labels.wipLimitInvalid;
+  if (error instanceof TypeError) return labels.networkError;
+  if (error instanceof Error && error.message) return error.message;
+  return labels.unableToMoveTask;
+}
+
+function isCompletionFlowRequired(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'body' in error &&
+    (error as { body?: { code?: unknown } }).body?.code === 'COMPLETION_FLOW_REQUIRED'
+  );
+}
+
+function completionFlowDetails(error: unknown) {
+  if (
+    typeof error !== 'object' ||
+    error === null ||
+    !('body' in error) ||
+    typeof (error as { body?: { details?: unknown } }).body?.details !== 'object' ||
+    !(error as { body?: { details?: unknown } }).body?.details
+  ) {
+    return null;
+  }
+  const details = (error as { body: { details: Record<string, unknown> } }).body.details;
+  return {
+    taskId: typeof details.taskId === 'string' ? details.taskId : null,
+    taskIds: Array.isArray(details.taskIds)
+      ? details.taskIds.filter((id): id is string => typeof id === 'string')
+      : [],
+    requestedTerminalStatusDefinitionId:
+      typeof details.requestedTerminalStatusDefinitionId === 'string'
+        ? details.requestedTerminalStatusDefinitionId
+        : null,
+  };
+}
+
+function safeCompletionError(error: unknown, labels: AllTaskLabels) {
+  const status =
+    typeof error === 'object' && error && 'status' in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  if (error instanceof Error && error.message === labels.fileTooLarge) return labels.fileTooLarge;
+  if (status === 401 || status === 403) return labels.permissionDenied;
+  if (status === 404) return labels.attachmentUnavailable;
+  if (status === 409 && isCompletionFlowRequired(error)) return labels.completionRequired;
+  if (status === 409) return labels.completionActionFailed;
+  if (status === 413) return labels.fileTooLarge;
+  if (status === 400 || status === 422) return labels.invalidAttachment;
+  if (error instanceof TypeError) return labels.networkError;
+  return labels.completionActionFailed;
+}
+
 function safeBulkError(error: unknown, labels: AllTaskLabels) {
+  if (isCompletionFlowRequired(error)) {
+    const count = completionFlowDetails(error)?.taskIds.length ?? 0;
+    return count > 0
+      ? formatLabel(labels.bulkCompletionRequiredCount, { count: String(count) })
+      : labels.bulkCompletionRequired;
+  }
   const status =
     typeof error === 'object' && error && 'status' in error
       ? Number((error as { status?: unknown }).status)
@@ -3676,6 +6186,7 @@ function isDatasetPatch(patch: Record<string, string | number | null>) {
         'assignee',
         'department',
         'project',
+        'tagId',
         'dueFrom',
         'dueTo',
         'sortBy',
@@ -3724,6 +6235,7 @@ function activeFilterLabel(
   departments: Department[],
   assignees: WorkspaceUser[],
   projects: WorkspaceProject[],
+  tags: WorkspaceTagSummary[],
 ) {
   if (key === 'status') {
     return `${labels.status}: ${statuses.find((status) => status.id === state.status)?.name ?? labels.selected}`;
@@ -3738,6 +6250,15 @@ function activeFilterLabel(
   }
   if (key === 'project') {
     return `${labels.project}: ${projects.find((project) => project.id === state.project)?.name ?? labels.selected}`;
+  }
+  if (key === 'tagId') {
+    const tag = tags.find((item) => item.id === state.tagId);
+    const label = tag
+      ? tag.status === 'ARCHIVED'
+        ? `${tag.name} (${labels.archived})`
+        : tag.name
+      : labels.selected;
+    return `${labels.filterByTag}: ${label}`;
   }
   if (key === 'dueFrom') return `${labels.dueFrom}: ${state.dueFrom}`;
   if (key === 'dueTo') return `${labels.dueTo}: ${state.dueTo}`;
@@ -3767,6 +6288,7 @@ function readTaskUrlState(searchParams: URLSearchParams): TaskUrlState {
     assignee: opaqueParam(searchParams.get('assignee')),
     department: opaqueParam(searchParams.get('department')),
     project: opaqueParam(searchParams.get('project')),
+    tagId: opaqueParam(searchParams.get('tagId')),
     dueFrom: localDateParam(searchParams.get('dueFrom')),
     dueTo: localDateParam(searchParams.get('dueTo')),
   };
@@ -3818,8 +6340,48 @@ function safeStatusColor(value: string) {
   return /^#[0-9A-Fa-f]{6}$/.test(value) ? value : '#64748B';
 }
 
+function localInputDate(date: Date) {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function endOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+function localDateToIso(value: string) {
+  return value ? new Date(`${value}T00:00:00`).toISOString() : null;
+}
+
+function ganttWidth(start: string | null, end: string | null, from: string, to: string) {
+  if (!start || !end) return 0;
+  const rangeStart = new Date(`${from}T00:00:00`).getTime();
+  const rangeEnd = new Date(`${to}T23:59:59`).getTime();
+  const taskStart = Math.max(new Date(start).getTime(), rangeStart);
+  const taskEnd = Math.min(new Date(end).getTime(), rangeEnd);
+  if (rangeEnd <= rangeStart || taskEnd <= taskStart) return 2;
+  return Math.max(2, Math.min(100, ((taskEnd - taskStart) / (rangeEnd - rangeStart)) * 100));
+}
+
+function urgencyLabel(value: 'SAFE' | 'WARNING' | 'OVERDUE', labels: AllTaskLabels) {
+  if (value === 'OVERDUE') return labels.overdue;
+  if (value === 'WARNING') return labels.dueSoon;
+  return labels.safe;
+}
+
 function isTaskView(value: unknown): value is TaskView {
-  return value === 'list' || value === 'grid' || value === 'compact';
+  return (
+    value === 'list' ||
+    value === 'grid' ||
+    value === 'compact' ||
+    value === 'kanban' ||
+    value === 'calendar' ||
+    value === 'gantt'
+  );
 }
 
 function useDebouncedValue(value: string, delay: number) {
@@ -3843,6 +6405,7 @@ interface TaskUrlState {
   assignee: string;
   department: string;
   project: string;
+  tagId: string;
   dueFrom: string;
   dueTo: string;
 }
@@ -3852,7 +6415,7 @@ interface SelectedTask {
   taskId: string;
 }
 
-type TaskView = 'list' | 'grid' | 'compact';
+type TaskView = 'list' | 'grid' | 'compact' | 'kanban' | 'calendar' | 'gantt';
 type BulkAction = 'status' | 'priority' | 'addAssignees' | 'removeAssignees' | 'delete';
 type BulkResultLike = {
   changedCount: number;
@@ -3891,6 +6454,45 @@ function allTaskLabels(
     'viewList',
     'viewGrid',
     'viewCompact',
+    'kanban',
+    'kanbanBoard',
+    'calendar',
+    'gantt',
+    'month',
+    'week',
+    'today',
+    'date',
+    'tasksDue',
+    'viewTasks',
+    'noTasks',
+    'unableToLoadTasks',
+    'tryAgain',
+    'safe',
+    'dueSoon',
+    'overdue',
+    'plannedStart',
+    'unscheduled',
+    'scheduleTask',
+    'startDate',
+    'endDate',
+    'updated',
+    'moveToStatus',
+    'wipLimit',
+    'setWipLimit',
+    'removeWipLimit',
+    'wipLimitReached',
+    'wipLimitExceeded',
+    'wipLimitUpdated',
+    'wipLimitInvalid',
+    'wipLimitDescription',
+    'unlimited',
+    'noTasksInStatus',
+    'noKanbanColumns',
+    'noKanbanColumnsDescription',
+    'unableToMoveTask',
+    'reordering',
+    'boardLoading',
+    'loadMore',
     'openTaskDetails',
     'tasks',
     'searchTasks',
@@ -3920,6 +6522,84 @@ function allTaskLabels(
     'subtasks',
     'dependencies',
     'related',
+    'comments',
+    'tags',
+    'tagsDescription',
+    'addTags',
+    'manageTags',
+    'loadingTags',
+    'tagsLoadFailed',
+    'noTags',
+    'addTagsDescription',
+    'searchTags',
+    'tagSearchResults',
+    'alreadyAdded',
+    'selectedTags',
+    'noTagsFound',
+    'manageTagsDescription',
+    'createTag',
+    'editTag',
+    'tagName',
+    'tagColor',
+    'save',
+    'invalidColor',
+    'filterByTagStatus',
+    'active',
+    'archived',
+    'allTags',
+    'archive',
+    'reactivate',
+    'archiveConfirmation',
+    'tagCreated',
+    'tagUpdated',
+    'tagArchived',
+    'tagReactivated',
+    'removeTagFromTask',
+    'tagsAdded',
+    'tagsAlreadyAssigned',
+    'noTagsAdded',
+    'tagRemoved',
+    'tagRemoveNoop',
+    'noTagsRemoved',
+    'selectionLimit',
+    'staleTag',
+    'tagConflict',
+    'archivedTagCannotBeAssigned',
+    'duplicateTag',
+    'tagInvalid',
+    'tagActionFailed',
+    'attachments',
+    'attachmentsDescription',
+    'loadingAttachments',
+    'attachmentsLoadFailed',
+    'noAttachments',
+    'uploadFile',
+    'uploadFileDescription',
+    'addLink',
+    'addLinkDescription',
+    'file',
+    'url',
+    'displayName',
+    'largeFileSuggestion',
+    'fileTooLarge',
+    'uploading',
+    'fileUploaded',
+    'linkAdded',
+    'fileAttachment',
+    'urlAttachment',
+    'download',
+    'openLink',
+    'removeAttachment',
+    'removeAttachmentNamed',
+    'attachmentRemoved',
+    'attachmentUnavailable',
+    'attachmentNotReady',
+    'invalidAttachment',
+    'invalidUrl',
+    'attachmentActionFailed',
+    'filterByTag',
+    'clearTagFilter',
+    'anyTag',
     'taskRelationshipTabs',
     'dependenciesDeferred',
     'relatedDeferred',
@@ -4066,6 +6746,8 @@ function allTaskLabels(
     'assignmentsRemoved',
     'tasksUpdated',
     'bulkActionFailed',
+    'bulkCompletionRequired',
+    'bulkCompletionRequiredCount',
     'bulkActionInvalid',
     'selectedTasksUnavailable',
     'statusConfigChanged',
@@ -4076,6 +6758,121 @@ function allTaskLabels(
     'noTasksSelected',
     'tooManySelected',
     'noWorkspace',
+    'recurring',
+    'notRecurring',
+    'recurringTaskSummary',
+    'nonRecurringTaskSummary',
+    'pattern',
+    'timezone',
+    'scheduledFor',
+    'seriesStatus',
+    'nextOccurrence',
+    'generatedCount',
+    'daily',
+    'weekdays',
+    'weekly',
+    'monthly',
+    'every',
+    'days',
+    'weeks',
+    'months',
+    'mondayFriday',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+    'active',
+    'paused',
+    'ended',
+    'needsAttention',
+    'pause',
+    'resume',
+    'endRecurrence',
+    'pauseRecurrenceConfirmation',
+    'resumeRecurrenceConfirmation',
+    'endRecurrenceConfirmation',
+    'recurrenceUpdated',
+    'recurrenceActionFailed',
+    'recurrenceUnavailable',
+    'saveAsTemplate',
+    'saveTemplateDescription',
+    'saveTemplateCopyWarning',
+    'templateName',
+    'templateSaved',
+    'templateActionFailed',
+    'makeRecurring',
+    'makeRecurringDescription',
+    'repeat',
+    'startDate',
+    'time',
+    'repeatOn',
+    'monthlyClampHelper',
+    'custom',
+    'intervalUnit',
+    'ends',
+    'never',
+    'onDate',
+    'afterOccurrences',
+    'endDate',
+    'occurrences',
+    'fixRequiredFields',
+    'recurrenceInvalid',
+    'editTask',
+    'applyChangesTo',
+    'editScopeDescription',
+    'thisTaskOnly',
+    'thisTaskOnlyDescription',
+    'thisAndFutureTasks',
+    'thisAndFutureDescription',
+    'editRecurrenceSeries',
+    'entireSeriesDescription',
+    'selectEditScope',
+    'taskUpdated',
+    'taskUpdateFailed',
+    'save',
+    'completionApproval',
+    'completionReady',
+    'pendingApproval',
+    'completionRequired',
+    'completionPolicy',
+    'completionPolicyDescription',
+    'proofRequirement',
+    'proofNone',
+    'proofAny',
+    'proofSpecific',
+    'approvalRequired',
+    'approverMode',
+    'anyOneApprover',
+    'allApprovers',
+    'includeTaskCreator',
+    'includePermissionApprovers',
+    'requestCompletionStatus',
+    'textProof',
+    'urlProof',
+    'checklistProof',
+    'attachmentProof',
+    'uploadFileImage',
+    'removeProofFile',
+    'submitProof',
+    'waitingForApproval',
+    'submitForCompletion',
+    'completionSubmitted',
+    'completionPolicySaved',
+    'completionDecisionSaved',
+    'completionActionFailed',
+    'completionHistory',
+    'noCompletionHistory',
+    'approvalQueue',
+    'noApprovals',
+    'version',
+    'approve',
+    'reject',
+    'rejectionReason',
+    'accepted',
+    'rejected',
   ] as const;
   return Object.fromEntries(keys.map((key) => [key, t(locale, `workspaceTasks.${key}`)])) as Record<
     (typeof keys)[number],

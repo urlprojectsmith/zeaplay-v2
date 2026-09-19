@@ -15,6 +15,7 @@ export interface StandardErrorBody {
   message: string;
   requestId: string;
   validation?: unknown;
+  details?: unknown;
 }
 
 export interface StandardResponse<T> {

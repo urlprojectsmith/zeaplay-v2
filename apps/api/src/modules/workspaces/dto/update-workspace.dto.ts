@@ -14,4 +14,10 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsEnum(WorkspaceStatus)
   status?: WorkspaceStatus;
+
+  @ApiPropertyOptional({ default: 'UTC', maxLength: 80 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  timezone?: string;
 }

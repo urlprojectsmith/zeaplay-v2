@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { MembershipStatus, Prisma, RoleScope } from '@prisma/client';
 import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { normalizeIanaTimezone } from '../../common/timezones';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { initializeDefaultStatuses } from '../statuses/status-templates';
@@ -31,6 +32,7 @@ export class WorkspacesService {
           agencyId: tenant.agencyId,
           name: dto.name.trim(),
           slug: dto.slug.trim().toLowerCase(),
+          timezone: normalizeIanaTimezone(dto.timezone, 'Workspace timezone'),
           createdById: tenant.userId,
           memberships: { create: { userId: tenant.userId, roleId: ownerRole.id } },
         },
@@ -74,7 +76,14 @@ export class WorkspacesService {
   async update(tenant: WorkspaceTenantContext, dto: UpdateWorkspaceDto) {
     const workspace = await this.prisma.workspace.update({
       where: { id: tenant.workspaceId },
-      data: { name: dto.name?.trim(), status: dto.status },
+      data: {
+        name: dto.name?.trim(),
+        status: dto.status,
+        timezone:
+          dto.timezone === undefined
+            ? undefined
+            : normalizeIanaTimezone(dto.timezone, 'Workspace timezone'),
+      },
       select: workspaceSelect,
     });
     await this.audit.record({
@@ -190,6 +199,7 @@ const workspaceSelect = {
   agencyId: true,
   name: true,
   slug: true,
+  timezone: true,
   status: true,
   storageUsedBytes: true,
   storageLimitBytes: true,

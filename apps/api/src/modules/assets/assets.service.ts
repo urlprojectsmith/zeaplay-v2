@@ -10,7 +10,13 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { AssetStatus, Prisma, ProcessingJobStatus, ProjectStatus } from '@prisma/client';
+import {
+  AssetStatus,
+  AttachmentType,
+  Prisma,
+  ProcessingJobStatus,
+  ProjectStatus,
+} from '@prisma/client';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
@@ -79,7 +85,7 @@ export class AssetsService {
         where: { id: tenant.workspaceId },
         data: { storageUsedBytes: { increment: sizeBytes } },
       });
-      return tx.asset.create({
+      const asset = await tx.asset.create({
         data: {
           id: assetId,
           workspaceId: tenant.workspaceId,
@@ -98,6 +104,25 @@ export class AssetsService {
         },
         select: assetSelect,
       });
+      await tx.attachment.create({
+        data: {
+          id: asset.id,
+          workspaceId: tenant.workspaceId,
+          type: AttachmentType.FILE,
+          assetId: asset.id,
+          displayName: asset.displayName,
+          createdById: tenant.userId,
+        },
+      });
+      await tx.projectAttachment.create({
+        data: {
+          workspaceId: tenant.workspaceId,
+          projectId,
+          attachmentId: asset.id,
+          attachedById: tenant.userId,
+        },
+      });
+      return asset;
     });
 
     const uploadUrl = await this.storage.createPresignedUploadUrl(
@@ -146,9 +171,8 @@ export class AssetsService {
 
     const updated = await this.prisma.asset.update({
       where: {
-        id_projectId_workspaceId: {
+        id_workspaceId: {
           id: assetId,
-          projectId,
           workspaceId: tenant.workspaceId,
         },
       },
@@ -179,26 +203,44 @@ export class AssetsService {
 
   async list(tenant: WorkspaceTenantContext, projectId: string, query: AssetQueryDto) {
     await this.assertProject(tenant.workspaceId, projectId);
-    const where: Prisma.AssetWhereInput = {
+    const assetWhere: Prisma.AssetWhereInput = {
       workspaceId: tenant.workspaceId,
-      projectId,
       deletedAt: null,
       ...(query.status ? { status: query.status } : {}),
       ...(query.search
         ? { displayName: { contains: query.search.trim(), mode: Prisma.QueryMode.insensitive } }
         : {}),
     };
+    const where: Prisma.ProjectAttachmentWhereInput = {
+      workspaceId: tenant.workspaceId,
+      projectId,
+      removedAt: null,
+      attachment: { deletedAt: null, asset: assetWhere },
+    };
     const [items, total] = await this.prisma.$transaction([
-      this.prisma.asset.findMany({
+      this.prisma.projectAttachment.findMany({
         where,
-        select: assetSelect,
-        orderBy: { [query.sortBy === 'name' ? 'displayName' : query.sortBy]: query.sortDirection },
+        select: { attachment: { select: { asset: { select: assetSelect } } } },
+        orderBy: {
+          attachment: {
+            asset: {
+              [query.sortBy === 'name' ? 'displayName' : query.sortBy]: query.sortDirection,
+            },
+          },
+        },
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
-      this.prisma.asset.count({ where }),
+      this.prisma.projectAttachment.count({ where }),
     ]);
-    return { items: items.map(serializeAsset), page: query.page, pageSize: query.pageSize, total };
+    return {
+      items: items.flatMap((item) =>
+        item.attachment.asset ? [serializeAsset(item.attachment.asset)] : [],
+      ),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+    };
   }
 
   async get(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
@@ -230,25 +272,22 @@ export class AssetsService {
 
   async remove(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
     await this.assertProject(tenant.workspaceId, projectId);
-    const asset = await this.findAsset(tenant.workspaceId, projectId, assetId);
-    if (asset.status === AssetStatus.DELETED) return serializeAsset(asset);
+    await this.findAsset(tenant.workspaceId, projectId, assetId);
     const now = new Date();
     const updated = await this.prisma.$transaction(async (tx) => {
-      const changed = await tx.asset.updateMany({
-        where: { id: assetId, projectId, workspaceId: tenant.workspaceId, deletedAt: null },
-        data: { status: AssetStatus.DELETED, deletedAt: now },
+      await tx.projectAttachment.updateMany({
+        where: {
+          projectId,
+          attachmentId: assetId,
+          workspaceId: tenant.workspaceId,
+          removedAt: null,
+        },
+        data: { removedAt: now },
       });
-      if (changed.count === 1) {
-        await tx.workspace.update({
-          where: { id: tenant.workspaceId },
-          data: { storageUsedBytes: { decrement: asset.sizeBytes } },
-        });
-      }
       return tx.asset.findUniqueOrThrow({
         where: {
-          id_projectId_workspaceId: {
+          id_workspaceId: {
             id: assetId,
-            projectId,
             workspaceId: tenant.workspaceId,
           },
         },
@@ -276,10 +315,17 @@ export class AssetsService {
   }
 
   private async findAsset(workspaceId: string, projectId: string, assetId: string) {
-    const asset = await this.prisma.asset.findFirst({
-      where: { id: assetId, workspaceId, projectId },
-      select: assetSelect,
+    const link = await this.prisma.projectAttachment.findFirst({
+      where: {
+        workspaceId,
+        projectId,
+        attachmentId: assetId,
+        removedAt: null,
+        attachment: { deletedAt: null, asset: { deletedAt: null } },
+      },
+      select: { attachment: { select: { asset: { select: assetSelect } } } },
     });
+    const asset = link?.attachment.asset;
     if (!asset || asset.status === AssetStatus.DELETED)
       throw new NotFoundException('Asset not found.');
     return asset;

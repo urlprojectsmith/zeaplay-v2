@@ -1,14 +1,21 @@
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
+  AssetStatus,
+  AttachmentType,
   DepartmentStatus,
   MembershipStatus,
   PrismaClient,
+  Prisma,
   ProjectStatus,
   RoleScope,
   StatusCategory,
+  TaskCompletionApproverMode,
+  TaskCompletionProofRequirementMode,
+  TaskCompletionProofType,
   TaskCommentReactionType,
   TaskCommentVisibility,
+  WorkspaceTagStatus,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
@@ -49,7 +56,7 @@ const passwords = new PasswordService();
 const password = 'DevelopmentPassword123!';
 const accessSecret = 'test-access-secret-at-least-32-characters';
 
-jest.setTimeout(30_000);
+jest.setTimeout(90_000);
 
 describe('Phase 7.1 task core backend integration', () => {
   let app: INestApplication;
@@ -64,6 +71,12 @@ describe('Phase 7.1 task core backend integration', () => {
   let viewerToken: string;
   let commentViewerToken: string;
   let commentCreateToken: string;
+  let tagViewerToken: string;
+  let tagCreateToken: string;
+  let tagUpdateToken: string;
+  let tagArchiveToken: string;
+  let tagAssignToken: string;
+  let tagAssignOnlyToken: string;
   let createOnlyToken: string;
   let updateOnlyToken: string;
   let assignOnlyToken: string;
@@ -115,6 +128,12 @@ describe('Phase 7.1 task core backend integration', () => {
     viewerToken = await accessTokenFor('viewer-a@zeaplay.test');
     commentViewerToken = await accessTokenFor('comment-viewer-a@zeaplay.test');
     commentCreateToken = await accessTokenFor('comment-create-a@zeaplay.test');
+    tagViewerToken = await accessTokenFor('tag-viewer-a@zeaplay.test');
+    tagCreateToken = await accessTokenFor('tag-create-a@zeaplay.test');
+    tagUpdateToken = await accessTokenFor('tag-update-a@zeaplay.test');
+    tagArchiveToken = await accessTokenFor('tag-archive-a@zeaplay.test');
+    tagAssignToken = await accessTokenFor('tag-assign-a@zeaplay.test');
+    tagAssignOnlyToken = await accessTokenFor('tag-assign-only-a@zeaplay.test');
     createOnlyToken = await accessTokenFor('task-create-a@zeaplay.test');
     updateOnlyToken = await accessTokenFor('task-update-a@zeaplay.test');
     assignOnlyToken = await accessTokenFor('task-assign-a@zeaplay.test');
@@ -705,6 +724,345 @@ describe('Phase 7.1 task core backend integration', () => {
     await expect(
       prisma.task.findUniqueOrThrow({ where: { id: first.body.data.id } }),
     ).resolves.toMatchObject({ priority: 'HIGH' });
+  });
+
+  it('supports Kanban columns, ranking, WIP settings, transition rules, and tenant fences', async () => {
+    const first = await createTask({ title: 'Kanban first' }).expect(201);
+    const second = await createTask({ title: 'Kanban second' }).expect(201);
+    const third = await createTask({ title: 'Kanban third' }).expect(201);
+    expect(third.body.data.kanbanRank).toBeTruthy();
+
+    const settings = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/kanban/settings`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(
+      settings.body.data.columns.map((column: { status: { id: string } }) => column.status.id),
+    ).toEqual(
+      expect.arrayContaining([taskDefaultStatusId, taskReviewStatusId, taskCompletedStatusId]),
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/kanban/columns/${taskReviewStatusId}`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ wipLimit: 1 })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/kanban/columns/${taskReviewStatusId}`)
+      .set(auth(manageOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ wipLimit: 1 })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${third.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId, beforeTaskId: first.body.data.id })
+      .expect(200);
+    const defaultColumn = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks?statusDefinitionId=${taskDefaultStatusId}&sortBy=kanbanRank&sortDirection=asc&pageSize=25`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    const defaultColumnIds = defaultColumn.body.data.items.map((task: { id: string }) => task.id);
+    expect(defaultColumnIds).toContain(third.body.data.id);
+    expect(defaultColumnIds).toContain(first.body.data.id);
+    expect(defaultColumnIds.indexOf(third.body.data.id)).toBeLessThan(
+      defaultColumnIds.indexOf(first.body.data.id),
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${third.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskReviewStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${second.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskReviewStatusId })
+      .expect(200);
+    const reviewColumn = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks?statusDefinitionId=${taskReviewStatusId}&sortBy=kanbanRank&sortDirection=asc&pageSize=10`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(reviewColumn.body.data.total).toBeGreaterThanOrEqual(2);
+
+    const auditCount = await prisma.auditLog.count({
+      where: {
+        workspaceId: workspaceA1,
+        action: 'task.kanban_moved',
+        entityId: third.body.data.id,
+      },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${third.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskReviewStatusId })
+      .expect(200);
+    await expect(
+      prisma.auditLog.count({
+        where: {
+          workspaceId: workspaceA1,
+          action: 'task.kanban_moved',
+          entityId: third.body.data.id,
+        },
+      }),
+    ).resolves.toBe(auditCount);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${first.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: inactiveTaskStatusId })
+      .expect(409);
+
+    const foreign = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Foreign Kanban task',
+    }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${foreign.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskReviewStatusId })
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA2}/tasks/${foreign.body.data.id}/kanban-position`)
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ statusDefinitionId: taskReviewStatusId })
+      .expect(409);
+
+    const parent = await createTask({ title: 'Kanban blocked parent' }).expect(201);
+    await createSubtask(parent.body.data.id, { title: 'Kanban active child' }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+  });
+
+  it('keeps Kanban Decimal ordering stable across tight gaps, null ranks, and paginated columns', async () => {
+    const a = await createTask({ title: 'Kanban rank A' }).expect(201);
+    const b = await createTask({ title: 'Kanban rank B' }).expect(201);
+    const c = await createTask({ title: 'Kanban rank C' }).expect(201);
+    const untouchedReview = await createTask({
+      title: 'Kanban rank review untouched',
+      statusDefinitionId: taskReviewStatusId,
+    }).expect(201);
+    const untouchedReviewRank = await prisma.task.findUniqueOrThrow({
+      where: { id: untouchedReview.body.data.id },
+      select: { kanbanRank: true },
+    });
+
+    await prisma.task.update({
+      where: { id: a.body.data.id },
+      data: { kanbanRank: new Prisma.Decimal('1.000000000001') },
+    });
+    await prisma.task.update({
+      where: { id: b.body.data.id },
+      data: { kanbanRank: new Prisma.Decimal('1.000000000002') },
+    });
+    await prisma.task.update({
+      where: { id: c.body.data.id },
+      data: { kanbanRank: null },
+    });
+
+    const nullRankPage = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks?statusDefinitionId=${taskDefaultStatusId}&sortBy=kanbanRank&sortDirection=asc&pageSize=25`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    const nullRankIds = nullRankPage.body.data.items.map((task: { id: string }) => task.id);
+    expect(nullRankIds.indexOf(c.body.data.id)).toBeGreaterThan(
+      nullRankIds.indexOf(b.body.data.id),
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${c.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId, beforeTaskId: b.body.data.id })
+      .expect(200);
+
+    const reordered = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks?statusDefinitionId=${taskDefaultStatusId}&sortBy=kanbanRank&sortDirection=asc&pageSize=2`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(reordered.body.data.total).toBeGreaterThanOrEqual(3);
+    expect(reordered.body.data.items.map((task: { id: string }) => task.id)).toEqual([
+      a.body.data.id,
+      c.body.data.id,
+    ]);
+
+    const fullColumn = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks?statusDefinitionId=${taskDefaultStatusId}&sortBy=kanbanRank&sortDirection=asc&pageSize=25`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    const fullColumnIds = fullColumn.body.data.items.map((task: { id: string }) => task.id);
+    expect(fullColumnIds.indexOf(a.body.data.id)).toBeLessThan(
+      fullColumnIds.indexOf(c.body.data.id),
+    );
+    expect(fullColumnIds.indexOf(c.body.data.id)).toBeLessThan(
+      fullColumnIds.indexOf(b.body.data.id),
+    );
+    await expect(
+      prisma.task.findUniqueOrThrow({
+        where: { id: untouchedReview.body.data.id },
+        select: { kanbanRank: true },
+      }),
+    ).resolves.toEqual(untouchedReviewRank);
+  });
+
+  it('keeps Kanban WIP warning-only and assigns ranks from non-Kanban status changes', async () => {
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/kanban/columns/${taskReviewStatusId}`)
+      .set(auth(manageOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ wipLimit: 2 })
+      .expect(200);
+
+    const first = await createTask({ title: 'Kanban WIP one' }).expect(201);
+    const second = await createTask({ title: 'Kanban WIP two' }).expect(201);
+    const third = await createTask({ title: 'Kanban WIP three' }).expect(201);
+    for (const task of [first, second, third]) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/kanban-position`)
+        .set(auth(updateOnlyToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskReviewStatusId })
+        .expect(200);
+    }
+
+    const overLimit = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks?statusDefinitionId=${taskReviewStatusId}&sortBy=kanbanRank&sortDirection=asc&pageSize=25`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    const overLimitIds = overLimit.body.data.items.map((task: { id: string }) => task.id);
+    expect(overLimit.body.data.total).toBeGreaterThan(2);
+    expect(overLimitIds).toEqual(
+      expect.arrayContaining([first.body.data.id, second.body.data.id, third.body.data.id]),
+    );
+
+    const bulkOne = await createTask({ title: 'Kanban bulk one' }).expect(201);
+    const bulkTwo = await createTask({ title: 'Kanban bulk two' }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        taskIds: [bulkOne.body.data.id, bulkTwo.body.data.id],
+        statusDefinitionId: taskCompletedStatusId,
+      })
+      .expect(200);
+    await expect(
+      prisma.task.findMany({
+        where: { id: { in: [bulkOne.body.data.id, bulkTwo.body.data.id] } },
+        select: { statusDefinitionId: true, kanbanRank: true },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          statusDefinitionId: taskCompletedStatusId,
+          kanbanRank: expect.anything(),
+        }),
+        expect.objectContaining({
+          statusDefinitionId: taskCompletedStatusId,
+          kanbanRank: expect.anything(),
+        }),
+      ]),
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${bulkOne.body.data.id}/status`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId })
+      .expect(200);
+    await expect(
+      prisma.task.findUniqueOrThrow({
+        where: { id: bulkOne.body.data.id },
+        select: { statusDefinitionId: true, kanbanRank: true },
+      }),
+    ).resolves.toMatchObject({
+      statusDefinitionId: taskDefaultStatusId,
+      kanbanRank: expect.anything(),
+    });
+  });
+
+  it('rejects stale Kanban anchors and preserves task state on transition rejection', async () => {
+    const moving = await createTask({ title: 'Kanban anchor moving' }).expect(201);
+    const sameColumnAnchor = await createTask({ title: 'Kanban anchor wrong column' }).expect(201);
+    const deletedAnchor = await createTask({ title: 'Kanban anchor deleted' }).expect(201);
+    const foreignAnchor = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Kanban foreign anchor',
+    }).expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tasks/${deletedAnchor.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${moving.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskReviewStatusId, beforeTaskId: sameColumnAnchor.body.data.id })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${moving.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId, beforeTaskId: deletedAnchor.body.data.id })
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${moving.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskDefaultStatusId, beforeTaskId: foreignAnchor.body.data.id })
+      .expect(404);
+
+    const parent = await createTask({ title: 'Kanban rollback parent' }).expect(201);
+    await createSubtask(parent.body.data.id, { title: 'Kanban rollback child' }).expect(201);
+    const before = await prisma.task.findUniqueOrThrow({
+      where: { id: parent.body.data.id },
+      select: { statusDefinitionId: true, kanbanRank: true },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${parent.body.data.id}/kanban-position`)
+      .set(auth(updateOnlyToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    await expect(
+      prisma.task.findUniqueOrThrow({
+        where: { id: parent.body.data.id },
+        select: { statusDefinitionId: true, kanbanRank: true },
+      }),
+    ).resolves.toEqual(before);
   });
 
   it('bulk adds and removes assignees idempotently with active membership and permission checks', async () => {
@@ -2837,6 +3195,690 @@ describe('Phase 7.1 task core backend integration', () => {
     ).resolves.toBeGreaterThanOrEqual(5);
   });
 
+  it('manages workspace tag catalog with normalization, color validation, lifecycle, RBAC, and audit', async () => {
+    const bug = await createTag({ name: ' Bug ', color: '#2563eb' }).expect(201);
+    expect(bug.body.data).toMatchObject({
+      name: 'Bug',
+      color: '#2563EB',
+      status: WorkspaceTagStatus.ACTIVE,
+    });
+
+    await createTag({ name: 'bug' }).expect(409);
+    await createTag({ name: 'BUG' }).expect(409);
+    await createTag({ name: ' bug ' }).expect(409);
+    await createTag({ name: 'Bug', color: 'url(javascript:alert(1))' }).expect(422);
+    await createTag({ name: 'Bug', color: '#12345G' }).expect(422);
+    await createTag({ name: 'Bug', color: '#123456' }, ownerAToken, workspaceA2, agencyA).expect(
+      201,
+    );
+
+    const concurrent = await Promise.all([
+      createTag({ name: 'Concurrent Tag' }),
+      createTag({ name: ' concurrent tag ' }),
+    ]);
+    expect(concurrent.filter((response) => response.status === 201)).toHaveLength(1);
+    expect(concurrent.filter((response) => response.status === 409)).toHaveLength(1);
+    await expect(
+      prisma.workspaceTag.count({
+        where: { workspaceId: workspaceA1, nameNormalized: 'concurrent tag' },
+      }),
+    ).resolves.toBe(1);
+
+    await listTags(tagViewerToken, '?search=bu&page=1&pageSize=5&status=ACTIVE')
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBeGreaterThanOrEqual(1);
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).toContain(
+          bug.body.data.id,
+        );
+      });
+
+    await updateTag(bug.body.data.id, { name: 'Product Bug', color: '#16a34a' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({ name: 'Product Bug', color: '#16A34A' });
+      });
+    const noOpAuditCount = await prisma.auditLog.count({
+      where: { action: 'tag.updated', entityId: bug.body.data.id },
+    });
+    await updateTag(bug.body.data.id, { name: 'Product Bug', color: '#16A34A' }).expect(200);
+    await expect(
+      prisma.auditLog.count({ where: { action: 'tag.updated', entityId: bug.body.data.id } }),
+    ).resolves.toBe(noOpAuditCount);
+
+    await archiveTag(bug.body.data.id, tagArchiveToken)
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data.status).toBe(WorkspaceTagStatus.ARCHIVED);
+      });
+    const archivedAuditCount = await prisma.auditLog.count({
+      where: { action: 'tag.archived', entityId: bug.body.data.id },
+    });
+    await archiveTag(bug.body.data.id, tagArchiveToken).expect(201);
+    await expect(
+      prisma.auditLog.count({ where: { action: 'tag.archived', entityId: bug.body.data.id } }),
+    ).resolves.toBe(archivedAuditCount);
+    await reactivateTag(bug.body.data.id, tagArchiveToken)
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data.status).toBe(WorkspaceTagStatus.ACTIVE);
+      });
+
+    await createTag({ name: 'Create without permission' }, tagViewerToken).expect(403);
+    await updateTag(bug.body.data.id, { name: 'No update permission' }, tagCreateToken).expect(403);
+    await archiveTag(bug.body.data.id, tagUpdateToken).expect(403);
+    await listTags(tagCreateToken).expect(403);
+  });
+
+  it('adds, removes, preserves archived task tags, filters tasks by tag, and blocks tenant attacks', async () => {
+    const task = await createTask({ title: 'Tagged task primary' }).expect(201);
+    const otherTask = await createTask({ title: 'Tagged task secondary' }).expect(201);
+    const bug = await createTag({ name: 'Task Bug', color: '#DC2626' }).expect(201);
+    const urgent = await createTag({ name: 'Urgent Review', color: '#D97706' }).expect(201);
+    const foreign = await createTag(
+      { name: 'Foreign Tag' },
+      ownerAToken,
+      workspaceA2,
+      agencyA,
+    ).expect(201);
+    const beta = await createTag({ name: 'Beta Tag' }, ownerBToken, workspaceB1, agencyB).expect(
+      201,
+    );
+
+    await addTaskTags(task.body.data.id, [bug.body.data.id], tagAssignToken)
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 1,
+          unchangedCount: 0,
+        });
+      });
+    await addTaskTags(task.body.data.id, [bug.body.data.id, urgent.body.data.id], tagAssignToken)
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          requestedCount: 2,
+          changedCount: 1,
+          unchangedCount: 1,
+        });
+      });
+    await addTaskTags(
+      task.body.data.id,
+      [bug.body.data.id, bug.body.data.id],
+      tagAssignToken,
+    ).expect(422);
+    await addTaskTags(task.body.data.id, [foreign.body.data.id], tagAssignToken).expect(404);
+    await addTaskTags(task.body.data.id, [beta.body.data.id], tagAssignToken).expect(404);
+    await addTaskTags(
+      task.body.data.id,
+      [urgent.body.data.id, foreign.body.data.id],
+      tagAssignToken,
+    ).expect(404);
+    await expect(
+      prisma.taskTag.findUnique({
+        where: { taskId_tagId: { taskId: task.body.data.id, tagId: urgent.body.data.id } },
+      }),
+    ).resolves.not.toBeNull();
+    await addTaskTags(task.body.data.id, [bug.body.data.id], tagViewerToken).expect(403);
+    await addTaskTags(task.body.data.id, [urgent.body.data.id], updateOnlyToken).expect(403);
+    await addTaskTags(task.body.data.id, [urgent.body.data.id], tagAssignOnlyToken).expect(403);
+
+    await listTaskTags(task.body.data.id, viewerToken).expect(200);
+    await listTaskTags(task.body.data.id, tagViewerToken).expect(403);
+    await listTaskTags(task.body.data.id)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.map((tag: { id: string }) => tag.id).sort()).toEqual(
+          [bug.body.data.id, urgent.body.data.id].sort(),
+        );
+      });
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?tagId=${bug.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).toContain(
+          task.body.data.id,
+        );
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).not.toContain(
+          otherTask.body.data.id,
+        );
+      });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?tagId=${foreign.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+
+    await archiveTag(bug.body.data.id).expect(201);
+    await addTaskTags(otherTask.body.data.id, [bug.body.data.id], tagAssignToken).expect(400);
+    await addTaskTags(
+      otherTask.body.data.id,
+      [urgent.body.data.id, bug.body.data.id],
+      tagAssignToken,
+    ).expect(400);
+    await expect(
+      prisma.taskTag.findUnique({
+        where: { taskId_tagId: { taskId: otherTask.body.data.id, tagId: urgent.body.data.id } },
+      }),
+    ).resolves.toBeNull();
+    await listTaskTags(task.body.data.id)
+      .expect(200)
+      .expect((response) => {
+        const archived = response.body.data.find(
+          (tag: { id: string }) => tag.id === bug.body.data.id,
+        );
+        expect(archived.status).toBe(WorkspaceTagStatus.ARCHIVED);
+      });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?tagId=${bug.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(1));
+
+    await removeTaskTags(
+      task.body.data.id,
+      [bug.body.data.id, foreign.body.data.id],
+      tagAssignToken,
+    ).expect(404);
+    await removeTaskTags(task.body.data.id, [bug.body.data.id], tagAssignToken)
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 1,
+          unchangedCount: 0,
+        });
+      });
+    await removeTaskTags(task.body.data.id, [bug.body.data.id], tagAssignToken)
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 0,
+          unchangedCount: 1,
+        });
+      });
+
+    await reactivateTag(bug.body.data.id).expect(201);
+    await addTaskTags(otherTask.body.data.id, [bug.body.data.id], tagAssignToken).expect(201);
+  });
+
+  it('hardens task tag database fences, rename conflicts, color contract, and concurrency', async () => {
+    const task = await createTask({ title: 'Tag hardening task' }).expect(201);
+    const foreignTask = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Foreign tag hardening task',
+    }).expect(201);
+    const bug = await createTag({ name: 'Hardening Bug', color: '#ff0000' }).expect(201);
+    const review = await createTag({ name: 'Hardening Review' }).expect(201);
+    const foreign = await createTag(
+      { name: 'Hardening Foreign' },
+      ownerAToken,
+      workspaceA2,
+      agencyA,
+    ).expect(201);
+
+    expect(bug.body.data).toMatchObject({ name: 'Hardening Bug', color: '#FF0000' });
+    for (const color of [
+      '#FFF',
+      'rgb(255, 0, 0)',
+      'rgba(255, 0, 0, 1)',
+      'url(javascript:alert(1))',
+      'var(--red)',
+      'javascript:',
+      '<b>#FF0000</b>',
+      '#12345678',
+      '',
+    ]) {
+      await createTag({ name: `Bad color ${color || 'blank'}`, color }).expect(422);
+    }
+
+    await updateTag(review.body.data.id, { name: ' hardening bug ' }).expect(409);
+    await expect(
+      prisma.workspaceTag.findUniqueOrThrow({ where: { id: review.body.data.id } }),
+    ).resolves.toMatchObject({ name: 'Hardening Review' });
+
+    const swap = await Promise.all([
+      updateTag(bug.body.data.id, { name: 'Hardening Review' }),
+      updateTag(review.body.data.id, { name: 'Hardening Bug' }),
+    ]);
+    expect(swap.every((response) => [200, 409].includes(response.status))).toBe(true);
+    await expect(
+      prisma.workspaceTag.count({
+        where: { workspaceId: workspaceA1, nameNormalized: 'hardening bug' },
+      }),
+    ).resolves.toBeLessThanOrEqual(1);
+    await expect(
+      prisma.workspaceTag.count({
+        where: { workspaceId: workspaceA1, nameNormalized: 'hardening review' },
+      }),
+    ).resolves.toBeLessThanOrEqual(1);
+
+    const createdBy = await prisma.user.findUniqueOrThrow({
+      where: { email: 'admin-a@zeaplay.test' },
+      select: { id: true },
+    });
+    await expect(
+      prisma.taskTag.create({
+        data: {
+          workspaceId: workspaceA1,
+          taskId: task.body.data.id,
+          tagId: foreign.body.data.id,
+          createdById: createdBy.id,
+        },
+      }),
+    ).rejects.toBeTruthy();
+    await expect(
+      prisma.taskTag.create({
+        data: {
+          workspaceId: workspaceA1,
+          taskId: foreignTask.body.data.id,
+          tagId: bug.body.data.id,
+          createdById: createdBy.id,
+        },
+      }),
+    ).rejects.toBeTruthy();
+
+    await addTaskTags(task.body.data.id, [review.body.data.id], tagAssignToken).expect(201);
+    const duplicateAdd = await Promise.all([
+      addTaskTags(task.body.data.id, [bug.body.data.id], tagAssignToken),
+      addTaskTags(task.body.data.id, [bug.body.data.id], tagAssignToken),
+    ]);
+    expect(duplicateAdd.every((response) => [201, 409].includes(response.status))).toBe(true);
+    await expect(
+      prisma.taskTag.count({
+        where: { workspaceId: workspaceA1, taskId: task.body.data.id, tagId: bug.body.data.id },
+      }),
+    ).resolves.toBe(1);
+
+    await removeTaskTags(
+      task.body.data.id,
+      [review.body.data.id, foreign.body.data.id],
+      tagAssignToken,
+    ).expect(404);
+    await expect(
+      prisma.taskTag.findUnique({
+        where: { taskId_tagId: { taskId: task.body.data.id, tagId: review.body.data.id } },
+      }),
+    ).resolves.not.toBeNull();
+
+    const raceTag = await createTag({ name: 'Archive Assign Race' }).expect(201);
+    const raceTask = await createTask({ title: 'Archive assign race task' }).expect(201);
+    const race = await Promise.all([
+      archiveTag(raceTag.body.data.id),
+      addTaskTags(raceTask.body.data.id, [raceTag.body.data.id], tagAssignToken),
+    ]);
+    expect(race.every((response) => [201, 400, 409].includes(response.status))).toBe(true);
+    await expect(
+      prisma.taskTag.count({
+        where: {
+          workspaceId: workspaceA1,
+          taskId: raceTask.body.data.id,
+          tagId: raceTag.body.data.id,
+        },
+      }),
+    ).resolves.toBeLessThanOrEqual(1);
+  });
+
+  it('audits changed tag actions without noisy no-op task tag audit rows', async () => {
+    const task = await createTask({ title: 'Tag audit task' }).expect(201);
+    const tag = await createTag({ name: 'Audit Tag' }).expect(201);
+
+    const addAuditCount = await prisma.auditLog.count({
+      where: { action: 'task.tags_added', entityId: task.body.data.id },
+    });
+    await addTaskTags(task.body.data.id, [tag.body.data.id]).expect(201);
+    await expect(
+      prisma.auditLog.count({ where: { action: 'task.tags_added', entityId: task.body.data.id } }),
+    ).resolves.toBe(addAuditCount + 1);
+    await addTaskTags(task.body.data.id, [tag.body.data.id]).expect(201);
+    await expect(
+      prisma.auditLog.count({ where: { action: 'task.tags_added', entityId: task.body.data.id } }),
+    ).resolves.toBe(addAuditCount + 1);
+
+    const removeAuditCount = await prisma.auditLog.count({
+      where: { action: 'task.tags_removed', entityId: task.body.data.id },
+    });
+    await removeTaskTags(task.body.data.id, [tag.body.data.id]).expect(201);
+    await expect(
+      prisma.auditLog.count({
+        where: { action: 'task.tags_removed', entityId: task.body.data.id },
+      }),
+    ).resolves.toBe(removeAuditCount + 1);
+    await removeTaskTags(task.body.data.id, [tag.body.data.id]).expect(201);
+    await expect(
+      prisma.auditLog.count({
+        where: { action: 'task.tags_removed', entityId: task.body.data.id },
+      }),
+    ).resolves.toBe(removeAuditCount + 1);
+  });
+
+  it('supports task URL attachments with explicit RBAC, soft unlink, and tenant fences', async () => {
+    const task = await createTask({ title: 'Attachment URL task' }).expect(201);
+    const foreignTask = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Foreign attachment task',
+    }).expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments/url`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ url: 'https://example.com/no-permission' })
+      .expect(403);
+
+    const created = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments/url`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ url: 'https://example.com/phase-7-4d', displayName: 'Phase 7.4D URL' })
+      .expect(201);
+    expect(created.body.data).toMatchObject({
+      taskId: task.body.data.id,
+      type: 'URL',
+      displayName: 'Phase 7.4D URL',
+      url: 'https://example.com/phase-7-4d',
+      file: null,
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments/url`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ url: 'javascript:alert(1)' })
+      .expect(422);
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(1);
+        expect(response.body.data.items[0].id).toBe(created.body.data.id);
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${foreignTask.body.data.id}/attachments/link`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ attachmentIds: [created.body.data.id] })
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .delete(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments/${created.body.data.id}`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.changed).toBe(true));
+    await expect(
+      prisma.attachment.findUnique({ where: { id: created.body.data.id } }),
+    ).resolves.not.toBeNull();
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/attachments/link`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ attachmentIds: [created.body.data.id] })
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 1,
+          unchangedCount: 0,
+        });
+      });
+  });
+
+  it('enforces attachment DB invariants, URL schemes, file reuse, quota, and download fences', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const primaryTask = await createTask({ title: 'Reusable attachment primary' }).expect(201);
+    const secondaryTask = await createTask({ title: 'Reusable attachment secondary' }).expect(201);
+    const unlinkedTask = await createTask({ title: 'Reusable attachment unlinked' }).expect(201);
+
+    const invalidFileWithoutAsset = randomUUID();
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "attachments" ("id", "workspace_id", "type", "display_name", "created_by_id", "updated_at")
+        VALUES (${invalidFileWithoutAsset}::uuid, ${workspaceA1}::uuid, 'FILE'::"AttachmentType", 'Invalid file', ${admin.id}::uuid, NOW())
+      `,
+    ).rejects.toThrow();
+    const invalidUrlWithAsset = randomUUID();
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "attachments" ("id", "workspace_id", "type", "asset_id", "url", "display_name", "created_by_id", "updated_at")
+        VALUES (${invalidUrlWithAsset}::uuid, ${workspaceA1}::uuid, 'URL'::"AttachmentType", ${invalidUrlWithAsset}::uuid, 'https://example.com', 'Invalid url', ${admin.id}::uuid, NOW())
+      `,
+    ).rejects.toThrow();
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/url`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ url: 'ftp://example.com/file' })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/url`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ url: 'data:text/plain,hello' })
+      .expect(422);
+
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/upload-init`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        filename: 'exact-boundary.txt',
+        displayName: 'Exact boundary',
+        mimeType: 'text/plain',
+        sizeBytes: 25 * 1024 * 1024,
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/upload-init`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        filename: 'too-large.txt',
+        displayName: 'Too large',
+        mimeType: 'text/plain',
+        sizeBytes: 25 * 1024 * 1024 + 1,
+      })
+      .expect(413);
+
+    const beforeQuota = await prisma.workspace.findUniqueOrThrow({
+      where: { id: workspaceA1 },
+      select: { storageUsedBytes: true },
+    });
+    const asset = await prisma.asset.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId: null,
+        createdById: admin.id,
+        originalFilename: 'reusable.txt',
+        displayName: 'Reusable File',
+        storageBucket: 'zea-play-dev',
+        storageKey: `test/${randomUUID()}/reusable.txt`,
+        mimeType: 'text/plain',
+        extension: 'txt',
+        sizeBytes: BigInt(128),
+        status: AssetStatus.READY,
+        uploadExpiresAt: new Date(Date.now() + 60_000),
+        metadata: { fixture: true },
+      },
+    });
+    const attachment = await prisma.attachment.create({
+      data: {
+        id: asset.id,
+        workspaceId: workspaceA1,
+        type: AttachmentType.FILE,
+        assetId: asset.id,
+        displayName: 'Reusable File',
+        createdById: admin.id,
+      },
+    });
+    const invalidFileWithUrl = randomUUID();
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "attachments" ("id", "workspace_id", "type", "asset_id", "url", "display_name", "created_by_id", "updated_at")
+        VALUES (${invalidFileWithUrl}::uuid, ${workspaceA1}::uuid, 'FILE'::"AttachmentType", ${asset.id}::uuid, 'https://example.com/file', 'Invalid file payload', ${admin.id}::uuid, NOW())
+      `,
+    ).rejects.toThrow();
+    const invalidUrlWithoutUrl = randomUUID();
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "attachments" ("id", "workspace_id", "type", "display_name", "created_by_id", "updated_at")
+        VALUES (${invalidUrlWithoutUrl}::uuid, ${workspaceA1}::uuid, 'URL'::"AttachmentType", 'Invalid url payload', ${admin.id}::uuid, NOW())
+      `,
+    ).rejects.toThrow();
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${secondaryTask.body.data.id}/attachments/${attachment.id}/upload-complete`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ sizeBytes: 128 })
+      .expect(404);
+    await prisma.projectAttachment.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId: activeProjectId,
+        attachmentId: attachment.id,
+        attachedById: admin.id,
+      },
+    });
+
+    await expect(
+      prisma.projectAttachment.findUnique({
+        where: {
+          projectId_attachmentId: { projectId: activeProjectId, attachmentId: attachment.id },
+        },
+      }),
+    ).resolves.not.toBeNull();
+    await expect(
+      prisma.asset.findUniqueOrThrow({
+        where: { id: asset.id },
+        select: { projectId: true },
+      }),
+    ).resolves.toMatchObject({ projectId: null });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/link`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ attachmentIds: [attachment.id] })
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(1));
+    const duplicateAuditCount = await prisma.auditLog.count({
+      where: { action: 'task.attachments_linked', entityId: primaryTask.body.data.id },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/link`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ attachmentIds: [attachment.id] })
+      .expect(201)
+      .expect((response) => expect(response.body.data.changedCount).toBe(0));
+    await expect(
+      prisma.auditLog.count({
+        where: { action: 'task.attachments_linked', entityId: primaryTask.body.data.id },
+      }),
+    ).resolves.toBe(duplicateAuditCount);
+
+    const concurrentLinks = await Promise.all([
+      request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${workspaceA1}/tasks/${secondaryTask.body.data.id}/attachments/link`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ attachmentIds: [attachment.id] }),
+      request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${workspaceA1}/tasks/${secondaryTask.body.data.id}/attachments/link`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ attachmentIds: [attachment.id] }),
+    ]);
+    expect(concurrentLinks.map((response) => response.status).sort()).toEqual([201, 201]);
+    expect(
+      concurrentLinks.reduce(
+        (total, response) => total + Number(response.body.data.changedCount),
+        0,
+      ),
+    ).toBe(1);
+    await expect(
+      prisma.taskAttachment.count({
+        where: { taskId: secondaryTask.body.data.id, attachmentId: attachment.id },
+      }),
+    ).resolves.toBe(1);
+
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/${attachment.id}/download`,
+      )
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${unlinkedTask.body.data.id}/attachments/${attachment.id}/download`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/${attachment.id}/download`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.downloadUrl).toEqual(expect.stringMatching(/^https?:\/\//));
+      });
+
+    await request(app.getHttpServer())
+      .delete(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/${attachment.id}`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${primaryTask.body.data.id}/attachments/${attachment.id}/download`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await expect(prisma.asset.findUnique({ where: { id: asset.id } })).resolves.not.toBeNull();
+    await expect(
+      prisma.workspace.findUniqueOrThrow({
+        where: { id: workspaceA1 },
+        select: { storageUsedBytes: true },
+      }),
+    ).resolves.toMatchObject({ storageUsedBytes: beforeQuota.storageUsedBytes });
+  });
+
   it('validates combined hierarchy and dependency bulk status transitions atomically', async () => {
     const p = await createTask({ title: 'Deep combined parent' }).expect(201);
     const a = await createSubtask(p.body.data.id, { title: 'Deep combined child' }).expect(201);
@@ -3117,12 +4159,823 @@ describe('Phase 7.1 task core backend integration', () => {
     });
   });
 
+  it('enforces global live timers, atomic switching, terminal auto-stop, and manual time on completed tasks', async () => {
+    const primary = await createTask({
+      title: 'Phase 7.8 timer primary',
+      assigneeMembershipIds: [adminMembershipId],
+    }).expect(201);
+    const secondary = await createTaskInWorkspace(workspaceA2, agencyA, ownerAToken, {
+      title: 'Phase 7.8 timer secondary',
+    }).expect(201);
+
+    const started = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${primary.body.data.id}/time/start`)
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({})
+      .expect(201);
+    expect(started.body.data).toMatchObject({
+      taskId: primary.body.data.id,
+      entryType: 'TIMER',
+      endedAt: null,
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA2}/tasks/${secondary.body.data.id}/time/start`)
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({})
+      .expect(409);
+
+    const switched = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA2}/tasks/${secondary.body.data.id}/time/start`)
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ replaceRunning: true })
+      .expect(201);
+    expect(switched.body.data.taskId).toBe(secondary.body.data.id);
+    await expect(
+      prisma.taskTimeEntry.findUniqueOrThrow({ where: { id: started.body.data.id } }),
+    ).resolves.toMatchObject({
+      endedAt: expect.any(Date),
+      stopReason: 'SWITCHED_TASK',
+    });
+    await expect(
+      prisma.taskTimeEntry.count({
+        where: { userId: switched.body.data.userId, endedAt: null, deletedAt: null },
+      }),
+    ).resolves.toBe(1);
+
+    const workspaceA2Completed = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA2, entityType: 'TASK', name: 'Completed' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA2}/tasks/${secondary.body.data.id}/status`)
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ statusDefinitionId: workspaceA2Completed.id })
+      .expect(200);
+    await expect(
+      prisma.taskTimeEntry.findUniqueOrThrow({ where: { id: switched.body.data.id } }),
+    ).resolves.toMatchObject({
+      endedAt: expect.any(Date),
+      stopReason: 'TASK_TERMINAL',
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA2}/tasks/${secondary.body.data.id}/time/start`)
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({})
+      .expect(409);
+
+    const completed = await createTask({ title: 'Phase 7.8 manual completed' }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${completed.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${completed.body.data.id}/time`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        startedAt: '2026-09-18T10:00:00.000Z',
+        endedAt: '2026-09-18T10:30:00.000Z',
+      })
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          taskId: completed.body.data.id,
+          entryType: 'MANUAL',
+          durationSeconds: 1800,
+        });
+      });
+  });
+
+  it('clips time-report totals across the full filtered dataset, independent of loaded page', async () => {
+    const task = await createTask({ title: 'Phase 7.8 report clipping' }).expect(201);
+    for (const [startedAt, endedAt] of [
+      ['2026-09-18T10:00:00.000Z', '2026-09-18T11:00:00.000Z'],
+      ['2026-09-18T10:20:00.000Z', '2026-09-18T10:50:00.000Z'],
+    ]) {
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/time`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ startedAt, endedAt })
+        .expect(201);
+    }
+
+    const report = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/time/report?taskId=${task.body.data.id}&from=2026-09-18T10:15:00.000Z&to=2026-09-18T10:45:00.000Z&page=1&pageSize=1`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(report.body.data.items).toHaveLength(1);
+    expect(report.body.data.total).toBe(2);
+    expect(report.body.data.summary.totalDurationSeconds).toBe(3300);
+  });
+
+  it('calculates workload from estimates, explicit allocations, automatic remainder, and member capacity', async () => {
+    const dueAt = '2026-09-22T12:00:00.000Z';
+    const split = await createTask({
+      title: 'Phase 7.8 workload split',
+      estimatedMinutes: 120,
+      dueAt,
+      assigneeMembershipIds: [adminMembershipId, memberMembershipId],
+    }).expect(201);
+    const custom = await createTask({
+      title: 'Phase 7.8 workload custom',
+      estimatedMinutes: 100,
+      dueAt,
+      assigneeMembershipIds: [adminMembershipId, memberMembershipId],
+    }).expect(201);
+    const unallocated = await createTask({
+      title: 'Phase 7.8 workload unallocated',
+      estimatedMinutes: 45,
+      dueAt,
+    }).expect(201);
+    await createTask({
+      title: 'Phase 7.8 workload unscheduled',
+      estimatedMinutes: 30,
+      assigneeMembershipIds: [adminMembershipId],
+    }).expect(201);
+    await createTask({
+      title: 'Phase 7.8 workload overdue',
+      estimatedMinutes: 15,
+      dueAt: '2026-09-15T12:00:00.000Z',
+      assigneeMembershipIds: [adminMembershipId],
+    }).expect(201);
+
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${custom.body.data.id}/workload-allocations`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ allocations: [{ workspaceMembershipId: adminMembershipId, plannedMinutes: 30 }] })
+      .expect(200);
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${custom.body.data.id}/workload-allocations`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ allocations: [{ workspaceMembershipId: adminMembershipId, plannedMinutes: 101 }] })
+      .expect(400);
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/workload/capacity/${adminMembershipId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ weeklyCapacityMinutes: 150 })
+      .expect(200);
+
+    const workload = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/workload?view=WEEK&date=2026-09-22T00:00:00.000Z&page=1&pageSize=100`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    const admin = workload.body.data.items.find(
+      (item: { membershipId: string }) => item.membershipId === adminMembershipId,
+    );
+    const member = workload.body.data.items.find(
+      (item: { membershipId: string }) => item.membershipId === memberMembershipId,
+    );
+    expect(admin).toMatchObject({
+      plannedMinutes: 90,
+      capacityMinutes: 150,
+      weeklyCapacityMinutes: 150,
+      state: 'BALANCED',
+    });
+    expect(member).toMatchObject({
+      plannedMinutes: 130,
+      capacityMinutes: 2400,
+      weeklyCapacityMinutes: 2400,
+      state: 'AVAILABLE',
+    });
+    expect(workload.body.data.summary).toMatchObject({
+      unallocatedMinutes: 45,
+      unscheduledMinutes: 30,
+      overdueMinutes: 15,
+    });
+    expect(workload.body.data.total).toBeGreaterThanOrEqual(2);
+
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA2}/tasks/workload?view=WEEK&date=2026-09-22T00:00:00.000Z`,
+      )
+      .set(auth(ownerAToken))
+      .set(ctx(agencyA, workspaceA2))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.summary.unallocatedMinutes).toBe(0);
+      });
+
+    await expect(
+      prisma.taskTimeEntry.count({
+        where: { taskId: { in: [split.body.data.id, unallocated.body.data.id] } },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it('uses the workspace timezone for workload and time report calendar boundaries', async () => {
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ timezone: 'UTC+05:30' })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ timezone: 'Asia/Kolkata' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.timezone).toBe('Asia/Kolkata');
+      });
+
+    try {
+      await createTask({
+        title: 'Phase 7.8 timezone workload local day',
+        estimatedMinutes: 60,
+        dueAt: '2032-03-09T19:00:00.000Z',
+        assigneeMembershipIds: [adminMembershipId],
+      }).expect(201);
+      await createTask({
+        title: 'Phase 7.8 timezone workload next local day',
+        estimatedMinutes: 45,
+        dueAt: '2032-03-10T18:45:00.000Z',
+        assigneeMembershipIds: [adminMembershipId],
+      }).expect(201);
+
+      const workload = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA1}/tasks/workload?view=DAY&date=2032-03-10`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      const admin = workload.body.data.items.find(
+        (item: { membershipId: string }) => item.membershipId === adminMembershipId,
+      );
+      expect(workload.body.data.window).toMatchObject({ timezone: 'Asia/Kolkata' });
+      expect(admin).toMatchObject({ plannedMinutes: 60 });
+
+      const task = await createTask({ title: 'Phase 7.8 timezone time report' }).expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/time`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          startedAt: '2024-04-30T18:00:00.000Z',
+          endedAt: '2024-04-30T19:00:00.000Z',
+        })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/time`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          startedAt: '2024-04-30T19:00:00.000Z',
+          endedAt: '2024-04-30T19:30:00.000Z',
+        })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/time`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          startedAt: '2024-05-01T18:45:00.000Z',
+          endedAt: '2024-05-01T19:15:00.000Z',
+        })
+        .expect(201);
+
+      const report = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/tasks/time/report?taskId=${task.body.data.id}&from=2024-05-01&to=2024-05-01&page=1&pageSize=1`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(report.body.data.total).toBe(2);
+      expect(report.body.data.summary).toMatchObject({
+        timezone: 'Asia/Kolkata',
+        totalDurationSeconds: 3600,
+      });
+    } finally {
+      await prisma.workspace.update({ where: { id: workspaceA1 }, data: { timezone: 'UTC' } });
+    }
+  });
+
+  it('defaults new recurrence schedules from workspace timezone without mutating existing series', async () => {
+    await prisma.workspace.update({
+      where: { id: workspaceA1 },
+      data: { timezone: 'Europe/Berlin' },
+    });
+    try {
+      const recurringAtCreate = await createTask({
+        title: 'Phase 7.8 recurrence create timezone',
+        recurrence: {
+          frequency: 'DAILY',
+          startLocalDate: '2032-06-01',
+          localTime: '09:00',
+          endMode: 'NEVER',
+        },
+      }).expect(201);
+      const first = await prisma.taskRecurrenceSeries.findUniqueOrThrow({
+        where: { id: recurringAtCreate.body.data.recurrenceSeriesId },
+      });
+      expect(first.timezone).toBe('Europe/Berlin');
+
+      await prisma.workspace.update({
+        where: { id: workspaceA1 },
+        data: { timezone: 'Asia/Tokyo' },
+      });
+      await expect(
+        prisma.taskRecurrenceSeries.findUniqueOrThrow({ where: { id: first.id } }),
+      ).resolves.toMatchObject({ timezone: 'Europe/Berlin' });
+
+      const task = await createTask({ title: 'Phase 7.8 recurrence make timezone' }).expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/${task.body.data.id}/recurrence`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          frequency: 'DAILY',
+          startLocalDate: '2032-06-02',
+          localTime: '10:00',
+          endMode: 'NEVER',
+        })
+        .expect(201);
+      const updatedTask = await prisma.task.findUniqueOrThrow({
+        where: { id: task.body.data.id },
+        select: { recurrenceSeriesId: true },
+      });
+      await expect(
+        prisma.taskRecurrenceSeries.findUniqueOrThrow({
+          where: { id: updatedTask.recurrenceSeriesId! },
+        }),
+      ).resolves.toMatchObject({ timezone: 'Asia/Tokyo' });
+    } finally {
+      await prisma.workspace.update({ where: { id: workspaceA1 }, data: { timezone: 'UTC' } });
+    }
+  });
+
+  it('serves Phase 7.9 task views with authoritative workspace time, scheduling, CSV, and tenant fences', async () => {
+    await prisma.workspace.update({
+      where: { id: workspaceA1 },
+      data: { timezone: 'America/New_York' },
+    });
+    try {
+      const plannedStartAt = '2026-03-07T15:00:00.000Z';
+      const dueAt = '2026-03-08T06:30:00.000Z';
+      await createTask({
+        title: 'Invalid planned interval',
+        plannedStartAt: '2026-03-09T00:00:00.000Z',
+        dueAt,
+      }).expect(400);
+
+      const scheduled = await createTask({
+        title: '=Phase 7.9 scheduled',
+        plannedStartAt,
+        dueAt,
+        priority: 'HIGH',
+        assigneeMembershipIds: [memberMembershipId],
+      }).expect(201);
+      expect(scheduled.body.data.plannedStartAt).toBe(plannedStartAt);
+
+      const dependent = await createTask({
+        title: 'Phase 7.9 dependent',
+        plannedStartAt: '2026-03-08T12:00:00.000Z',
+        dueAt: '2026-03-09T12:00:00.000Z',
+      }).expect(201);
+      await addBlockedBy(dependent.body.data.id, [scheduled.body.data.id]).expect(201);
+
+      const unscheduled = await createTask({
+        title: 'Phase 7.9 unscheduled',
+        dueAt: '2026-03-08T18:00:00.000Z',
+      }).expect(201);
+      await createTask({
+        title: 'Phase 7.9 calendar paged one',
+        dueAt: '2026-03-08T19:00:00.000Z',
+      }).expect(201);
+      await createTask({
+        title: 'Phase 7.9 calendar paged two',
+        dueAt: '2026-03-08T20:00:00.000Z',
+      }).expect(201);
+
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${dependent.body.data.id}/status`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskReviewStatusId })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${scheduled.body.data.id}/status`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskCompletedStatusId })
+        .expect(200);
+      await prisma.auditLog.create({
+        data: {
+          agencyId: agencyA,
+          workspaceId: workspaceA1,
+          action: 'task.completion_approved',
+          entityType: 'TaskCompletionSubmission',
+          entityId: randomUUID(),
+          metadata: { taskId: scheduled.body.data.id, completed: true },
+        },
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${unscheduled.body.data.id}/schedule`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          plannedStartAt: '2026-03-10T00:00:00.000Z',
+          dueAt: '2026-03-09T00:00:00.000Z',
+        })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA2}/tasks/${scheduled.body.data.id}/schedule`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA2))
+        .send({ plannedStartAt, dueAt })
+        .expect(404);
+
+      const calendar = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA1}/tasks/calendar?view=MONTH&date=2026-03-08`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(calendar.body.data.window.timezone).toBe('America/New_York');
+      const localDay = calendar.body.data.days.find(
+        (day: { date: string }) => day.date === '2026-03-08',
+      );
+      expect(localDay.total).toBeGreaterThanOrEqual(2);
+      expect(localDay.tasks).toHaveLength(0);
+
+      const weekDetail = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/tasks/calendar?view=WEEK&date=2026-03-08&page=1&pageSize=5`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      const scheduledCalendarTask = weekDetail.body.data.days
+        .flatMap((day: { tasks: Array<{ id: string; urgency: string }> }) => day.tasks)
+        .find((task: { id: string; urgency: string }) => task.id === scheduled.body.data.id);
+      expect(scheduledCalendarTask?.urgency).toBe('SAFE');
+
+      const dayPageOne = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/tasks/calendar?view=DAY&date=2026-03-08&page=1&pageSize=1`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      const dayPageTwo = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/tasks/calendar?view=DAY&date=2026-03-08&page=2&pageSize=1`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(dayPageOne.body.data.days).toHaveLength(1);
+      expect(dayPageOne.body.data.total).toBeGreaterThan(1);
+      expect(dayPageOne.body.data.days[0].tasks).toHaveLength(1);
+      expect(dayPageTwo.body.data.days[0].tasks).toHaveLength(1);
+      expect(dayPageTwo.body.data.days[0].tasks[0].id).not.toBe(
+        dayPageOne.body.data.days[0].tasks[0].id,
+      );
+
+      const gantt = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA1}/tasks/gantt?from=2026-03-07&to=2026-03-10`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(gantt.body.data.window.timezone).toBe('America/New_York');
+      expect(
+        gantt.body.data.items.some((item: { id: string }) => item.id === scheduled.body.data.id),
+      ).toBe(true);
+      expect(gantt.body.data.dependencies).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            blockerTaskId: scheduled.body.data.id,
+            blockedTaskId: dependent.body.data.id,
+          }),
+        ]),
+      );
+      expect(gantt.body.data.unscheduledCount).toBeGreaterThanOrEqual(1);
+
+      const report = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/tasks/reports/summary?from=2026-03-08&to=2026-03-08`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(report.body.data.timezone).toBe('America/New_York');
+      expect(report.body.data.kpis.totalTasks).toBeGreaterThanOrEqual(2);
+
+      const trend = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA1}/tasks/reports/summary?search=scheduled`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      const trendTotal = trend.body.data.completionTrend.reduce(
+        (sum: number, item: { count: number }) => sum + item.count,
+        0,
+      );
+      expect(trendTotal).toBe(1);
+
+      const csv = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA1}/tasks/reports/export?from=2026-03-08&to=2026-03-08`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(csv.body.data.csv).toContain("'=Phase 7.9 scheduled");
+
+      const activity = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/tasks/activity?action=task.created&page=1&pageSize=5`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(activity.body.data.items.length).toBeGreaterThan(0);
+
+      await prisma.auditLog.createMany({
+        data: Array.from({ length: 10_001 }, () => ({
+          agencyId: agencyA,
+          workspaceId: workspaceA1,
+          userId: scheduled.body.data.createdBy.id,
+          action: 'phase7.export_limit',
+          entityType: 'Task',
+          entityId: scheduled.body.data.id,
+          metadata: {},
+        })),
+      });
+      await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA1}/tasks/activity/export?action=phase7.export_limit`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(HttpStatus.PAYLOAD_TOO_LARGE)
+        .expect((response) => {
+          expect(response.body).toMatchObject({
+            code: 'TASK_EXPORT_TOO_LARGE',
+            message: 'TASK_EXPORT_TOO_LARGE',
+            details: { maxRows: 10_000 },
+          });
+        });
+    } finally {
+      await prisma.workspace.update({ where: { id: workspaceA1 }, data: { timezone: 'UTC' } });
+    }
+  });
+
+  it('returns structured completion-required errors and keeps bulk terminal changes atomic', async () => {
+    const task = await createTask({ title: 'Completion gate structured error' }).expect(201);
+    const taskId = task.body.data.id;
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-policy`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        proofRequirementMode: TaskCompletionProofRequirementMode.ANY,
+        approvalRequired: false,
+      })
+      .expect(200);
+
+    const direct = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    expect(direct.body).toMatchObject({
+      code: 'COMPLETION_FLOW_REQUIRED',
+      message: 'COMPLETION_FLOW_REQUIRED',
+      details: {
+        taskId,
+        requestedTerminalStatusDefinitionId: taskCompletedStatusId,
+        proofRequirementMode: TaskCompletionProofRequirementMode.ANY,
+        approvalRequired: false,
+      },
+    });
+
+    const bulkPeer = await createTask({ title: 'Bulk peer remains open' }).expect(201);
+    const bulk = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/bulk/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [taskId, bulkPeer.body.data.id], statusDefinitionId: taskCompletedStatusId })
+      .expect(409);
+    expect(bulk.body).toMatchObject({
+      code: 'COMPLETION_FLOW_REQUIRED',
+      details: { requestedTerminalStatusDefinitionId: taskCompletedStatusId },
+    });
+    expect(bulk.body.details.taskIds).toContain(taskId);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: bulkPeer.body.data.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: taskDefaultStatusId });
+  });
+
+  it('prevents duplicate pending completion submissions under concurrency', async () => {
+    const task = await createTask({ title: 'Completion double submit' }).expect(201);
+    const taskId = task.body.data.id;
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-policy`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        proofRequirementMode: TaskCompletionProofRequirementMode.ANY,
+        approvalRequired: true,
+        approverMode: TaskCompletionApproverMode.ANY_ONE,
+        explicitApproverMembershipIds: [adminMembershipId],
+      })
+      .expect(200);
+
+    const submit = () =>
+      request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-submissions?statusDefinitionId=${taskCompletedStatusId}`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ proofItems: [{ type: TaskCompletionProofType.TEXT, textValue: 'done' }] });
+    const responses = await Promise.all([submit(), submit()]);
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    await expect(
+      prisma.taskCompletionSubmission.count({
+        where: { workspaceId: workspaceA1, taskId, status: 'PENDING_APPROVAL' },
+      }),
+    ).resolves.toBe(1);
+    const stored = await prisma.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(stored.pendingCompletionSubmissionId).toBeTruthy();
+  });
+
+  it('rejects foreign statuses and invalid attachment proof candidates', async () => {
+    const task = await createTask({ title: 'Completion security proof' }).expect(201);
+    const taskId = task.body.data.id;
+    const foreignCompletedStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA2, entityType: 'TASK', name: 'Completed' },
+    });
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-submissions?statusDefinitionId=${foreignCompletedStatus.id}`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ proofItems: [{ type: TaskCompletionProofType.TEXT, textValue: 'done' }] })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-submissions?statusDefinitionId=${taskDefaultStatusId}`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ proofItems: [{ type: TaskCompletionProofType.TEXT, textValue: 'done' }] })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-policy`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        proofRequirementMode: TaskCompletionProofRequirementMode.SPECIFIC,
+        requiredProofTypes: [TaskCompletionProofType.ATTACHMENT],
+        approvalRequired: false,
+      })
+      .expect(200);
+    const admin = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { id_workspaceId: { id: adminMembershipId, workspaceId: workspaceA1 } },
+      select: { userId: true },
+    });
+    const foreign = await createRawAttachment(workspaceA2, admin.userId, AssetStatus.READY);
+    const pending = await createRawAttachment(workspaceA1, admin.userId, AssetStatus.PENDING);
+
+    for (const attachmentId of [foreign.attachmentId, pending.attachmentId]) {
+      await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-submissions?statusDefinitionId=${taskCompletedStatusId}`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ proofItems: [{ type: TaskCompletionProofType.ATTACHMENT, attachmentId }] })
+        .expect(404);
+    }
+    await expect(
+      prisma.taskCompletionSubmission.count({ where: { workspaceId: workspaceA1, taskId } }),
+    ).resolves.toBe(0);
+  });
+
+  it('snapshots completion policies to recurrence series blueprints by scope', async () => {
+    const task = await createTask({ title: 'Recurring completion blueprint' }).expect(201);
+    const taskId = task.body.data.id;
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/recurrence`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        frequency: 'DAILY',
+        interval: 1,
+        timezone: 'UTC',
+        startLocalDate: '2026-09-18',
+        localTime: '09:00',
+        endMode: 'NEVER',
+      })
+      .expect(201);
+    const recurring = await prisma.task.findUniqueOrThrow({ where: { id: taskId } });
+    expect(recurring.recurrenceSeriesId).toBeTruthy();
+
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-policy`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        proofRequirementMode: TaskCompletionProofRequirementMode.SPECIFIC,
+        requiredProofTypes: [TaskCompletionProofType.TEXT],
+        approvalRequired: true,
+        approverMode: TaskCompletionApproverMode.ALL_REQUIRED,
+        explicitApproverMembershipIds: [adminMembershipId],
+        recurrenceEditScope: 'THIS_AND_FUTURE',
+      })
+      .expect(200);
+    const series = await prisma.taskRecurrenceSeries.findUniqueOrThrow({
+      where: { id: recurring.recurrenceSeriesId! },
+      include: { completionApprovers: true },
+    });
+    expect(series).toMatchObject({
+      completionProofRequirementMode: TaskCompletionProofRequirementMode.SPECIFIC,
+      completionRequiredProofTypes: [TaskCompletionProofType.TEXT],
+      completionApprovalRequired: true,
+      completionApproverMode: TaskCompletionApproverMode.ALL_REQUIRED,
+    });
+    expect(series.completionApprovers.map((item) => item.membershipId)).toEqual([
+      adminMembershipId,
+    ]);
+
+    await request(app.getHttpServer())
+      .put(`/api/v1/workspaces/${workspaceA1}/tasks/${taskId}/completion-policy`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        proofRequirementMode: TaskCompletionProofRequirementMode.NONE,
+        approvalRequired: false,
+        recurrenceEditScope: 'THIS_OCCURRENCE',
+      })
+      .expect(200);
+    await expect(
+      prisma.taskRecurrenceSeries.findUniqueOrThrow({
+        where: { id: recurring.recurrenceSeriesId! },
+      }),
+    ).resolves.toMatchObject({
+      completionProofRequirementMode: TaskCompletionProofRequirementMode.SPECIFIC,
+      completionApprovalRequired: true,
+    });
+  });
+
   function createTask(body: Record<string, unknown>) {
     return request(app.getHttpServer())
       .post(`/api/v1/workspaces/${workspaceA1}/tasks`)
       .set(auth(adminToken))
       .set(ctx(agencyA, workspaceA1))
       .send(body);
+  }
+
+  async function createRawAttachment(
+    workspaceId: string,
+    createdById: string,
+    status: AssetStatus,
+  ) {
+    const asset = await prisma.asset.create({
+      data: {
+        workspaceId,
+        createdById,
+        originalFilename: `${randomUUID()}.txt`,
+        displayName: 'proof.txt',
+        storageBucket: 'zea-play-dev',
+        storageKey: `test/${workspaceId}/${randomUUID()}.txt`,
+        mimeType: 'text/plain',
+        extension: 'txt',
+        sizeBytes: 12,
+        status,
+        uploadExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    const attachment = await prisma.attachment.create({
+      data: {
+        workspaceId,
+        type: AttachmentType.FILE,
+        assetId: asset.id,
+        displayName: 'proof.txt',
+        createdById,
+      },
+    });
+    return { assetId: asset.id, attachmentId: attachment.id };
   }
 
   function createSubtask(
@@ -3287,6 +5140,104 @@ describe('Phase 7.1 task core backend integration', () => {
       .send({ reactionType });
   }
 
+  function createTag(
+    body: Record<string, unknown>,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tags`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send(body);
+  }
+
+  function listTags(token = adminToken, query = '', workspaceId = workspaceA1, agencyId = agencyA) {
+    return request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceId}/tags${query}`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function updateTag(
+    tagId: string,
+    body: Record<string, unknown>,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceId}/tags/${tagId}`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send(body);
+  }
+
+  function archiveTag(
+    tagId: string,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tags/${tagId}/archive`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function reactivateTag(
+    tagId: string,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tags/${tagId}/reactivate`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function listTaskTags(
+    taskId: string,
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/tags`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId));
+  }
+
+  function addTaskTags(
+    taskId: string,
+    tagIds: string[],
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/tags/add`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send({ tagIds });
+  }
+
+  function removeTaskTags(
+    taskId: string,
+    tagIds: string[],
+    token = adminToken,
+    workspaceId = workspaceA1,
+    agencyId = agencyA,
+  ) {
+    return request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceId}/tasks/${taskId}/tags/remove`)
+      .set(auth(token))
+      .set(ctx(agencyId, workspaceId))
+      .send({ tagIds });
+  }
+
   function createTaskInWorkspace(
     workspaceId: string,
     agencyId: string,
@@ -3401,6 +5352,7 @@ describe('Phase 7.1 task core backend integration', () => {
     const permissions = [
       'agency.read',
       'workspace.read',
+      'workspace.update',
       'tasks.view',
       'tasks.create',
       'tasks.update',
@@ -3413,6 +5365,25 @@ describe('Phase 7.1 task core backend integration', () => {
       'tasks.comments.delete_own',
       'tasks.comments.moderate',
       'tasks.comments.internal',
+      'tasks.attachments.view',
+      'tasks.attachments.add',
+      'tasks.attachments.remove',
+      'tasks.attachments.download',
+      'tasks.completion.view',
+      'tasks.completion.submit',
+      'tasks.completion.manage_policy',
+      'tasks.completion.approve',
+      'tasks.time.view_own',
+      'tasks.time.track',
+      'tasks.time.edit_own',
+      'tasks.time.delete_own',
+      'tasks.time.view_all',
+      'tasks.time.manage',
+      'tags.view',
+      'tags.create',
+      'tags.update',
+      'tags.archive',
+      'tags.assign',
     ];
     for (const key of permissions) await prisma.permission.create({ data: { key } });
     const roles: Record<string, { id: string }> = {};
@@ -3448,6 +5419,16 @@ describe('Phase 7.1 task core backend integration', () => {
         RoleScope.WORKSPACE,
         ['workspace.read', 'tasks.view', 'tasks.comments.view', 'tasks.comments.create'],
       ],
+      ['TAG_VIEWER', RoleScope.WORKSPACE, ['workspace.read', 'tags.view']],
+      ['TAG_CREATE', RoleScope.WORKSPACE, ['workspace.read', 'tags.create']],
+      ['TAG_UPDATE', RoleScope.WORKSPACE, ['workspace.read', 'tags.update']],
+      ['TAG_ARCHIVE', RoleScope.WORKSPACE, ['workspace.read', 'tags.archive']],
+      ['TAG_ASSIGN_ONLY', RoleScope.WORKSPACE, ['workspace.read', 'tags.assign']],
+      [
+        'TAG_ASSIGN',
+        RoleScope.WORKSPACE,
+        ['workspace.read', 'tasks.view', 'tasks.update', 'tags.assign'],
+      ],
     ] as const) {
       const role = await prisma.role.create({ data: { key, name: key, scope } });
       roles[key] = role;
@@ -3475,6 +5456,12 @@ describe('Phase 7.1 task core backend integration', () => {
       manageOnlyA,
       commentViewerA,
       commentCreateA,
+      tagViewerA,
+      tagCreateA,
+      tagUpdateA,
+      tagArchiveA,
+      tagAssignOnlyA,
+      tagAssignA,
       ownerB,
     ] = await Promise.all([
       user('owner-a@zeaplay.test', 'Owner A'),
@@ -3490,6 +5477,12 @@ describe('Phase 7.1 task core backend integration', () => {
       user('task-manage-a@zeaplay.test', 'Task Manage A'),
       user('comment-viewer-a@zeaplay.test', 'Comment Viewer A'),
       user('comment-create-a@zeaplay.test', 'Comment Create A'),
+      user('tag-viewer-a@zeaplay.test', 'Tag Viewer A'),
+      user('tag-create-a@zeaplay.test', 'Tag Create A'),
+      user('tag-update-a@zeaplay.test', 'Tag Update A'),
+      user('tag-archive-a@zeaplay.test', 'Tag Archive A'),
+      user('tag-assign-only-a@zeaplay.test', 'Tag Assign Only A'),
+      user('tag-assign-a@zeaplay.test', 'Tag Assign A'),
       user('owner-b@zeaplay.test', 'Owner B'),
     ]);
     const agency = await prisma.agency.create({
@@ -3543,6 +5536,12 @@ describe('Phase 7.1 task core backend integration', () => {
     await agencyMember(manageOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(commentViewerA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(commentCreateA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(tagViewerA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(tagCreateA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(tagUpdateA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(tagArchiveA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(tagAssignOnlyA.id, agency.id, roleId(roles, 'AGENCY_USER'));
+    await agencyMember(tagAssignA.id, agency.id, roleId(roles, 'AGENCY_USER'));
     await agencyMember(ownerB.id, beta.id, roleId(roles, 'AGENCY_OWNER'));
 
     await workspaceMember(ownerA.id, wa.id, roleId(roles, 'OWNER'));
@@ -3565,6 +5564,12 @@ describe('Phase 7.1 task core backend integration', () => {
     await workspaceMember(manageOnlyA.id, wa.id, roleId(roles, 'TASK_MANAGE_ONLY'));
     await workspaceMember(commentViewerA.id, wa.id, roleId(roles, 'TASK_COMMENT_VIEWER'));
     await workspaceMember(commentCreateA.id, wa.id, roleId(roles, 'TASK_COMMENT_CREATE'));
+    await workspaceMember(tagViewerA.id, wa.id, roleId(roles, 'TAG_VIEWER'));
+    await workspaceMember(tagCreateA.id, wa.id, roleId(roles, 'TAG_CREATE'));
+    await workspaceMember(tagUpdateA.id, wa.id, roleId(roles, 'TAG_UPDATE'));
+    await workspaceMember(tagArchiveA.id, wa.id, roleId(roles, 'TAG_ARCHIVE'));
+    await workspaceMember(tagAssignOnlyA.id, wa.id, roleId(roles, 'TAG_ASSIGN_ONLY'));
+    await workspaceMember(tagAssignA.id, wa.id, roleId(roles, 'TAG_ASSIGN'));
     foreignMembershipId = (await workspaceMember(ownerA.id, wa2.id, roleId(roles, 'OWNER'))).id;
     betaMembershipId = (await workspaceMember(ownerB.id, wb.id, roleId(roles, 'OWNER'))).id;
 
@@ -3638,17 +5643,47 @@ async function resetDatabase() {
     prisma.taskCommentReaction.deleteMany(),
     prisma.taskCommentMention.deleteMany(),
     prisma.taskComment.deleteMany(),
+    prisma.taskTimeEntry.deleteMany(),
+    prisma.taskWorkloadAllocation.deleteMany(),
+    prisma.taskAttachment.deleteMany(),
+    prisma.task.updateMany({ data: { pendingCompletionSubmissionId: null } }),
+    prisma.taskCompletionApprovalDecision.deleteMany(),
+    prisma.taskCompletionSubmissionApprover.deleteMany(),
+    prisma.taskCompletionProofAttachment.deleteMany(),
+    prisma.taskCompletionProofItem.deleteMany(),
+    prisma.taskCompletionSubmission.deleteMany(),
+    prisma.taskCompletionPolicyApprover.deleteMany(),
+    prisma.taskCompletionPolicy.deleteMany(),
+    prisma.projectAttachment.deleteMany(),
+    prisma.attachment.deleteMany(),
+    prisma.processingJob.deleteMany(),
+    prisma.asset.deleteMany(),
+    prisma.taskTag.deleteMany(),
     prisma.taskRelatedTask.deleteMany(),
     prisma.taskDependency.deleteMany(),
     prisma.taskAssignee.deleteMany(),
     prisma.taskFollower.deleteMany(),
     prisma.taskProject.deleteMany(),
+    prisma.taskRecurrenceAssignee.deleteMany(),
+    prisma.taskRecurrenceFollower.deleteMany(),
+    prisma.taskRecurrenceProject.deleteMany(),
+    prisma.taskRecurrenceTag.deleteMany(),
+    prisma.taskRecurrenceCompletionApprover.deleteMany(),
+    prisma.taskTemplateAssignee.deleteMany(),
+    prisma.taskTemplateFollower.deleteMany(),
+    prisma.taskTemplateProject.deleteMany(),
+    prisma.taskTemplateTag.deleteMany(),
     prisma.task.deleteMany(),
+    prisma.taskTemplate.deleteMany(),
+    prisma.taskRecurrenceSeries.deleteMany(),
+    prisma.taskKanbanColumnSetting.deleteMany(),
+    prisma.workspaceTag.deleteMany(),
     prisma.auditLog.deleteMany(),
     prisma.refreshToken.deleteMany(),
     prisma.processingJob.deleteMany(),
     prisma.asset.deleteMany(),
     prisma.project.deleteMany(),
+    prisma.workspaceMemberCapacity.deleteMany(),
     prisma.workspaceMembership.deleteMany(),
     prisma.department.deleteMany(),
     prisma.statusDefinition.deleteMany(),

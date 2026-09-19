@@ -46,6 +46,43 @@ describe('AssetProcessingProcessor', () => {
     );
   });
 
+  it('processes workspace-owned assets without requiring a project tuple', async () => {
+    const workspaceEnvelope = { ...envelope, projectId: null };
+    const prisma = prismaMock({
+      asset: {
+        id: envelope.assetId,
+        projectId: null,
+        workspaceId: envelope.workspaceId,
+        storageKey: 'workspace-asset-key',
+        sizeBytes: BigInt(5),
+        status: 'PROCESSING',
+        metadata: {},
+      },
+    });
+    const storage = {
+      statObject: jest.fn().mockResolvedValue({ size: 5, etag: 'etag' }),
+      getObject: jest.fn().mockResolvedValue(Readable.from(Buffer.from('hello'))),
+    };
+    const processor = new AssetProcessingProcessor(prisma as never, storage as never);
+
+    await processor.process({ data: workspaceEnvelope, attemptsMade: 0 } as never);
+
+    expect(prisma.asset.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: envelope.assetId,
+          workspaceId: envelope.workspaceId,
+        }),
+      }),
+    );
+    expect(prisma.asset.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id_workspaceId: { id: envelope.assetId, workspaceId: envelope.workspaceId } },
+        data: expect.objectContaining({ status: 'READY' }),
+      }),
+    );
+  });
+
   it('fails safely when the asset is missing or tenant scoped lookup does not match', async () => {
     const prisma = prismaMock({ asset: null });
     const processor = new AssetProcessingProcessor(prisma as never, {} as never);

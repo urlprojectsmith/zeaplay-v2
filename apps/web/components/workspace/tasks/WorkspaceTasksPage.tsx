@@ -22,7 +22,7 @@ import {
   cn,
 } from '@zea-play/ui';
 import { CalendarClock, Check, ChevronsUpDown, Plus, Settings, UserPlus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -36,11 +36,17 @@ import {
 import { listWorkspaceStatuses } from '../../../services/workspace-statuses';
 import {
   createWorkspaceTask,
+  listWorkspaceTags,
   listWorkspaceProjects,
   taskCreationKeys,
   taskDueAtFromLocalDate,
+  taskDueBoundaryFromLocalDate,
   taskKeys,
+  type TaskRecurrenceCustomUnit,
+  type TaskRecurrenceEndMode,
+  type TaskRecurrenceFrequency,
   type TaskPriority,
+  type WorkspaceTagSummary,
 } from '../../../services/workspace-tasks';
 import { useSessionStore } from '../../../stores/session';
 import { PageContainer } from '../../layout/PageContainer';
@@ -49,21 +55,87 @@ import { AllTasksBrowser } from './AllTasksBrowser';
 
 const priorities = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 const noneValue = '__none__';
+const recurrenceOptions = ['NONE', 'DAILY', 'WEEKDAYS', 'WEEKLY', 'MONTHLY', 'CUSTOM'] as const;
+const recurrenceEndModes = ['NEVER', 'ON_DATE', 'AFTER_COUNT'] as const;
+const customUnits = ['DAY', 'WEEK', 'MONTH'] as const;
+const weekdays = [
+  { value: 1, key: 'monday' },
+  { value: 2, key: 'tuesday' },
+  { value: 3, key: 'wednesday' },
+  { value: 4, key: 'thursday' },
+  { value: 5, key: 'friday' },
+  { value: 6, key: 'saturday' },
+  { value: 7, key: 'sunday' },
+] as const;
 
-const taskFormSchema = z.object({
-  title: z.string().trim().min(1, 'Task title is required.').max(160),
-  assigneeMembershipId: z.string().min(1, 'Assignee is required.'),
-  dueDate: z.string().min(1, 'Due date is required.'),
-  dueTime: z.string().optional(),
-  description: z.string().max(4000).optional(),
-  priority: z.enum(priorities),
-  statusDefinitionId: z.string().optional(),
-  departmentId: z.string().optional(),
-  additionalAssigneeMembershipIds: z.array(z.string()).default([]),
-  followerMembershipIds: z.array(z.string()).default([]),
-  projectIds: z.array(z.string()).default([]),
-  createAnother: z.boolean().default(false),
-});
+const taskFormSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Task title is required.').max(160),
+    assigneeMembershipId: z.string().min(1, 'Assignee is required.'),
+    plannedStartDate: z.string().optional(),
+    dueDate: z.string().min(1, 'Due date is required.'),
+    dueTime: z.string().optional(),
+    description: z.string().max(4000).optional(),
+    priority: z.enum(priorities),
+    statusDefinitionId: z.string().optional(),
+    departmentId: z.string().optional(),
+    additionalAssigneeMembershipIds: z.array(z.string()).default([]),
+    followerMembershipIds: z.array(z.string()).default([]),
+    projectIds: z.array(z.string()).default([]),
+    tagIds: z.array(z.string()).default([]),
+    recurrenceFrequency: z.enum(recurrenceOptions).default('NONE'),
+    recurrenceStartDate: z.string().optional(),
+    recurrenceTime: z.string().optional(),
+    recurrenceTimezone: z.string().default('UTC'),
+    recurrenceWeekdays: z.array(z.number().int().min(1).max(7)).default([]),
+    recurrenceInterval: z.coerce.number().int().min(1).max(365).default(1),
+    recurrenceCustomUnit: z.enum(customUnits).default('DAY'),
+    recurrenceEndMode: z.enum(recurrenceEndModes).default('NEVER'),
+    recurrenceUntilDate: z.string().optional(),
+    recurrenceMaxOccurrences: z.coerce.number().int().min(1).max(1000).default(10),
+    createAnother: z.boolean().default(false),
+  })
+  .superRefine((value, ctx) => {
+    if (value.recurrenceFrequency === 'NONE') return;
+    if (!value.recurrenceStartDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recurrenceStartDate'],
+        message: 'Start Date is required.',
+      });
+    }
+    if (!value.recurrenceTime) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recurrenceTime'],
+        message: 'Time is required.',
+      });
+    }
+    if (!value.recurrenceTimezone || !isLikelyIanaZone(value.recurrenceTimezone)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recurrenceTimezone'],
+        message: 'Timezone is required.',
+      });
+    }
+    if (value.recurrenceFrequency === 'WEEKLY' && value.recurrenceWeekdays.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recurrenceWeekdays'],
+        message: 'Select at least one weekday.',
+      });
+    }
+    if (
+      value.recurrenceEndMode === 'ON_DATE' &&
+      (!value.recurrenceUntilDate || value.recurrenceUntilDate < (value.recurrenceStartDate ?? ''))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recurrenceUntilDate'],
+        message: 'End Date must be on or after Start Date.',
+      });
+    }
+  });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
 
@@ -118,26 +190,38 @@ export function WorkspaceTasksPage() {
   );
 }
 
-function TaskCreateDialog({
+export function TaskCreateDialog({
   labels,
   open,
   workspaceId,
+  prefill,
+  onPrefillConsumed,
   onOpenChange,
   onCreated,
 }: {
   labels: TaskLabels;
   open: boolean;
   workspaceId: string | null;
+  prefill?: Partial<TaskFormValues> | null;
+  onPrefillConsumed?: () => void;
   onOpenChange: (open: boolean) => void;
   onCreated: () => Promise<void>;
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [previewData, setPreviewData] = useState<PreviewData>(defaultPreviewData);
+  const workspaceTimezone = useSessionStore((state) => {
+    for (const agency of state.agencies) {
+      const workspace = agency.workspaces.find((item) => item.id === workspaceId);
+      if (workspace) return workspace.timezone;
+    }
+    return 'UTC';
+  });
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
-    defaultValues: defaultTaskForm(),
+    defaultValues: defaultTaskForm(workspaceTimezone),
     mode: 'onSubmit',
   });
+  const previousWorkspaceKeyRef = useRef(`${workspaceId}:${workspaceTimezone}`);
   const values = useWatch({ control: form.control });
   const activeWorkspaceId = workspaceId;
   const statusesQuery = useQuery({
@@ -148,11 +232,14 @@ function TaskCreateDialog({
   });
 
   useEffect(() => {
-    form.reset(defaultTaskForm());
+    const workspaceKey = `${workspaceId}:${workspaceTimezone}`;
+    if (previousWorkspaceKeyRef.current === workspaceKey) return;
+    previousWorkspaceKeyRef.current = workspaceKey;
+    form.reset(defaultTaskForm(workspaceTimezone));
     setPreviewData(defaultPreviewData);
     setAdvancedOpen(false);
     if (open) onOpenChange(false);
-  }, [workspaceId]);
+  }, [form, onOpenChange, open, workspaceId, workspaceTimezone]);
 
   const createMutation = useMutation({
     mutationFn: (data: TaskFormValues) => {
@@ -161,8 +248,37 @@ function TaskCreateDialog({
         data.assigneeMembershipId,
         ...data.additionalAssigneeMembershipIds,
       ]);
+      const recurrence =
+        data.recurrenceFrequency !== 'NONE' && data.recurrenceStartDate && data.recurrenceTime
+          ? {
+              timezone: data.recurrenceTimezone,
+              frequency: data.recurrenceFrequency as TaskRecurrenceFrequency,
+              interval: data.recurrenceFrequency === 'CUSTOM' ? data.recurrenceInterval : 1,
+              ...(data.recurrenceFrequency === 'CUSTOM'
+                ? { customIntervalUnit: data.recurrenceCustomUnit as TaskRecurrenceCustomUnit }
+                : {}),
+              startLocalDate: data.recurrenceStartDate,
+              localTime: data.recurrenceTime,
+              ...(data.recurrenceFrequency === 'WEEKLY'
+                ? { selectedWeekdays: data.recurrenceWeekdays }
+                : {}),
+              ...(data.recurrenceFrequency === 'MONTHLY'
+                ? { monthlyDay: Number(data.recurrenceStartDate.split('-')[2]) }
+                : {}),
+              endMode: data.recurrenceEndMode as TaskRecurrenceEndMode,
+              ...(data.recurrenceEndMode === 'ON_DATE'
+                ? { untilLocalDate: data.recurrenceUntilDate }
+                : {}),
+              ...(data.recurrenceEndMode === 'AFTER_COUNT'
+                ? { maxOccurrences: data.recurrenceMaxOccurrences }
+                : {}),
+            }
+          : undefined;
       return createWorkspaceTask(activeWorkspaceId, {
         title: data.title,
+        ...(data.plannedStartDate
+          ? { plannedStartAt: taskDueBoundaryFromLocalDate(data.plannedStartDate, 'start') }
+          : {}),
         dueAt: taskDueAtFromLocalDate(data.dueDate, data.dueTime),
         assigneeMembershipIds,
         ...(data.description?.trim() ? { description: data.description } : {}),
@@ -173,13 +289,15 @@ function TaskCreateDialog({
           ? { followerMembershipIds: data.followerMembershipIds }
           : {}),
         ...(data.projectIds.length ? { projectIds: data.projectIds } : {}),
+        ...(data.tagIds.length ? { tagIds: data.tagIds } : {}),
+        ...(recurrence ? { recurrence } : {}),
       });
     },
     onSuccess: async (_task, data) => {
       toast.success(labels.created);
       await onCreated();
       const keepOpen = data.createAnother;
-      form.reset({ ...defaultTaskForm(), createAnother: keepOpen });
+      form.reset({ ...defaultTaskForm(workspaceTimezone), createAnother: keepOpen });
       setPreviewData(defaultPreviewData);
       setAdvancedOpen(false);
       if (!keepOpen) onOpenChange(false);
@@ -194,10 +312,17 @@ function TaskCreateDialog({
     },
   });
 
+  useEffect(() => {
+    if (!open || !prefill) return;
+    form.reset({ ...defaultTaskForm(workspaceTimezone), ...prefill });
+    setAdvancedOpen(true);
+    onPrefillConsumed?.();
+  }, [form, onPrefillConsumed, open, prefill]);
+
   function requestOpenChange(nextOpen: boolean) {
     if (!nextOpen && form.formState.isDirty && !window.confirm(labels.discardChanges)) return;
     if (!nextOpen) {
-      form.reset(defaultTaskForm());
+      form.reset(defaultTaskForm(workspaceTimezone));
       setPreviewData(defaultPreviewData);
       setAdvancedOpen(false);
     }
@@ -510,12 +635,221 @@ function TaskAdvancedFields({
           />
         )}
       />
+      <Controller
+        control={form.control}
+        name="tagIds"
+        render={({ field }) => (
+          <TaskTagSelector
+            label={labels.tags}
+            workspaceId={workspaceId}
+            selectedIds={field.value}
+            onChange={field.onChange}
+            labels={labels}
+          />
+        )}
+      />
+      <Input label={labels.plannedStart} type="date" {...form.register('plannedStartDate')} />
       <Input label={labels.dueTime} type="time" {...form.register('dueTime')} />
+      <TaskRecurrenceFields form={form} labels={labels} />
       <label className="flex items-center gap-2 text-sm font-semibold">
         <input className="h-4 w-4" type="checkbox" {...form.register('createAnother')} />
         {labels.createAnother}
       </label>
     </div>
+  );
+}
+
+function TaskRecurrenceFields({
+  form,
+  labels,
+}: {
+  form: ReturnType<typeof useForm<TaskFormValues>>;
+  labels: TaskLabels;
+}) {
+  const frequency = form.watch('recurrenceFrequency');
+  const endMode = form.watch('recurrenceEndMode');
+  const timezone = form.watch('recurrenceTimezone') || 'UTC';
+
+  useEffect(() => {
+    if (frequency !== 'WEEKLY') {
+      form.setValue('recurrenceWeekdays', [], { shouldDirty: false, shouldValidate: true });
+    }
+    if (frequency !== 'CUSTOM') {
+      form.setValue('recurrenceInterval', 1, { shouldDirty: false, shouldValidate: true });
+      form.setValue('recurrenceCustomUnit', 'DAY', { shouldDirty: false, shouldValidate: true });
+    }
+    if (frequency === 'NONE') {
+      form.setValue('recurrenceEndMode', 'NEVER', { shouldDirty: false, shouldValidate: true });
+      form.setValue('recurrenceUntilDate', '', { shouldDirty: false, shouldValidate: true });
+      form.setValue('recurrenceMaxOccurrences', 1, { shouldDirty: false, shouldValidate: true });
+    }
+  }, [form, frequency]);
+
+  useEffect(() => {
+    if (endMode !== 'ON_DATE') {
+      form.setValue('recurrenceUntilDate', '', { shouldDirty: false, shouldValidate: true });
+    }
+    if (endMode !== 'AFTER_COUNT') {
+      form.setValue('recurrenceMaxOccurrences', 1, { shouldDirty: false, shouldValidate: true });
+    }
+  }, [endMode, form]);
+
+  return (
+    <section className="grid gap-3 rounded-md border border-[hsl(var(--border))] p-3">
+      <Controller
+        control={form.control}
+        name="recurrenceFrequency"
+        render={({ field }) => (
+          <Select value={field.value} onValueChange={field.onChange}>
+            <SelectTrigger label={labels.repeat}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {recurrenceOptions.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {recurrenceFrequencyLabel(option, labels)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      />
+      {frequency !== 'NONE' ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input
+            label={labels.startDate}
+            type="date"
+            error={form.formState.errors.recurrenceStartDate?.message}
+            {...form.register('recurrenceStartDate')}
+          />
+          <Input
+            label={labels.time}
+            type="time"
+            error={form.formState.errors.recurrenceTime?.message}
+            {...form.register('recurrenceTime')}
+          />
+          <Input
+            label={labels.timezone}
+            value={timezone}
+            error={form.formState.errors.recurrenceTimezone?.message}
+            onChange={(event) => form.setValue('recurrenceTimezone', event.target.value)}
+          />
+          {frequency === 'WEEKDAYS' ? (
+            <p className="self-end text-sm text-[hsl(var(--muted-foreground))]">
+              {labels.mondayFriday}
+            </p>
+          ) : null}
+          {frequency === 'WEEKLY' ? (
+            <div className="grid gap-2 sm:col-span-2">
+              <p className="text-sm font-semibold">{labels.repeatOn}</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label={labels.repeatOn}>
+                {weekdays.map((day) => {
+                  const selected = form.watch('recurrenceWeekdays').includes(day.value);
+                  return (
+                    <button
+                      key={day.value}
+                      type="button"
+                      aria-pressed={selected}
+                      className={cn(
+                        'rounded-md border border-[hsl(var(--border))] px-3 py-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]',
+                        selected &&
+                          'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]',
+                      )}
+                      onClick={() => {
+                        const current = form.getValues('recurrenceWeekdays');
+                        form.setValue(
+                          'recurrenceWeekdays',
+                          selected
+                            ? current.filter((value) => value !== day.value)
+                            : [...current, day.value].sort((a, b) => a - b),
+                          { shouldDirty: true, shouldValidate: true },
+                        );
+                      }}
+                    >
+                      {labels[day.key]}
+                    </button>
+                  );
+                })}
+              </div>
+              {form.formState.errors.recurrenceWeekdays?.message ? (
+                <p className="text-sm font-semibold text-[hsl(var(--danger))]">
+                  {form.formState.errors.recurrenceWeekdays.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {frequency === 'MONTHLY' ? (
+            <p className="sm:col-span-2 text-sm text-[hsl(var(--muted-foreground))]">
+              {labels.monthlyClampHelper}
+            </p>
+          ) : null}
+          {frequency === 'CUSTOM' ? (
+            <div className="grid gap-3 sm:col-span-2 sm:grid-cols-[1fr_1fr]">
+              <Input
+                label={labels.every}
+                type="number"
+                min={1}
+                max={365}
+                {...form.register('recurrenceInterval', { valueAsNumber: true })}
+              />
+              <Controller
+                control={form.control}
+                name="recurrenceCustomUnit"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger label={labels.intervalUnit}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customUnits.map((unit) => (
+                        <SelectItem key={unit} value={unit}>
+                          {customUnitLabel(unit, labels)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+          ) : null}
+          <Controller
+            control={form.control}
+            name="recurrenceEndMode"
+            render={({ field }) => (
+              <Select value={field.value} onValueChange={field.onChange}>
+                <SelectTrigger label={labels.ends}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {recurrenceEndModes.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {endModeLabel(mode, labels)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {endMode === 'ON_DATE' ? (
+            <Input
+              label={labels.endDate}
+              type="date"
+              error={form.formState.errors.recurrenceUntilDate?.message}
+              {...form.register('recurrenceUntilDate')}
+            />
+          ) : null}
+          {endMode === 'AFTER_COUNT' ? (
+            <Input
+              label={labels.occurrences}
+              type="number"
+              min={1}
+              max={1000}
+              {...form.register('recurrenceMaxOccurrences', { valueAsNumber: true })}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -688,8 +1022,7 @@ function TaskProjectSelector({
       }),
     enabled: Boolean(workspaceId),
   });
-  const projects =
-    projectsQuery.data?.items.filter((project) => project.status !== 'ARCHIVED') ?? [];
+  const projects = projectsQuery.data?.items ?? [];
   const selectedProjects = useMemo(
     () => mergeSelectedProjects(projects, selectedCache, selectedIds),
     [projects, selectedCache, selectedIds],
@@ -758,6 +1091,111 @@ function TaskProjectSelector({
                 }}
               >
                 <span className="truncate font-semibold">{project.name}</span>
+                {selected ? <Check aria-hidden="true" className="h-4 w-4 shrink-0" /> : null}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TaskTagSelector({
+  label,
+  workspaceId,
+  selectedIds,
+  onChange,
+  labels,
+}: {
+  label: string;
+  workspaceId: string | null;
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  labels: TaskLabels;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedCache, setSelectedCache] = useState<WorkspaceTagSummary[]>([]);
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const tagsQuery = useQuery({
+    queryKey: taskKeys.tagCatalog(workspaceId, {
+      page: 1,
+      pageSize: 10,
+      search: debouncedSearch,
+      status: 'ACTIVE',
+      sortBy: 'name',
+      sortDirection: 'asc',
+    }),
+    queryFn: () =>
+      listWorkspaceTags(workspaceId as string, {
+        page: 1,
+        pageSize: 10,
+        status: 'ACTIVE',
+        search: debouncedSearch.length >= 2 ? debouncedSearch : undefined,
+        sortBy: 'name',
+        sortDirection: 'asc',
+      }),
+    enabled: Boolean(workspaceId),
+  });
+  const tags = tagsQuery.data?.items.filter((tag) => tag.status === 'ACTIVE') ?? [];
+  const selectedTags = useMemo(
+    () => mergeSelectedTags(tags, selectedCache, selectedIds),
+    [tags, selectedCache, selectedIds],
+  );
+
+  useEffect(() => {
+    setSearch('');
+    setSelectedCache([]);
+  }, [workspaceId]);
+
+  return (
+    <div className="grid gap-2" role="group" aria-label={label}>
+      <Input
+        label={label}
+        placeholder={labels.searchTags}
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+      <div className="flex min-h-7 flex-wrap gap-2">
+        {selectedTags.map((tag) => (
+          <SelectionChip
+            key={tag.id}
+            label={tag.name}
+            onRemove={() => {
+              const nextIds = selectedIds.filter((id) => id !== tag.id);
+              setSelectedCache((current) => current.filter((item) => item.id !== tag.id));
+              onChange(nextIds);
+            }}
+          />
+        ))}
+      </div>
+      <div className="grid max-h-36 gap-1 overflow-y-auto rounded-md border border-[hsl(var(--border))] p-2">
+        {tagsQuery.isLoading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : tags.length === 0 ? (
+          <p className="px-2 py-3 text-sm text-[hsl(var(--muted-foreground))]">
+            {labels.noTagsFound}
+          </p>
+        ) : (
+          tags.map((tag) => {
+            const selected = selectedIds.includes(tag.id);
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className={cn(
+                  'flex min-h-10 items-center justify-between rounded px-2 text-left text-sm outline-none hover:bg-[hsl(var(--surface-muted))] focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]',
+                  selected && 'bg-[hsl(var(--surface-muted))]',
+                )}
+                onClick={() => {
+                  const nextIds = selected
+                    ? selectedIds.filter((id) => id !== tag.id)
+                    : uniqueIds([...selectedIds, tag.id]).slice(0, 50);
+                  setSelectedCache((current) => mergeSelectedTags([tag], current, nextIds));
+                  onChange(nextIds);
+                }}
+              >
+                <span className="truncate font-semibold">{tag.name}</span>
                 {selected ? <Check aria-hidden="true" className="h-4 w-4 shrink-0" /> : null}
               </button>
             );
@@ -868,10 +1306,11 @@ function useDebouncedValue(value: string, delay: number) {
   return debounced;
 }
 
-function defaultTaskForm(): TaskFormValues {
+function defaultTaskForm(timezone = defaultTimezone()): TaskFormValues {
   return {
     title: '',
     assigneeMembershipId: '',
+    plannedStartDate: '',
     dueDate: '',
     dueTime: '',
     description: '',
@@ -881,6 +1320,17 @@ function defaultTaskForm(): TaskFormValues {
     additionalAssigneeMembershipIds: [],
     followerMembershipIds: [],
     projectIds: [],
+    tagIds: [],
+    recurrenceFrequency: 'NONE',
+    recurrenceStartDate: '',
+    recurrenceTime: '',
+    recurrenceTimezone: timezone,
+    recurrenceWeekdays: [],
+    recurrenceInterval: 1,
+    recurrenceCustomUnit: 'DAY',
+    recurrenceEndMode: 'NEVER',
+    recurrenceUntilDate: '',
+    recurrenceMaxOccurrences: 10,
     createAnother: false,
   };
 }
@@ -940,6 +1390,16 @@ function mergeSelectedProjects(
     .filter(Boolean) as WorkspaceProjectPreview[];
 }
 
+function mergeSelectedTags(
+  visible: WorkspaceTagSummary[],
+  cached: WorkspaceTagSummary[],
+  selectedIds: string[],
+) {
+  return selectedIds
+    .map((id) => visible.find((tag) => tag.id === id) ?? cached.find((tag) => tag.id === id))
+    .filter(Boolean) as WorkspaceTagSummary[];
+}
+
 function priorityBadge(priority: TaskPriority) {
   if (priority === 'URGENT') return 'danger' as const;
   if (priority === 'HIGH') return 'warning' as const;
@@ -969,9 +1429,45 @@ function errorMessage(error: unknown, labels: TaskLabels) {
   return error instanceof Error ? error.message : labels.createFailed;
 }
 
-type TaskLabels = ReturnType<typeof taskLabels>;
+function defaultTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
 
-function taskLabels(
+function isLikelyIanaZone(value: string) {
+  return /^[A-Za-z]+\/[A-Za-z0-9_+/-]+$/.test(value) || value === 'UTC';
+}
+
+function recurrenceFrequencyLabel(value: (typeof recurrenceOptions)[number], labels: TaskLabels) {
+  const map = {
+    NONE: labels.doesNotRepeat,
+    DAILY: labels.daily,
+    WEEKDAYS: labels.weekdays,
+    WEEKLY: labels.weekly,
+    MONTHLY: labels.monthly,
+    CUSTOM: labels.custom,
+  };
+  return map[value];
+}
+
+function customUnitLabel(value: TaskRecurrenceCustomUnit, labels: TaskLabels) {
+  if (value === 'WEEK') return labels.weeks;
+  if (value === 'MONTH') return labels.months;
+  return labels.days;
+}
+
+function endModeLabel(value: TaskRecurrenceEndMode, labels: TaskLabels) {
+  if (value === 'ON_DATE') return labels.onDate;
+  if (value === 'AFTER_COUNT') return labels.afterOccurrences;
+  return labels.never;
+}
+
+export type TaskLabels = ReturnType<typeof taskLabels>;
+
+export function taskLabels(
   locale: Parameters<ReturnType<typeof useLanguage>['t']>[0],
   t: ReturnType<typeof useLanguage>['t'],
 ) {
@@ -983,6 +1479,7 @@ function taskLabels(
     'titleLabel',
     'assignee',
     'additionalAssignees',
+    'plannedStart',
     'dueDate',
     'dueTime',
     'addMoreDetails',
@@ -992,6 +1489,86 @@ function taskLabels(
     'department',
     'followers',
     'projects',
+    'tags',
+    'searchTags',
+    'noTagsFound',
+    'repeat',
+    'doesNotRepeat',
+    'daily',
+    'weekdays',
+    'weekly',
+    'monthly',
+    'custom',
+    'startDate',
+    'time',
+    'timezone',
+    'repeatOn',
+    'mondayFriday',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+    'monthlyClampHelper',
+    'every',
+    'intervalUnit',
+    'days',
+    'weeks',
+    'months',
+    'ends',
+    'never',
+    'onDate',
+    'afterOccurrences',
+    'endDate',
+    'occurrences',
+    'recurringTasks',
+    'recurringTasksDescription',
+    'noRecurringTasks',
+    'noRecurringTasksDescription',
+    'all',
+    'nextOccurrence',
+    'generatedCount',
+    'lastGenerated',
+    'seriesStatus',
+    'active',
+    'paused',
+    'ended',
+    'needsAttention',
+    'pause',
+    'resume',
+    'endRecurrence',
+    'recurrenceUpdated',
+    'recurrenceActionFailed',
+    'taskTemplates',
+    'taskTemplatesDescription',
+    'createTemplate',
+    'editTemplate',
+    'useTemplate',
+    'saveAsTemplate',
+    'archiveTemplate',
+    'reactivateTemplate',
+    'templateName',
+    'searchTemplates',
+    'archived',
+    'noTemplates',
+    'noTemplatesFound',
+    'templateDialogDescription',
+    'archiveTemplateConfirmation',
+    'saveTemplateDescription',
+    'saveTemplateCopyWarning',
+    'templateSaved',
+    'templateUpdated',
+    'templateActionFailed',
+    'outdatedFieldsWarning',
+    'errorTitle',
+    'page',
+    'previous',
+    'next',
+    'updated',
+    'emptyDash',
+    'save',
     'preview',
     'create',
     'creating',
@@ -1006,6 +1583,7 @@ function taskLabels(
     'noDueDate',
     'searchPeople',
     'searchProjects',
+    'searchTasks',
     'noEligibleUsers',
     'noDepartments',
     'noProjects',

@@ -33,6 +33,20 @@ export interface Department {
   updatedAt: string;
 }
 
+export interface WorkspaceSettings {
+  id: string;
+  agencyId: string;
+  name: string;
+  slug: string;
+  timezone: string;
+  status: string;
+  storageUsedBytes: number;
+  storageLimitBytes: number;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ListUsersParams {
   workspaceId: string;
   page?: number;
@@ -67,6 +81,22 @@ export async function updateWorkspaceUser(
     `/workspaces/${workspaceId}/users/${userId}/membership`,
     { method: 'PATCH', body: JSON.stringify(body) },
   );
+  return response.data;
+}
+
+export async function getWorkspaceSettings(workspaceId: string) {
+  const response = await apiClient.request<WorkspaceSettings>(`/workspaces/${workspaceId}`);
+  return response.data;
+}
+
+export async function updateWorkspaceSettings(
+  workspaceId: string,
+  body: { name?: string; timezone?: string },
+) {
+  const response = await apiClient.request<WorkspaceSettings>(`/workspaces/${workspaceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
   return response.data;
 }
 
