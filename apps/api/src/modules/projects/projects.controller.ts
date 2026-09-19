@@ -25,12 +25,23 @@ import {
 import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
-import { UpdateProjectDto, UpdateProjectStatusDto } from './dto/update-project.dto';
+import {
+  ProjectMemberQueryDto,
+  ProjectMembersDto,
+  UpdateProjectDto,
+  UpdateProjectOwnerDto,
+  UpdateProjectStatusDto,
+} from './dto/update-project.dto';
 import { ProjectsService } from './projects.service';
 
 class WorkspaceProjectParamDto extends UuidParamDto {
   @IsUUID()
   workspaceId!: string;
+}
+
+class WorkspaceProjectMemberParamDto extends WorkspaceProjectParamDto {
+  @IsUUID()
+  membershipId!: string;
 }
 
 @ApiTags('projects')
@@ -81,6 +92,45 @@ export class ProjectsController {
     @Body() dto: UpdateProjectStatusDto,
   ) {
     return this.projects.updateStatus(tenant, params.id, dto.statusDefinitionId);
+  }
+
+  @Get(':id/members')
+  @RequirePermissions(PermissionKeys.projectsView)
+  members(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+    @Query() query: ProjectMemberQueryDto,
+  ) {
+    return this.projects.listMembers(tenant, params.id, query);
+  }
+
+  @Post(':id/members')
+  @RequirePermissions(PermissionKeys.projectsUpdate, PermissionKeys.projectsManageMembers)
+  addMembers(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+    @Body() dto: ProjectMembersDto,
+  ) {
+    return this.projects.addMembers(tenant, params.id, dto);
+  }
+
+  @Delete(':id/members/:membershipId')
+  @RequirePermissions(PermissionKeys.projectsUpdate, PermissionKeys.projectsManageMembers)
+  removeMember(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectMemberParamDto,
+  ) {
+    return this.projects.removeMember(tenant, params.id, params.membershipId);
+  }
+
+  @Patch(':id/owner')
+  @RequirePermissions(PermissionKeys.projectsUpdate, PermissionKeys.projectsManageOwner)
+  updateOwner(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+    @Body() dto: UpdateProjectOwnerDto,
+  ) {
+    return this.projects.updateOwner(tenant, params.id, dto.workspaceMembershipId);
   }
 
   @Delete(':id')

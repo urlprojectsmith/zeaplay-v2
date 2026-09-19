@@ -70,6 +70,9 @@ export const PermissionKeys = {
   projectsUpdate: 'projects.update',
   projectsDelete: 'projects.delete',
   projectsManageStatus: 'projects.manage_status',
+  projectsViewAll: 'projects.view_all',
+  projectsManageMembers: 'projects.manage_members',
+  projectsManageOwner: 'projects.manage_owner',
   projectRead: 'project.read',
   projectCreate: 'project.create',
   projectUpdate: 'project.update',
@@ -80,6 +83,4 @@ export const PermissionKeys = {
   assetDownload: 'asset.download',
 } as const;
 
-export const OWNER_ROLE = 'OWNER';
-export const AGENCY_OWNER_ROLE = 'AGENCY_OWNER';
 export const AGENCY_ADMIN_ROLES = ['AGENCY_OWNER', 'AGENCY_ADMIN'];

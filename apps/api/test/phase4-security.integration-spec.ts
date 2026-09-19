@@ -380,7 +380,7 @@ describe('Phase 4 multi-tenant security integration', () => {
     await agencyMember(userB.id, agencyB, roles.AGENCY_OWNER.id);
     const ownerMembership = await workspaceMember(ownerA.id, workspaceA, roles.OWNER.id);
     const memberMembership = await workspaceMember(memberA.id, workspaceA, roles.MEMBER.id);
-    await workspaceMember(ownerA.id, workspaceA2, roles.OWNER.id);
+    const ownerA2Membership = await workspaceMember(ownerA.id, workspaceA2, roles.OWNER.id);
     await workspaceMember(suspended.id, workspaceA, roles.MEMBER.id);
     await workspaceMember(userB.id, workspaceB, roles.OWNER.id);
     ownerMembershipId = ownerMembership.id;
@@ -390,6 +390,7 @@ describe('Phase 4 multi-tenant security integration', () => {
       data: {
         workspaceId: workspaceA,
         createdById: ownerA.id,
+        ownerMembershipId: ownerMembership.id,
         name: 'Project A',
         status: 'ACTIVE',
       },
@@ -399,6 +400,7 @@ describe('Phase 4 multi-tenant security integration', () => {
       data: {
         workspaceId: workspaceA2,
         createdById: ownerA.id,
+        ownerMembershipId: ownerA2Membership.id,
         name: 'Project A2',
         status: 'ACTIVE',
       },

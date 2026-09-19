@@ -4,6 +4,7 @@ import {
   AssetStatus,
   AttachmentType,
   DepartmentStatus,
+  MembershipStatus,
   PrismaClient,
   RoleScope,
   StatusCategory,
@@ -1016,6 +1017,356 @@ describe('Phase 6.3A shared statuses integration', () => {
     await expect(prisma.task.findUnique({ where: { id: task.id } })).resolves.not.toBeNull();
   });
 
+  it('enforces project owner, members, visibility, and tenant-safe membership rules', async () => {
+    const memberships = await prisma.workspaceMembership.findMany({
+      where: { workspaceId: { in: [workspaceA1, workspaceA2] } },
+      include: { user: true },
+    });
+    const ownerMembership = memberships.find(
+      (membership) =>
+        membership.workspaceId === workspaceA1 && membership.user.email === 'owner-a@zeaplay.test',
+    );
+    const memberMembership = memberships.find(
+      (membership) =>
+        membership.workspaceId === workspaceA1 && membership.user.email === 'member-a@zeaplay.test',
+    );
+    const limitedMembership = memberships.find(
+      (membership) =>
+        membership.workspaceId === workspaceA1 &&
+        membership.user.email === 'limited-a@zeaplay.test',
+    );
+    const foreignMembership = memberships.find(
+      (membership) =>
+        membership.workspaceId === workspaceA2 && membership.user.email === 'owner-a@zeaplay.test',
+    );
+    expect(ownerMembership).toBeTruthy();
+    expect(memberMembership).toBeTruthy();
+    expect(limitedMembership).toBeTruthy();
+    expect(foreignMembership).toBeTruthy();
+
+    const projectViewerPermissions = await prisma.permission.findMany({
+      where: { key: { in: ['workspace.read', 'projects.view', 'projects.create'] } },
+    });
+    const projectCreatorRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:project-creator-no-view-all`,
+        workspaceId: workspaceA1,
+        name: 'Project Creator No View All',
+        nameNormalized: 'project creator no view all',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: projectViewerPermissions.map((permission) => ({
+        roleId: projectCreatorRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    const projectViewerRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:project-viewer-no-view-all`,
+        workspaceId: workspaceA1,
+        name: 'Project Viewer No View All',
+        nameNormalized: 'project viewer no view all',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    const viewPermissions = await prisma.permission.findMany({
+      where: { key: { in: ['workspace.read', 'projects.view'] } },
+    });
+    await prisma.rolePermission.createMany({
+      data: viewPermissions.map((permission) => ({
+        roleId: projectViewerRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership!.id },
+      data: { roleId: projectCreatorRole.id },
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: memberMembership!.id },
+      data: { roleId: projectViewerRole.id },
+    });
+
+    const created = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        name: 'Restricted Owner Membership Project',
+        visibility: 'RESTRICTED',
+        ownerMembershipId: ownerMembership!.id,
+      })
+      .expect(201);
+    const projectId = created.body.data.id as string;
+    expect(created.body.data.visibility).toBe('RESTRICTED');
+    expect(created.body.data.ownerMembershipId).toBe(ownerMembership!.id);
+
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership!.id },
+      data: { status: MembershipStatus.SUSPENDED },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/owner`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ workspaceMembershipId: limitedMembership!.id })
+      .expect(400);
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership!.id },
+      data: { status: MembershipStatus.ACTIVE },
+    });
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    const hiddenList = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/projects?search=Restricted%20Owner&page=1&pageSize=20`,
+      )
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(hiddenList.body.data.total).toBe(0);
+    expect(hiddenList.body.data.items).toHaveLength(0);
+
+    const beforeAtomicCreate = await prisma.project.count({
+      where: { workspaceId: workspaceA1, name: 'Atomic Project Create Failure' },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        name: 'Duplicate Create Member Failure',
+        ownerMembershipId: ownerMembership!.id,
+        memberMembershipIds: [memberMembership!.id, memberMembership!.id],
+      })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        name: 'Atomic Project Create Failure',
+        ownerMembershipId: ownerMembership!.id,
+        memberMembershipIds: [memberMembership!.id, foreignMembership!.id],
+      })
+      .expect(400);
+    await expect(
+      prisma.project.count({
+        where: { workspaceId: workspaceA1, name: 'Atomic Project Create Failure' },
+      }),
+    ).resolves.toBe(beforeAtomicCreate);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ membershipIds: [memberMembership!.id] })
+      .expect(201);
+    const duplicateAdds = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members`)
+        .set(auth(ownerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ membershipIds: [memberMembership!.id] }),
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members`)
+        .set(auth(ownerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ membershipIds: [memberMembership!.id] }),
+    ]);
+    expect(duplicateAdds.every((response) => response.status === 201)).toBe(true);
+    await expect(
+      prisma.projectMember.count({
+        where: { projectId, workspaceMembershipId: memberMembership!.id },
+      }),
+    ).resolves.toBe(1);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+
+    const hiddenAndVisible = await Promise.all(
+      [
+        { name: 'Visible Total One', visibility: 'WORKSPACE' },
+        { name: 'Visible Total Two', visibility: 'WORKSPACE' },
+        { name: 'Visible Total Three', visibility: 'WORKSPACE' },
+        { name: 'Secret Apollo One', visibility: 'RESTRICTED' },
+        { name: 'Secret Apollo Two', visibility: 'RESTRICTED' },
+      ].map((payload) =>
+        request(app.getHttpServer())
+          .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+          .set(auth(adminToken))
+          .set(ctx(agencyA, workspaceA1))
+          .send({ ...payload, ownerMembershipId: ownerMembership!.id }),
+      ),
+    );
+    expect(hiddenAndVisible.every((response) => response.status === 201)).toBe(true);
+    const totalCheck = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects?search=Total&page=1&pageSize=20`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(totalCheck.body.data.total).toBe(3);
+    expect(totalCheck.body.data.items).toHaveLength(3);
+    const secretSearch = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects?search=Apollo&page=1&pageSize=20`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(secretSearch.body.data.total).toBe(0);
+    expect(secretSearch.body.data.items).toHaveLength(0);
+
+    const memberVisibleList = await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/projects?search=Restricted%20Owner&page=1&pageSize=20`,
+      )
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(memberVisibleList.body.data.total).toBe(1);
+
+    const beforeFailedMemberChange = await prisma.projectMember.count({ where: { projectId } });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ membershipIds: [limitedMembership!.id, foreignMembership!.id] })
+      .expect(400);
+    await expect(prisma.projectMember.count({ where: { projectId } })).resolves.toBe(
+      beforeFailedMemberChange,
+    );
+    await request(app.getHttpServer())
+      .delete(
+        `/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members/${ownerMembership!.id}`,
+      )
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(400);
+    const membershipBeforeRemove = await prisma.workspaceMembership.count({
+      where: { id: memberMembership!.id },
+    });
+    await request(app.getHttpServer())
+      .delete(
+        `/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members/${memberMembership!.id}`,
+      )
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await expect(
+      prisma.workspaceMembership.count({ where: { id: memberMembership!.id } }),
+    ).resolves.toBe(membershipBeforeRemove);
+    await request(app.getHttpServer())
+      .delete(
+        `/api/v1/workspaces/${workspaceA1}/projects/${projectId}/members/${memberMembership!.id}`,
+      )
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Unauthorized direct mutation' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/owner`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ workspaceMembershipId: foreignMembership!.id })
+      .expect(400);
+    const ownerChanged = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/owner`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ workspaceMembershipId: memberMembership!.id })
+      .expect(200);
+    expect(ownerChanged.body.data.ownerMembershipId).toBe(memberMembership!.id);
+    const ownerAuditBeforeNoop = await prisma.auditLog.count({
+      where: { entityId: projectId, action: 'project.owner_changed' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/owner`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ workspaceMembershipId: memberMembership!.id })
+      .expect(200);
+    await expect(
+      prisma.auditLog.count({ where: { entityId: projectId, action: 'project.owner_changed' } }),
+    ).resolves.toBe(ownerAuditBeforeNoop);
+
+    const raceProject = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        name: 'Concurrent Owner Change',
+        visibility: 'RESTRICTED',
+        ownerMembershipId: ownerMembership!.id,
+      })
+      .expect(201);
+    const ownerRaces = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/projects/${raceProject.body.data.id}/owner`)
+        .set(auth(ownerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ workspaceMembershipId: memberMembership!.id }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/projects/${raceProject.body.data.id}/owner`)
+        .set(auth(ownerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ workspaceMembershipId: limitedMembership!.id }),
+    ]);
+    expect(ownerRaces.every((response) => response.status === 200)).toBe(true);
+    const finalOwner = await prisma.project.findUniqueOrThrow({
+      where: { id: raceProject.body.data.id },
+      select: { ownerMembershipId: true },
+    });
+    expect([memberMembership!.id, limitedMembership!.id]).toContain(finalOwner.ownerMembershipId);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ visibility: 'WORKSPACE' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+  });
+
   function createStatus(
     entityType: keyof typeof StatusEntityType,
     name: string,
@@ -1180,6 +1531,9 @@ async function seedRoles() {
     'projects.update',
     'projects.delete',
     'projects.manage_status',
+    'projects.view_all',
+    'projects.manage_members',
+    'projects.manage_owner',
     'statuses.view',
     'statuses.create',
     'statuses.update',
@@ -1247,6 +1601,7 @@ async function resetDatabase() {
     prisma.taskCompletionPolicyApprover.deleteMany(),
     prisma.taskCompletionPolicy.deleteMany(),
     prisma.projectAttachment.deleteMany(),
+    prisma.projectMember.deleteMany(),
     prisma.attachment.deleteMany(),
     prisma.task.deleteMany(),
     prisma.taskTemplate.deleteMany(),

@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 8.1 - Project Core + Status Migration - COMPLETE / PASS
-Next: Phase 8.2 - Project Owner + Members + Visibility
+Current: Phase 8.2 - Project Owner + Members + Visibility - COMPLETE / PASS
+Next: Phase 8.3 - Project Tags + Progress + Completion
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -1427,6 +1427,56 @@ Verification:
 
 Phase 8.1 is complete/pass. Do not start Phase 8.2 automatically.
 
+### Phase 8.2 - Project Owner + Members + Visibility - COMPLETE / PASS
+
+Implemented:
+
+- Existing `Project` model extended; no second Project model or second status system was introduced.
+- Projects now have `ownerMembershipId` referencing `WorkspaceMembership` in the same Workspace.
+- Projects now support `visibility = WORKSPACE | RESTRICTED`.
+- New `ProjectMember` model stores same-Workspace project membership through `WorkspaceMembership`.
+- Project create/update/detail/list serialization includes owner, visibility, and member count metadata.
+- Workspace-scoped Project member APIs support paginated list, add, idempotent remove, and owner changes.
+- New permission keys: `projects.view_all`, `projects.manage_members`, and `projects.manage_owner`.
+- `/workspace/projects` UX supports owner selection, visibility selection, and minimal member management.
+- Task Project summaries now suppress restricted Project metadata unless the viewer can access that Project.
+- Permission resolution and `PermissionGuard` no longer grant access by role name or OWNER wildcard derivation.
+- Focused refinement hardened duplicate member races, batch atomicity, direct-ID mutation security, selector leakage, immediate frontend access-loss handling, and no-op audit behavior.
+
+Security/performance invariants:
+
+- Project owner and members are always `WorkspaceMembership` records, never raw User-only ownership.
+- Project owner assignment accepts only active same-Workspace `WorkspaceMembership` records; existing Projects remain intact if the owner membership later becomes inactive.
+- Foreign Workspace, inactive, missing, and owner-as-member Project memberships are rejected or ignored according to the API contract.
+- Restricted Projects are visible only to their owner membership, Project members, or callers with `projects.view_all`.
+- Owner/member visibility does not replace RBAC mutation permissions.
+- `projects.view_all` is a Workspace-bounded visibility bypass only and does not imply update/delete/member-management permissions.
+- Project creator is not a permanent restricted-Project bypass.
+- Project visibility is applied before list count, pagination, search, filters, and sort.
+- Project list search and access predicates compose under `AND` so search cannot overwrite visibility restrictions.
+- Project visibility affects Project access only; Task ACL remains independent.
+- Task Project metadata is filtered per linked Project without deleting historical `TaskProject` rows.
+- Task Project selectors exclude inaccessible restricted Projects.
+- Member mutations are bounded, transactional/idempotent, and backed by database uniqueness.
+- Project owner/member/visibility changes handle likely immediate self-access loss by clearing detail cache and navigating to the Project list.
+- Workspace switching remains isolated through Workspace-scoped query keys and reset detail/edit state.
+- Phase 8.2 did not introduce tags, progress/completion, Kanban/Gantt, Project files redesign, activity feeds, reports, or templates.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy` applied migration `0025_phase8_2_project_owner_members_visibility`.
+- `pnpm prisma:validate` passes.
+- `pnpm --filter @zea-play/api typecheck` passes.
+- `pnpm --filter @zea-play/web typecheck` passes.
+- `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
+- `pnpm test:integration` passes 96/96 API integration tests plus 11/11 worker integration tests.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- `pnpm test:e2e` passes 18/18.
+- Build passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+
+Phase 8.2 is complete/pass. Do not start Phase 8.3 automatically.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -1438,6 +1488,8 @@ Phase 8.1 is complete/pass. Do not start Phase 8.2 automatically.
 - Project lifecycle is backed by Workspace-scoped `StatusDefinition(PROJECT)` records.
 - Legacy `Project.status` is compatibility-only and must not be restored as Project lifecycle authority.
 - Project CRUD and listing must remain Workspace scoped.
+- Project ownership and Project members must use same-Workspace `WorkspaceMembership`.
+- Project restricted visibility must be enforced before list pagination/count/search/filter/sort.
 - Project `plannedStartAt` and `dueAt` are UTC timestamps and must be validated as a final pair.
 - `TaskProject` and `ProjectAttachment` compatibility must be preserved while extending Project features.
 - Each initialized Workspace/entity type has exactly one active default status.
@@ -1449,7 +1501,7 @@ Phase 8.1 is complete/pass. Do not start Phase 8.2 automatically.
 - Refresh token remains HttpOnly.
 - CSRF protection remains enabled.
 - `x-agency-id` and `x-workspace-id` are centralized.
-- OWNER wildcards never cross tenant boundaries.
+- Permission checks are permission-key based; role names do not grant authorization.
 - MinIO credentials never reach browser.
 - External work must eventually use queue/adapter architecture.
 - Redis is not source of truth.
@@ -1463,6 +1515,7 @@ Phase 8.1 is complete/pass. Do not start Phase 8.2 automatically.
 - AgencyMembership
 - WorkspaceMembership
 - Department
+- ProjectMember
 - Role
 - Permission
 - StatusDefinition
@@ -1543,6 +1596,7 @@ Do not infer or invent model fields from this list.
 | Phase 7.10    | PASS   | Not tagged                       |
 | Phase 7       | PASS   | Not tagged                       |
 | Phase 8.1     | PASS   | Not tagged                       |
+| Phase 8.2     | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -1589,6 +1643,7 @@ Confirmed current warnings:
 - Phase 7.9 Task Views final focused refinement is complete/pass.
 - Phase 7.10 Final Task Security + Performance + Integration Audit is complete/pass.
 - Phase 7 Task Management is complete/pass; the next phase is Phase 8 Project Management System.
-- Phase 8.1 Project Core + Status Migration is complete/pass; the next phase is Phase 8.2 Project Owner + Members + Visibility.
+- Phase 8.1 Project Core + Status Migration is complete/pass.
+- Phase 8.2 Project Owner + Members + Visibility is complete/pass; the next phase is Phase 8.3 Project Tags + Progress + Completion.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

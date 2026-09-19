@@ -19,6 +19,7 @@ import {
   Prisma,
   ProcessingJobStatus,
   ProjectStatus,
+  ProjectVisibility,
   TaskCompletionApproverMode,
   TaskCompletionDecision,
   TaskCompletionProofRequirementMode,
@@ -153,7 +154,7 @@ export class TasksService {
       tenant.workspaceId,
       dto.followerMembershipIds ?? [],
     );
-    const projectIds = await this.activeProjectIds(tenant.workspaceId, dto.projectIds ?? []);
+    const projectIds = await this.activeProjectIds(tenant, dto.projectIds ?? []);
     const tagIds = uniqueIds(dto.tagIds ?? []);
     if (tagIds.length > 0) {
       await this.assertWorkspaceTags(tenant.workspaceId, tagIds, true);
@@ -313,7 +314,7 @@ export class TasksService {
         recurring: Boolean(recurrence),
       },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async list(tenant: WorkspaceTenantContext, query: TaskQueryDto) {
@@ -330,7 +331,7 @@ export class TasksService {
       this.prisma.task.count({ where }),
     ]);
     return {
-      items: items.map(serializeTaskListItem),
+      items: items.map((task) => serializeTaskListItem(task, tenant)),
       page: query.page,
       pageSize: query.pageSize,
       total,
@@ -932,7 +933,9 @@ export class TasksService {
       const key = DateTime.fromJSDate(task.dueAt, { zone: timezone }).toISODate()!;
       const day = dayByDate.get(key);
       if (!day) continue;
-      const item = serializeTaskListItem(task) as ReturnType<typeof serializeTaskListItem> & {
+      const item = serializeTaskListItem(task, tenant) as ReturnType<
+        typeof serializeTaskListItem
+      > & {
         urgency: 'SAFE' | 'WARNING' | 'OVERDUE';
       };
       day.tasks.push({
@@ -992,7 +995,7 @@ export class TasksService {
       : [];
     return {
       window: { from, to, timezone },
-      items: items.map(serializeTaskListItem),
+      items: items.map((task) => serializeTaskListItem(task, tenant)),
       dependencies,
       unscheduledCount,
       page: query.page,
@@ -1033,7 +1036,7 @@ export class TasksService {
         changed: Object.keys(dto).filter((key) => dto[key as keyof typeof dto] !== undefined),
       },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async reportsSummary(tenant: WorkspaceTenantContext, query: TaskReportsQueryDto) {
@@ -1311,7 +1314,7 @@ export class TasksService {
       ? await this.activeMembershipIds(tenant.workspaceId, dto.followerMembershipIds)
       : existing.followers.map((item) => item.membershipId);
     const projectIds = dto.projectIds
-      ? await this.activeProjectIds(tenant.workspaceId, dto.projectIds)
+      ? await this.activeProjectIds(tenant, dto.projectIds)
       : existing.projects.map((item) => item.projectId);
     const tagIds = dto.tagIds ? uniqueIds(dto.tagIds) : existing.tags.map((item) => item.tagId);
     if (tagIds.length > 0) await this.assertWorkspaceTags(tenant.workspaceId, tagIds, true);
@@ -1417,7 +1420,7 @@ export class TasksService {
       entityId: result.seriesId,
       metadata: { taskId },
     });
-    return serializeTaskDetail(result.task);
+    return serializeTaskDetail(result.task, tenant);
   }
 
   async pauseRecurrence(tenant: WorkspaceTenantContext, seriesId: string) {
@@ -1461,7 +1464,7 @@ export class TasksService {
   }
 
   async createTemplate(tenant: WorkspaceTenantContext, dto: CreateTaskTemplateDto) {
-    const data = await this.templateData(tenant.workspaceId, dto);
+    const data = await this.templateData(tenant, dto);
     if (!data.name || !data.title || !data.statusDefinitionId) {
       throw new BadRequestException('Template name, title, and status are required.');
     }
@@ -1549,7 +1552,7 @@ export class TasksService {
     dto: UpdateTaskTemplateDto,
   ) {
     await this.findTemplate(tenant.workspaceId, templateId);
-    const data = await this.templateData(tenant.workspaceId, dto, true);
+    const data = await this.templateData(tenant, dto, true);
     const template = await this.prisma
       .$transaction(async (tx) => {
         await tx.taskTemplate.update({
@@ -2144,7 +2147,7 @@ export class TasksService {
         return { task: updated, changed: true, fromStatusDefinitionId: task.statusDefinitionId };
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
-    return serializeTaskDetail(result.task);
+    return serializeTaskDetail(result.task, tenant);
   }
 
   async bulkUpdateStatus(tenant: WorkspaceTenantContext, dto: BulkTaskStatusDto) {
@@ -2430,7 +2433,7 @@ export class TasksService {
   }
 
   async get(tenant: WorkspaceTenantContext, taskId: string) {
-    return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId));
+    return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId), tenant);
   }
 
   async listSubtasks(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
@@ -2447,7 +2450,7 @@ export class TasksService {
       this.prisma.task.count({ where }),
     ]);
     return {
-      items: items.map(serializeTaskListItem),
+      items: items.map((task) => serializeTaskListItem(task, tenant)),
       page: query.page,
       pageSize: query.pageSize,
       total,
@@ -2495,7 +2498,7 @@ export class TasksService {
         return { task: updated, oldParentTaskId: task.parentTaskId, changed: true };
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
-    return serializeTaskDetail(result.task);
+    return serializeTaskDetail(result.task, tenant);
   }
 
   async listBlockedBy(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
@@ -3330,7 +3333,7 @@ export class TasksService {
       dto.statusDefinitionId &&
       dto.statusDefinitionId === existing.statusDefinitionId
     ) {
-      return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId));
+      return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId), tenant);
     }
     const status = dto.statusDefinitionId
       ? await this.taskStatus(tenant.workspaceId, dto.statusDefinitionId)
@@ -3465,7 +3468,7 @@ export class TasksService {
       entityId: taskId,
       metadata: { changed: changedFields, recurrenceEditScope },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async updateStatus(
@@ -3476,7 +3479,7 @@ export class TasksService {
   ) {
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     if (existing.statusDefinitionId === statusDefinitionId) {
-      return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId));
+      return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId), tenant);
     }
     const status = await this.taskStatus(tenant.workspaceId, statusDefinitionId);
     if (status.isTerminal) {
@@ -3509,7 +3512,7 @@ export class TasksService {
         toStatusDefinitionId: status.id,
       },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async replaceAssignees(
@@ -3541,7 +3544,7 @@ export class TasksService {
       entityId: taskId,
       metadata: { count: membershipIds.length },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async replaceFollowers(
@@ -3573,7 +3576,7 @@ export class TasksService {
       entityId: taskId,
       metadata: { count: membershipIds.length },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async replaceProjects(
@@ -3582,7 +3585,7 @@ export class TasksService {
     dto: ReplaceTaskProjectsDto,
   ) {
     await this.assertTask(tenant.workspaceId, taskId);
-    const projectIds = await this.activeProjectIds(tenant.workspaceId, dto.projectIds);
+    const projectIds = await this.activeProjectIds(tenant, dto.projectIds);
     const task = await this.prisma.$transaction(async (tx) => {
       await tx.taskProject.deleteMany({ where: { taskId, workspaceId: tenant.workspaceId } });
       if (projectIds.length > 0) {
@@ -3605,7 +3608,7 @@ export class TasksService {
       entityId: taskId,
       metadata: { count: projectIds.length },
     });
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   async remove(tenant: WorkspaceTenantContext, taskId: string) {
@@ -3645,7 +3648,7 @@ export class TasksService {
         return deletedTask;
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
-    return serializeTaskDetail(task);
+    return serializeTaskDetail(task, tenant);
   }
 
   private async createTaskComment(
@@ -4285,7 +4288,7 @@ export class TasksService {
       entityId: result.submission.id,
       metadata: { taskId, version: result.submission.version },
     });
-    return serializeTaskDetail(result.task);
+    return serializeTaskDetail(result.task, tenant);
   }
 
   private async applyTaskStatusTransition(
@@ -4997,10 +5000,14 @@ export class TasksService {
     return membershipIds;
   }
 
-  private async activeProjectIds(workspaceId: string, projectIds: string[]) {
+  private async activeProjectIds(tenant: WorkspaceTenantContext, projectIds: string[]) {
     if (projectIds.length === 0) return [];
     const projects = await this.prisma.project.findMany({
-      where: { id: { in: projectIds }, workspaceId },
+      where: {
+        id: { in: projectIds },
+        workspaceId: tenant.workspaceId,
+        ...this.visibleProjectRelationWhere(tenant),
+      },
       select: { id: true, status: true },
     });
     if (projects.length !== projectIds.length) {
@@ -5010,6 +5017,26 @@ export class TasksService {
       throw new BadRequestException('Archived projects cannot be linked to new task updates.');
     }
     return projectIds;
+  }
+
+  private visibleProjectRelationWhere(tenant: WorkspaceTenantContext): Prisma.ProjectWhereInput {
+    if (this.hasPermission(tenant, PermissionKeys.projectsViewAll)) return {};
+    const membershipId = tenant.workspaceMembershipId;
+    return {
+      OR: [
+        { visibility: ProjectVisibility.WORKSPACE },
+        ...(membershipId
+          ? [
+              { ownerMembershipId: membershipId },
+              {
+                members: {
+                  some: { workspaceMembershipId: membershipId, workspaceId: tenant.workspaceId },
+                },
+              },
+            ]
+          : []),
+      ],
+    };
   }
 
   private async assertWorkspaceTags(
@@ -5192,10 +5219,11 @@ export class TasksService {
   }
 
   private async templateData(
-    workspaceId: string,
+    tenant: WorkspaceTenantContext,
     dto: CreateTaskTemplateDto | UpdateTaskTemplateDto,
     partial = false,
   ) {
+    const workspaceId = tenant.workspaceId;
     const status = dto.statusDefinitionId
       ? await this.taskStatus(workspaceId, dto.statusDefinitionId)
       : null;
@@ -5212,9 +5240,7 @@ export class TasksService {
     const followerIds = dto.followerMembershipIds
       ? await this.activeMembershipIds(workspaceId, dto.followerMembershipIds)
       : [];
-    const projectIds = dto.projectIds
-      ? await this.activeProjectIds(workspaceId, dto.projectIds)
-      : [];
+    const projectIds = dto.projectIds ? await this.activeProjectIds(tenant, dto.projectIds) : [];
     const tagIds = dto.tagIds ? uniqueIds(dto.tagIds) : [];
     if (tagIds.length > 0) await this.assertWorkspaceTags(workspaceId, tagIds, true);
     return {
@@ -5340,7 +5366,18 @@ const taskListSelect = {
     take: 5,
   },
   projects: {
-    select: { project: { select: { id: true, name: true, status: true } } },
+    select: {
+      project: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          visibility: true,
+          ownerMembershipId: true,
+          members: { select: { workspaceMembershipId: true } },
+        },
+      },
+    },
     orderBy: { createdAt: 'asc' },
     take: 5,
   },
@@ -5445,7 +5482,18 @@ const taskDetailSelect = {
     orderBy: { createdAt: 'asc' },
   },
   projects: {
-    select: { project: { select: { id: true, name: true, status: true } } },
+    select: {
+      project: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          visibility: true,
+          ownerMembershipId: true,
+          members: { select: { workspaceMembershipId: true } },
+        },
+      },
+    },
     orderBy: { createdAt: 'asc' },
   },
   _count: {
@@ -5775,13 +5823,13 @@ type NormalizedCompletionProofItem =
   | { type: 'CHECKLIST_CONFIRMATION'; checklistConfirmed: true }
   | { type: 'ATTACHMENT'; attachmentId: string };
 
-function serializeTaskListItem(task: TaskListRecord) {
+function serializeTaskListItem(task: TaskListRecord, tenant: WorkspaceTenantContext) {
   return {
     ...task,
     kanbanRank: task.kanbanRank?.toString() ?? null,
     status: task.statusDefinition,
     assignees: task.assignees.map((item) => item.membership),
-    projects: task.projects.map((item) => item.project),
+    projects: visibleTaskProjects(task.projects, tenant),
     counts: task._count,
     completion: completionSummary(task.pendingCompletionSubmissionId),
     statusDefinition: undefined,
@@ -5789,14 +5837,14 @@ function serializeTaskListItem(task: TaskListRecord) {
   };
 }
 
-function serializeTaskDetail(task: TaskDetailRecord) {
+function serializeTaskDetail(task: TaskDetailRecord, tenant: WorkspaceTenantContext) {
   return {
     ...task,
     kanbanRank: task.kanbanRank?.toString() ?? null,
     status: task.statusDefinition,
     assignees: task.assignees.map((item) => item.membership),
     followers: task.followers.map((item) => item.membership),
-    projects: task.projects.map((item) => item.project),
+    projects: visibleTaskProjects(task.projects, tenant),
     parent:
       task.parentTask && !task.parentTask.deletedAt
         ? {
@@ -5815,6 +5863,42 @@ function serializeTaskDetail(task: TaskDetailRecord) {
     parentTask: undefined,
     _count: undefined,
   };
+}
+
+function visibleTaskProjects(
+  links: {
+    project: {
+      id: string;
+      name: string;
+      status: ProjectStatus;
+      visibility: ProjectVisibility;
+      ownerMembershipId: string;
+      members: { workspaceMembershipId: string }[];
+    };
+  }[],
+  tenant: WorkspaceTenantContext,
+) {
+  const canViewAll =
+    tenant.permissions.includes('*') || tenant.permissions.includes(PermissionKeys.projectsViewAll);
+  const membershipId = tenant.workspaceMembershipId;
+  return links
+    .map((item) => item.project)
+    .filter(
+      (project) =>
+        project.visibility === ProjectVisibility.WORKSPACE ||
+        canViewAll ||
+        (membershipId &&
+          (project.ownerMembershipId === membershipId ||
+            project.members.some((member) => member.workspaceMembershipId === membershipId))),
+    )
+    .map(
+      ({
+        members: _members,
+        ownerMembershipId: _ownerMembershipId,
+        visibility: _visibility,
+        ...project
+      }) => project,
+    );
 }
 
 function completionSummary(pendingCompletionSubmissionId: string | null) {

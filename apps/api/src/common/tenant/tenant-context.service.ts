@@ -8,7 +8,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import type { AgencyTenantContext, WorkspaceTenantContext } from '../auth/auth.types';
-import { AGENCY_ADMIN_ROLES, OWNER_ROLE } from '../authorization/permissions';
+import { AGENCY_ADMIN_ROLES } from '../authorization/permissions';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -161,10 +161,8 @@ export class TenantContextService {
   }
 }
 
-function permissionsForRole(roleKey: string, permissions: { permission: { key: string } }[]) {
-  return roleKey === OWNER_ROLE || roleKey === 'AGENCY_OWNER'
-    ? ['*']
-    : permissions.map((item) => item.permission.key);
+function permissionsForRole(_roleKey: string, permissions: { permission: { key: string } }[]) {
+  return permissions.map((item) => item.permission.key);
 }
 
 function assertActiveUser(status: UserStatus) {

@@ -8,7 +8,6 @@ import {
 import { Prisma, RoleScope } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
-import { OWNER_ROLE } from '../../common/authorization/permissions';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateRoleDto, ReplaceRolePermissionsDto, UpdateRoleDto } from './dto/role.dto';
@@ -257,7 +256,7 @@ export class RolesService {
     if (permissions.some((permission) => permission.key === '*')) {
       throw new BadRequestException('Wildcard permissions are not assignable.');
     }
-    if (tenant.roleName !== OWNER_ROLE && !tenant.permissions.includes('*')) {
+    if (!tenant.permissions.includes('*')) {
       const callerPermissions = new Set(tenant.permissions);
       const forbidden = permissions.filter((permission) => !callerPermissions.has(permission.key));
       if (forbidden.length) {

@@ -8,6 +8,7 @@ import {
   PrismaClient,
   Prisma,
   ProjectStatus,
+  ProjectVisibility,
   RoleScope,
   StatusCategory,
   TaskCompletionApproverMode,
@@ -4159,6 +4160,81 @@ describe('Phase 7.1 task core backend integration', () => {
     });
   });
 
+  it('does not leak restricted project metadata through task project summaries', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const viewer = await prisma.user.findUniqueOrThrow({
+      where: { email: 'viewer-a@zeaplay.test' },
+    });
+    const viewerMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: viewer.id, workspaceId: workspaceA1 } },
+    });
+    const projectViewPermission = await prisma.permission.findUniqueOrThrow({
+      where: { key: 'projects.view' },
+    });
+    await prisma.rolePermission.create({
+      data: { roleId: viewerMembership.roleId, permissionId: projectViewPermission.id },
+    });
+    const restrictedProject = await project(
+      workspaceA1,
+      admin.id,
+      'Restricted Task Summary Project',
+      ProjectStatus.ACTIVE,
+      ProjectVisibility.RESTRICTED,
+    );
+    const visibleProject = await project(workspaceA1, admin.id, 'Visible Task Selector Project');
+    const linked = await createTask({
+      title: 'Restricted project task summary',
+      projectIds: [restrictedProject.id, visibleProject.id],
+    }).expect(201);
+    expect(linked.body.data.projects.map((item: { id: string }) => item.id)).toContain(
+      restrictedProject.id,
+    );
+
+    const hiddenDetail = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${linked.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(hiddenDetail.body.data.projects.map((item: { id: string }) => item.id)).toEqual([
+      visibleProject.id,
+    ]);
+
+    const hiddenList = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?search=Restricted%20project%20task%20summary`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(hiddenList.body.data.items[0].projects.map((item: { id: string }) => item.id)).toEqual([
+      visibleProject.id,
+    ]);
+
+    const selector = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects?search=Task%20Selector&page=1&pageSize=20`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(selector.body.data.items.map((item: { id: string }) => item.id)).toEqual([
+      visibleProject.id,
+    ]);
+
+    await prisma.projectMember.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId: restrictedProject.id,
+        workspaceMembershipId: viewerMembership.id,
+        addedByMembershipId: adminMembershipId,
+      },
+    });
+    const visibleDetail = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks/${linked.body.data.id}`)
+      .set(auth(viewerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(visibleDetail.body.data.projects.map((item: { id: string }) => item.id)).toContain(
+      restrictedProject.id,
+    );
+  });
+
   it('enforces global live timers, atomic switching, terminal auto-stop, and manual time on completed tasks', async () => {
     const primary = await createTask({
       title: 'Phase 7.8 timer primary',
@@ -5379,6 +5455,7 @@ describe('Phase 7.1 task core backend integration', () => {
       'tasks.time.delete_own',
       'tasks.time.view_all',
       'tasks.time.manage',
+      'projects.view',
       'tags.view',
       'tags.create',
       'tags.update',
@@ -5682,6 +5759,7 @@ async function resetDatabase() {
     prisma.refreshToken.deleteMany(),
     prisma.processingJob.deleteMany(),
     prisma.asset.deleteMany(),
+    prisma.projectMember.deleteMany(),
     prisma.project.deleteMany(),
     prisma.workspaceMemberCapacity.deleteMany(),
     prisma.workspaceMembership.deleteMany(),
@@ -5721,8 +5799,21 @@ async function project(
   createdById: string,
   name: string,
   status: ProjectStatus = ProjectStatus.ACTIVE,
+  visibility: ProjectVisibility = ProjectVisibility.WORKSPACE,
 ) {
-  return prisma.project.create({ data: { workspaceId, createdById, name, status } });
+  const ownerMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+    where: { userId_workspaceId: { userId: createdById, workspaceId } },
+  });
+  return prisma.project.create({
+    data: {
+      workspaceId,
+      createdById,
+      ownerMembershipId: ownerMembership.id,
+      name,
+      status,
+      visibility,
+    },
+  });
 }
 
 function roleId(roles: Record<string, { id: string }>, key: string) {

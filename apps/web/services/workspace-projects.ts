@@ -2,6 +2,7 @@ import { apiClient } from './api';
 import type { Department, PageResult } from './workspace-management';
 
 export type ProjectPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+export type ProjectVisibility = 'WORKSPACE' | 'RESTRICTED';
 export type ProjectSortBy =
   'createdAt' | 'updatedAt' | 'name' | 'dueAt' | 'plannedStartAt' | 'priority';
 export type ProjectSortDirection = 'asc' | 'desc';
@@ -14,13 +15,32 @@ export interface WorkspaceProjectSummary {
   statusDefinitionId: string | null;
   status: { id: string; name: string; color: string; terminal: boolean } | null;
   priority: ProjectPriority;
+  visibility: ProjectVisibility;
   plannedStartAt: string | null;
   dueAt: string | null;
   departmentId: string | null;
   department: Pick<Department, 'id' | 'name' | 'status'> | null;
+  ownerMembershipId: string;
+  owner: ProjectMembershipSummary;
+  memberCount: number;
   createdById?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProjectMembershipSummary {
+  id: string;
+  status: string;
+  user: { id: string; email: string; name: string | null };
+}
+
+export interface ProjectMember {
+  id: string;
+  workspaceId: string;
+  projectId: string;
+  workspaceMembershipId: string;
+  member: ProjectMembershipSummary;
+  createdAt: string;
 }
 
 export interface ProjectPayload {
@@ -31,6 +51,9 @@ export interface ProjectPayload {
   plannedStartAt?: string | null;
   dueAt?: string | null;
   departmentId?: string | null;
+  ownerMembershipId?: string;
+  visibility?: ProjectVisibility;
+  memberMembershipIds?: string[];
 }
 
 export interface ListWorkspaceProjectsParams {
@@ -71,6 +94,8 @@ export const projectKeys = {
     ['workspace', workspaceId, 'projects', 'list', params] as const,
   detail: (workspaceId: string | null, projectId: string | null) =>
     ['workspace', workspaceId, 'projects', 'detail', projectId] as const,
+  members: (workspaceId: string | null, projectId: string | null, params: object) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'members', params] as const,
 };
 
 export async function listWorkspaceProjects(
@@ -131,6 +156,58 @@ export async function deleteWorkspaceProject(workspaceId: string, projectId: str
   return response.data;
 }
 
+export async function listWorkspaceProjectMembers(
+  workspaceId: string,
+  projectId: string,
+  params: { page?: number; pageSize?: number; search?: string } = {},
+) {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    pageSize: String(params.pageSize ?? 20),
+  });
+  if (params.search?.trim()) query.set('search', params.search.trim());
+  const response = await apiClient.request<PageResult<ProjectMember>>(
+    `/workspaces/${workspaceId}/projects/${projectId}/members?${query.toString()}`,
+  );
+  return response.data;
+}
+
+export async function addWorkspaceProjectMembers(
+  workspaceId: string,
+  projectId: string,
+  membershipIds: string[],
+) {
+  const response = await apiClient.request<PageResult<ProjectMember>>(
+    `/workspaces/${workspaceId}/projects/${projectId}/members`,
+    { method: 'POST', body: JSON.stringify({ membershipIds }) },
+  );
+  return response.data;
+}
+
+export async function removeWorkspaceProjectMember(
+  workspaceId: string,
+  projectId: string,
+  membershipId: string,
+) {
+  const response = await apiClient.request<{ id: string; membershipId: string; removed: boolean }>(
+    `/workspaces/${workspaceId}/projects/${projectId}/members/${membershipId}`,
+    { method: 'DELETE' },
+  );
+  return response.data;
+}
+
+export async function updateWorkspaceProjectOwner(
+  workspaceId: string,
+  projectId: string,
+  workspaceMembershipId: string,
+) {
+  const response = await apiClient.request<WorkspaceProjectSummary>(
+    `/workspaces/${workspaceId}/projects/${projectId}/owner`,
+    { method: 'PATCH', body: JSON.stringify({ workspaceMembershipId }) },
+  );
+  return response.data;
+}
+
 export function normalizeProjectListParams(
   params: ListWorkspaceProjectsParams,
 ): NormalizedProjectListParams {
@@ -159,6 +236,9 @@ function compactProjectPayload(body: ProjectPayload) {
     ...(body.plannedStartAt !== undefined ? { plannedStartAt: body.plannedStartAt } : {}),
     ...(body.dueAt !== undefined ? { dueAt: body.dueAt } : {}),
     ...(body.departmentId !== undefined ? { departmentId: body.departmentId || null } : {}),
+    ...(body.ownerMembershipId ? { ownerMembershipId: body.ownerMembershipId } : {}),
+    ...(body.visibility ? { visibility: body.visibility } : {}),
+    ...(body.memberMembershipIds ? { memberMembershipIds: body.memberMembershipIds } : {}),
   };
 }
 

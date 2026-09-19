@@ -1,17 +1,24 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   DepartmentStatus,
+  MembershipStatus,
   Prisma,
   ProjectStatus,
+  ProjectVisibility,
   StatusEntityType,
   TaskPriority,
 } from '@prisma/client';
-import { PrismaService } from '../../infrastructure/database/prisma.service';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { PermissionKeys } from '../../common/authorization/permissions';
+import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
-import { UpdateProjectDto } from './dto/update-project.dto';
+import {
+  ProjectMemberQueryDto,
+  ProjectMembersDto,
+  UpdateProjectDto,
+} from './dto/update-project.dto';
 
 @Injectable()
 export class ProjectsService {
@@ -26,8 +33,14 @@ export class ProjectsService {
     const { plannedStartAt, dueAt } = normalizeProjectDates(dto);
     const status = await this.projectStatus(tenant.workspaceId, dto.statusDefinitionId);
     const department = await this.projectDepartment(tenant.workspaceId, dto.departmentId);
-    const project = await this.prisma.$transaction(async (tx) =>
-      tx.project.create({
+    const ownerMembershipId = dto.ownerMembershipId ?? tenant.workspaceMembershipId;
+    if (!ownerMembershipId) throw new BadRequestException('INVALID_PROJECT_OWNER');
+    const owner = await this.activeMembership(tenant.workspaceId, ownerMembershipId);
+    const memberIds = uniqueIds(dto.memberMembershipIds ?? []).filter((id) => id !== owner.id);
+    await this.activeMemberships(tenant.workspaceId, memberIds);
+
+    const project = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.project.create({
         data: {
           workspaceId: tenant.workspaceId,
           createdById: tenant.userId,
@@ -35,14 +48,32 @@ export class ProjectsService {
           description,
           statusDefinitionId: status.id,
           priority: dto.priority ?? TaskPriority.MEDIUM,
+          visibility: dto.visibility ?? ProjectVisibility.WORKSPACE,
           plannedStartAt,
           dueAt,
           departmentId: department?.id ?? null,
+          ownerMembershipId: owner.id,
           status: ProjectStatus.ACTIVE,
         },
+        select: { id: true },
+      });
+      if (memberIds.length > 0) {
+        await tx.projectMember.createMany({
+          data: memberIds.map((membershipId) => ({
+            workspaceId: tenant.workspaceId,
+            projectId: created.id,
+            workspaceMembershipId: membershipId,
+            addedByMembershipId: tenant.workspaceMembershipId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      return tx.project.findUniqueOrThrow({
+        where: { id_workspaceId: { id: created.id, workspaceId: tenant.workspaceId } },
         select: projectDetailSelect,
-      }),
-    );
+      });
+    });
+
     await this.audit.record({
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
@@ -50,13 +81,18 @@ export class ProjectsService {
       action: 'project.created',
       entityType: 'Project',
       entityId: project.id,
-      metadata: { statusDefinitionId: status.id },
+      metadata: {
+        statusDefinitionId: status.id,
+        ownerMembershipId: owner.id,
+        visibility: project.visibility,
+        memberCount: memberIds.length,
+      },
     });
     return serializeProject(project);
   }
 
   async list(tenant: WorkspaceTenantContext, query: ProjectQueryDto) {
-    const where = this.projectWhere(tenant.workspaceId, query);
+    const where = this.projectWhere(tenant, query);
     const orderBy = projectOrderBy(query.sortBy, query.sortDirection);
     const [items, total] = await this.prisma.$transaction([
       this.prisma.project.findMany({
@@ -77,29 +113,22 @@ export class ProjectsService {
   }
 
   async get(tenant: WorkspaceTenantContext, id: string) {
-    const project = await this.prisma.project.findFirst({
-      where: { id, workspaceId: tenant.workspaceId, archivedAt: null },
-      select: projectDetailSelect,
-    });
-    if (!project) throw new NotFoundException('Project not found.');
+    const project = await this.readAccessibleProject(tenant, id, projectDetailSelect);
     return serializeProject(project);
   }
 
   async update(tenant: WorkspaceTenantContext, id: string, dto: UpdateProjectDto) {
-    const existing = await this.prisma.project.findFirst({
-      where: { id, workspaceId: tenant.workspaceId, archivedAt: null },
-      select: {
-        id: true,
-        statusDefinitionId: true,
-        name: true,
-        description: true,
-        priority: true,
-        plannedStartAt: true,
-        dueAt: true,
-        departmentId: true,
-      },
-    });
-    if (!existing) throw new NotFoundException('Project not found.');
+    const existing = await this.readAccessibleProject(tenant, id, {
+      id: true,
+      statusDefinitionId: true,
+      name: true,
+      description: true,
+      priority: true,
+      visibility: true,
+      plannedStartAt: true,
+      dueAt: true,
+      departmentId: true,
+    } satisfies Prisma.ProjectSelect);
 
     const nextDates = normalizeProjectDates({
       plannedStartAt:
@@ -119,6 +148,7 @@ export class ProjectsService {
         ? { description: normalizeDescription(dto.description) }
         : {}),
       ...(dto.priority ? { priority: dto.priority } : {}),
+      ...(dto.visibility ? { visibility: dto.visibility } : {}),
       plannedStartAt: nextDates.plannedStartAt,
       dueAt: nextDates.dueAt,
       ...(status
@@ -142,6 +172,7 @@ export class ProjectsService {
     if (status && status.id !== existing.statusDefinitionId) changed.push('statusDefinitionId');
     if (department !== undefined && (department?.id ?? null) !== existing.departmentId)
       changed.push('departmentId');
+    if (dto.visibility && dto.visibility !== existing.visibility) changed.push('visibility');
     if (changed.length === 0) return this.get(tenant, id);
 
     const project = await this.prisma.project.update({
@@ -153,20 +184,25 @@ export class ProjectsService {
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
       userId: tenant.userId,
-      action: 'project.updated',
+      action:
+        dto.visibility && dto.visibility !== existing.visibility
+          ? 'project.visibility_changed'
+          : 'project.updated',
       entityType: 'Project',
       entityId: id,
-      metadata: { changed },
+      metadata:
+        dto.visibility && dto.visibility !== existing.visibility
+          ? { fromVisibility: existing.visibility, toVisibility: dto.visibility }
+          : { changed },
     });
     return serializeProject(project);
   }
 
   async updateStatus(tenant: WorkspaceTenantContext, id: string, statusDefinitionId: string) {
-    const existing = await this.prisma.project.findFirst({
-      where: { id, workspaceId: tenant.workspaceId, archivedAt: null },
-      select: { id: true, statusDefinitionId: true },
-    });
-    if (!existing) throw new NotFoundException('Project not found.');
+    const existing = await this.readAccessibleProject(tenant, id, {
+      id: true,
+      statusDefinitionId: true,
+    } satisfies Prisma.ProjectSelect);
     const status = await this.projectStatus(tenant.workspaceId, statusDefinitionId);
     if (existing.statusDefinitionId === status.id) return this.get(tenant, id);
     const project = await this.prisma.project.update({
@@ -190,6 +226,7 @@ export class ProjectsService {
   }
 
   async archive(tenant: WorkspaceTenantContext, id: string) {
+    await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
     const update = await this.prisma.project.updateMany({
       where: { id, workspaceId: tenant.workspaceId, archivedAt: null },
       data: { status: ProjectStatus.ARCHIVED, archivedAt: new Date() },
@@ -206,35 +243,199 @@ export class ProjectsService {
     return { id, deleted: true };
   }
 
-  private projectWhere(workspaceId: string, query: ProjectQueryDto): Prisma.ProjectWhereInput {
+  async listMembers(tenant: WorkspaceTenantContext, id: string, query: ProjectMemberQueryDto) {
+    await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
+    const search = query.search?.trim();
+    const where: Prisma.ProjectMemberWhereInput = {
+      workspaceId: tenant.workspaceId,
+      projectId: id,
+      ...(search
+        ? {
+            workspaceMembership: {
+              user: {
+                OR: [
+                  { email: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                  { name: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                ],
+              },
+            },
+          }
+        : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.projectMember.findMany({
+        where,
+        select: projectMemberSelect,
+        orderBy: { createdAt: 'asc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.projectMember.count({ where }),
+    ]);
+    return {
+      items: items.map(serializeProjectMember),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+    };
+  }
+
+  async addMembers(tenant: WorkspaceTenantContext, id: string, dto: ProjectMembersDto) {
+    const project = await this.readAccessibleProject(tenant, id, {
+      id: true,
+      ownerMembershipId: true,
+    } satisfies Prisma.ProjectSelect);
+    const membershipIds = uniqueIds(dto.membershipIds).filter(
+      (item) => item !== project.ownerMembershipId,
+    );
+    await this.activeMemberships(tenant.workspaceId, membershipIds);
+    const existing = await this.prisma.projectMember.findMany({
+      where: {
+        workspaceId: tenant.workspaceId,
+        projectId: id,
+        workspaceMembershipId: { in: membershipIds },
+      },
+      select: { workspaceMembershipId: true },
+    });
+    const existingIds = new Set(existing.map((item) => item.workspaceMembershipId));
+    const newIds = membershipIds.filter((item) => !existingIds.has(item));
+    if (newIds.length === 0) return this.listMembers(tenant, id, new ProjectMemberQueryDto());
+    const created = await this.prisma.projectMember.createMany({
+      data: newIds.map((membershipId) => ({
+        workspaceId: tenant.workspaceId,
+        projectId: id,
+        workspaceMembershipId: membershipId,
+        addedByMembershipId: tenant.workspaceMembershipId,
+      })),
+      skipDuplicates: true,
+    });
+    if (created.count === 0) return this.listMembers(tenant, id, new ProjectMemberQueryDto());
+    await this.audit.record({
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
+      userId: tenant.userId,
+      action: 'project.member_added',
+      entityType: 'Project',
+      entityId: id,
+      metadata: { requestedCount: membershipIds.length, addedCount: created.count },
+    });
+    return this.listMembers(tenant, id, new ProjectMemberQueryDto());
+  }
+
+  async removeMember(tenant: WorkspaceTenantContext, id: string, membershipId: string) {
+    const project = await this.readAccessibleProject(tenant, id, {
+      id: true,
+      ownerMembershipId: true,
+    } satisfies Prisma.ProjectSelect);
+    if (membershipId === project.ownerMembershipId)
+      throw new BadRequestException('PROJECT_OWNER_NOT_REMOVABLE');
+    const deleted = await this.prisma.projectMember.deleteMany({
+      where: {
+        workspaceId: tenant.workspaceId,
+        projectId: id,
+        workspaceMembershipId: membershipId,
+      },
+    });
+    if (deleted.count === 0) return { id, membershipId, removed: false };
+    await this.audit.record({
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
+      userId: tenant.userId,
+      action: 'project.member_removed',
+      entityType: 'Project',
+      entityId: id,
+      metadata: { membershipId },
+    });
+    return { id, membershipId, removed: true };
+  }
+
+  async updateOwner(tenant: WorkspaceTenantContext, id: string, workspaceMembershipId: string) {
+    const project = await this.readAccessibleProject(tenant, id, {
+      id: true,
+      ownerMembershipId: true,
+    } satisfies Prisma.ProjectSelect);
+    const owner = await this.activeMembership(tenant.workspaceId, workspaceMembershipId);
+    if (owner.id === project.ownerMembershipId) return this.get(tenant, id);
+    const updated = await this.prisma.project.update({
+      where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
+      data: { ownerMembershipId: owner.id },
+      select: projectDetailSelect,
+    });
+    await this.audit.record({
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
+      userId: tenant.userId,
+      action: 'project.owner_changed',
+      entityType: 'Project',
+      entityId: id,
+      metadata: { fromMembershipId: project.ownerMembershipId, toMembershipId: owner.id },
+    });
+    return serializeProject(updated);
+  }
+
+  private projectWhere(
+    tenant: WorkspaceTenantContext,
+    query: ProjectQueryDto,
+  ): Prisma.ProjectWhereInput {
     const plannedRange = dateRange(
       query.plannedFrom,
       query.plannedTo,
       'INVALID_PROJECT_DATE_RANGE',
     );
     const dueRange = dateRange(query.dueFrom, query.dueTo, 'INVALID_PROJECT_DATE_RANGE');
+    const filters: Prisma.ProjectWhereInput[] = [this.accessibleProjectWhere(tenant)];
+    if (query.search) {
+      const search = query.search.trim();
+      filters.push({
+        OR: [
+          { name: { contains: search, mode: Prisma.QueryMode.insensitive } },
+          { description: { contains: search, mode: Prisma.QueryMode.insensitive } },
+        ],
+      });
+    }
     return {
-      workspaceId,
-      archivedAt: null,
+      AND: filters,
       statusDefinitionId: query.statusDefinitionId,
       priority: query.priority,
       departmentId: query.departmentId,
-      ...(query.search
-        ? {
-            OR: [
-              { name: { contains: query.search.trim(), mode: Prisma.QueryMode.insensitive } },
-              {
-                description: {
-                  contains: query.search.trim(),
-                  mode: Prisma.QueryMode.insensitive,
-                },
-              },
-            ],
-          }
-        : {}),
       ...(plannedRange ? { plannedStartAt: plannedRange } : {}),
       ...(dueRange ? { dueAt: dueRange } : {}),
     };
+  }
+
+  private accessibleProjectWhere(tenant: WorkspaceTenantContext): Prisma.ProjectWhereInput {
+    const base = { workspaceId: tenant.workspaceId, archivedAt: null };
+    if (hasPermission(tenant, PermissionKeys.projectsViewAll)) return base;
+    const membershipId = tenant.workspaceMembershipId;
+    return {
+      ...base,
+      OR: [
+        { visibility: ProjectVisibility.WORKSPACE },
+        ...(membershipId
+          ? [
+              { ownerMembershipId: membershipId },
+              {
+                members: {
+                  some: { workspaceMembershipId: membershipId, workspaceId: tenant.workspaceId },
+                },
+              },
+            ]
+          : []),
+      ],
+    };
+  }
+
+  private async readAccessibleProject<T extends Prisma.ProjectSelect>(
+    tenant: WorkspaceTenantContext,
+    id: string,
+    select: T,
+  ) {
+    const project = await this.prisma.project.findFirst({
+      where: { ...this.accessibleProjectWhere(tenant), id },
+      select,
+    });
+    if (!project) throw new NotFoundException('Project not found.');
+    return project as Prisma.ProjectGetPayload<{ select: T }>;
   }
 
   private async projectStatus(workspaceId: string, statusDefinitionId?: string) {
@@ -246,10 +447,8 @@ export class ProjectsService {
       select: statusSelect,
       orderBy: { position: 'asc' },
     });
-    if (!status) throw new BadRequestException('INVALID_PROJECT_STATUS');
-    if (status.entityType !== StatusEntityType.PROJECT)
+    if (!status || status.entityType !== StatusEntityType.PROJECT || !status.isActive)
       throw new BadRequestException('INVALID_PROJECT_STATUS');
-    if (!status.isActive) throw new BadRequestException('INVALID_PROJECT_STATUS');
     return status;
   }
 
@@ -264,7 +463,33 @@ export class ProjectsService {
       throw new BadRequestException('INVALID_PROJECT_DEPARTMENT');
     return department;
   }
+
+  private async activeMembership(workspaceId: string, membershipId: string) {
+    const membership = await this.prisma.workspaceMembership.findFirst({
+      where: { id: membershipId, workspaceId, status: MembershipStatus.ACTIVE },
+      select: { id: true },
+    });
+    if (!membership) throw new BadRequestException('INVALID_PROJECT_MEMBERSHIP');
+    return membership;
+  }
+
+  private async activeMemberships(workspaceId: string, membershipIds: string[]) {
+    if (membershipIds.length === 0) return [];
+    const memberships = await this.prisma.workspaceMembership.findMany({
+      where: { id: { in: membershipIds }, workspaceId, status: MembershipStatus.ACTIVE },
+      select: { id: true },
+    });
+    if (memberships.length !== membershipIds.length)
+      throw new BadRequestException('INVALID_PROJECT_MEMBERSHIP');
+    return memberships;
+  }
 }
+
+const membershipSummarySelect = {
+  id: true,
+  status: true,
+  user: { select: { id: true, email: true, name: true } },
+} satisfies Prisma.WorkspaceMembershipSelect;
 
 const statusSelect = {
   id: true,
@@ -292,10 +517,14 @@ const projectListSelect = {
   statusDefinitionId: true,
   statusDefinition: { select: statusSelect },
   priority: true,
+  visibility: true,
   plannedStartAt: true,
   dueAt: true,
   departmentId: true,
   department: { select: departmentSelect },
+  ownerMembershipId: true,
+  ownerMembership: { select: membershipSummarySelect },
+  _count: { select: { members: true } },
   createdById: true,
   archivedAt: true,
   createdAt: true,
@@ -306,7 +535,17 @@ const projectDetailSelect = {
   ...projectListSelect,
 } satisfies Prisma.ProjectSelect;
 
+const projectMemberSelect = {
+  id: true,
+  workspaceId: true,
+  projectId: true,
+  workspaceMembershipId: true,
+  workspaceMembership: { select: membershipSummarySelect },
+  createdAt: true,
+} satisfies Prisma.ProjectMemberSelect;
+
 type ProjectRecord = Prisma.ProjectGetPayload<{ select: typeof projectDetailSelect }>;
+type ProjectMemberRecord = Prisma.ProjectMemberGetPayload<{ select: typeof projectMemberSelect }>;
 
 function serializeProject(project: ProjectRecord) {
   return {
@@ -324,6 +563,7 @@ function serializeProject(project: ProjectRecord) {
         }
       : null,
     priority: project.priority,
+    visibility: project.visibility,
     plannedStartAt: project.plannedStartAt,
     dueAt: project.dueAt,
     departmentId: project.departmentId,
@@ -334,9 +574,33 @@ function serializeProject(project: ProjectRecord) {
           status: project.department.status,
         }
       : null,
+    ownerMembershipId: project.ownerMembershipId,
+    owner: serializeMembership(project.ownerMembership),
+    memberCount: project._count.members,
     createdById: 'createdById' in project ? project.createdById : undefined,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
+  };
+}
+
+function serializeProjectMember(member: ProjectMemberRecord) {
+  return {
+    id: member.id,
+    workspaceId: member.workspaceId,
+    projectId: member.projectId,
+    workspaceMembershipId: member.workspaceMembershipId,
+    member: serializeMembership(member.workspaceMembership),
+    createdAt: member.createdAt,
+  };
+}
+
+function serializeMembership(
+  membership: Prisma.WorkspaceMembershipGetPayload<{ select: typeof membershipSummarySelect }>,
+) {
+  return {
+    id: membership.id,
+    status: membership.status,
+    user: membership.user,
   };
 }
 
@@ -374,10 +638,7 @@ function dateRange(from?: string, to?: string, errorCode = 'INVALID_DATE_RANGE')
   if (start && Number.isNaN(start.getTime())) throw new BadRequestException(errorCode);
   if (end && Number.isNaN(end.getTime())) throw new BadRequestException(errorCode);
   if (start && end && start > end) throw new BadRequestException(errorCode);
-  return {
-    ...(start ? { gte: start } : {}),
-    ...(end ? { lte: end } : {}),
-  };
+  return { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) };
 }
 
 function projectOrderBy(sortBy: ProjectQueryDto['sortBy'], sortDirection: Prisma.SortOrder) {
@@ -418,4 +679,12 @@ function changedProjectFields(
 
 function dateTime(value: Date | null) {
   return value?.getTime() ?? null;
+}
+
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids)];
+}
+
+function hasPermission(tenant: WorkspaceTenantContext, permission: string) {
+  return tenant.permissions.includes('*') || tenant.permissions.includes(permission);
 }

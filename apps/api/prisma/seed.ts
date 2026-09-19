@@ -63,6 +63,9 @@ const workspacePermissions = [
   'projects.update',
   'projects.delete',
   'projects.manage_status',
+  'projects.view_all',
+  'projects.manage_members',
+  'projects.manage_owner',
   'project.read',
   'project.create',
   'project.update',
@@ -178,18 +181,21 @@ async function main() {
   const alphaMainProject = await upsertProject(
     workspaceAlphaMain.id,
     owner.id,
+    ownerAlphaMainMembership.id,
     'Alpha Launch',
     'Seed project for Agency Alpha.',
   );
   const alphaSecondaryProject = await upsertProject(
     workspaceAlphaSecondary.id,
     owner.id,
+    ownerAlphaSecondaryMembership.id,
     'Alpha Secondary Launch',
     'Seed project for Agency Alpha secondary workspace.',
   );
   const betaProject = await upsertProject(
     workspaceBeta.id,
     otherOwner.id,
+    ownerBetaMembership.id,
     'Beta Sandbox',
     'Seed project for Agency Beta.',
   );
@@ -311,6 +317,9 @@ async function seedRoles() {
         'projects.view',
         'projects.create',
         'projects.update',
+        'projects.view_all',
+        'projects.manage_members',
+        'projects.manage_owner',
         'projects.manage_status',
         'project.read',
         'project.create',
@@ -414,6 +423,7 @@ async function upsertWorkspaceMembership(userId: string, workspaceId: string, ro
 async function upsertProject(
   workspaceId: string,
   createdById: string,
+  ownerMembershipId: string,
   name: string,
   description: string,
 ) {
@@ -430,6 +440,7 @@ async function upsertProject(
       description,
       status: ProjectStatus.ACTIVE,
       statusDefinitionId: status.id,
+      ownerMembershipId,
     },
   });
 }

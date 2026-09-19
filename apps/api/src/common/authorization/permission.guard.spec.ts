@@ -4,9 +4,14 @@ import { PermissionGuard } from './permission.guard';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permissions.decorator';
 
 describe('PermissionGuard', () => {
-  it('allows owners without checking individual permissions', () => {
+  it('requires explicit permissions instead of owner role-name bypasses', () => {
     const guard = new PermissionGuard(reflector(['project.delete']));
-    expect(guard.canActivate(context({ roleName: 'OWNER', permissions: [] }))).toBe(true);
+    expect(() => guard.canActivate(context({ roleName: 'OWNER', permissions: [] }))).toThrow(
+      ForbiddenException,
+    );
+    expect(guard.canActivate(context({ roleName: 'OWNER', permissions: ['project.delete'] }))).toBe(
+      true,
+    );
   });
 
   it('rejects users missing required permissions', () => {

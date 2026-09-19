@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { Route } from 'next';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -18,23 +19,35 @@ import {
 import type { Locale } from '../../../lib/i18n';
 import { useLanguage } from '../../../contexts/language-provider';
 import { useSessionStore } from '../../../stores/session';
-import { listDepartments } from '../../../services/workspace-management';
+import {
+  listDepartments,
+  listWorkspaceUsers,
+  type WorkspaceUser,
+} from '../../../services/workspace-management';
 import { listWorkspaceStatuses, statusKeys } from '../../../services/workspace-statuses';
 import {
+  addWorkspaceProjectMembers,
   createWorkspaceProject,
   deleteWorkspaceProject,
   getWorkspaceProject,
+  listWorkspaceProjectMembers,
   listWorkspaceProjects,
   normalizeProjectListParams,
   projectKeys,
+  removeWorkspaceProjectMember,
+  type ProjectMember,
   type ProjectPayload,
+  type ProjectMembershipSummary,
   type ProjectPriority,
+  type ProjectVisibility,
   type WorkspaceProjectSummary,
   updateWorkspaceProject,
+  updateWorkspaceProjectOwner,
   updateWorkspaceProjectStatus,
 } from '../../../services/workspace-projects';
 
 const priorities: ProjectPriority[] = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+const visibilities: ProjectVisibility[] = ['WORKSPACE', 'RESTRICTED'];
 const noneValue = '__none__';
 
 export function WorkspaceProjectsPage() {
@@ -81,6 +94,7 @@ export function WorkspaceProjectsPage() {
 
   const statusesQuery = useProjectStatuses(selectedWorkspaceId, accessToken);
   const departmentsQuery = useDepartments(selectedWorkspaceId, accessToken);
+  const usersQuery = useWorkspaceMemberSearch(selectedWorkspaceId, accessToken, '');
 
   const createMutation = useMutation({
     mutationFn: (body: ProjectPayload) =>
@@ -125,6 +139,7 @@ export function WorkspaceProjectsPage() {
           <ProjectForm
             statuses={statusesQuery.data ?? []}
             departments={departmentsQuery.data?.items ?? []}
+            users={usersQuery.data?.items ?? []}
             workspaceTimezone={workspaceTimezone}
             onSubmit={(body) => createMutation.mutate(body)}
             submitting={createMutation.isPending}
@@ -283,8 +298,11 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
   const { locale, t } = useLanguage();
   const { accessToken, selectedWorkspaceId, hydrated, hydrate } = useSessionStore();
   const workspaceTimezone = useWorkspaceTimezone(selectedWorkspaceId);
+  const currentMembershipId = useCurrentWorkspaceMembershipId(selectedWorkspaceId);
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
 
   useEffect(() => {
     void hydrate();
@@ -301,14 +319,38 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
   });
   const statusesQuery = useProjectStatuses(selectedWorkspaceId, accessToken);
   const departmentsQuery = useDepartments(selectedWorkspaceId, accessToken);
+  const usersQuery = useWorkspaceMemberSearch(selectedWorkspaceId, accessToken, memberSearch);
+  const membersQuery = useQuery({
+    queryKey: projectKeys.members(selectedWorkspaceId, projectId, {
+      page: 1,
+      pageSize: 20,
+      search: memberSearch,
+    }),
+    queryFn: () =>
+      listWorkspaceProjectMembers(selectedWorkspaceId as string, projectId, {
+        page: 1,
+        pageSize: 20,
+        search: memberSearch,
+      }),
+    enabled: Boolean(accessToken && selectedWorkspaceId && projectId),
+  });
 
   const updateMutation = useMutation({
     mutationFn: (body: ProjectPayload) =>
       updateWorkspaceProject(selectedWorkspaceId as string, projectId, body),
-    onSuccess() {
+    onSuccess(_project, body) {
       toast.success(t(locale, 'workspaceProjects.projectUpdated'));
       setEditing(false);
       void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+      if (body.visibility === 'RESTRICTED') {
+        clearProjectDetailAndReturn(
+          queryClient,
+          selectedWorkspaceId,
+          projectId,
+          router,
+          t(locale, 'workspaceProjects.accessLost'),
+        );
+      }
     },
     onError() {
       toast.error(t(locale, 'workspaceProjects.saveFailed'));
@@ -332,6 +374,52 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
     onSuccess() {
       toast.success(t(locale, 'workspaceProjects.projectDeleted'));
       void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+    },
+  });
+
+  const addMemberMutation = useMutation({
+    mutationFn: (membershipId: string) =>
+      addWorkspaceProjectMembers(selectedWorkspaceId as string, projectId, [membershipId]),
+    onSuccess() {
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: (membershipId: string) =>
+      removeWorkspaceProjectMember(selectedWorkspaceId as string, projectId, membershipId),
+    onSuccess(_result, membershipId) {
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+      if (membershipId === currentMembershipId && project?.visibility === 'RESTRICTED') {
+        clearProjectDetailAndReturn(
+          queryClient,
+          selectedWorkspaceId,
+          projectId,
+          router,
+          t(locale, 'workspaceProjects.accessLost'),
+        );
+      }
+    },
+  });
+
+  const ownerMutation = useMutation({
+    mutationFn: (membershipId: string) =>
+      updateWorkspaceProjectOwner(selectedWorkspaceId as string, projectId, membershipId),
+    onSuccess(_updated, membershipId) {
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+      if (
+        project?.visibility === 'RESTRICTED' &&
+        project.ownerMembershipId === currentMembershipId &&
+        membershipId !== currentMembershipId
+      ) {
+        clearProjectDetailAndReturn(
+          queryClient,
+          selectedWorkspaceId,
+          projectId,
+          router,
+          t(locale, 'workspaceProjects.accessLost'),
+        );
+      }
     },
   });
 
@@ -373,6 +461,7 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
                 project={project}
                 statuses={statusesQuery.data ?? []}
                 departments={departmentsQuery.data?.items ?? []}
+                users={usersQuery.data?.items ?? []}
                 workspaceTimezone={workspaceTimezone}
                 onSubmit={(body) => updateMutation.mutate(body)}
                 submitting={updateMutation.isPending}
@@ -404,6 +493,18 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
                   label={t(locale, 'workspaceProjects.department')}
                   value={project.department?.name ?? '-'}
                 />
+                <ProjectFact
+                  label={t(locale, 'workspaceProjects.projectOwner')}
+                  value={memberName(project.owner)}
+                />
+                <ProjectFact
+                  label={t(locale, 'workspaceProjects.visibility')}
+                  value={visibilityLabel(project.visibility, locale, t)}
+                />
+                <ProjectFact
+                  label={t(locale, 'workspaceProjects.projectMembers')}
+                  value={String(project.memberCount)}
+                />
               </div>
               <div className="mt-4 max-w-xs">
                 <Select
@@ -423,6 +524,16 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
                 </Select>
               </div>
             </section>
+            <ProjectMembersSection
+              project={project}
+              members={membersQuery.data?.items ?? []}
+              users={usersQuery.data?.items ?? []}
+              search={memberSearch}
+              onSearch={setMemberSearch}
+              onAdd={(membershipId) => addMemberMutation.mutate(membershipId)}
+              onRemove={(membershipId) => removeMemberMutation.mutate(membershipId)}
+              onOwnerChange={(membershipId) => ownerMutation.mutate(membershipId)}
+            />
           </>
         ) : (
           <div className="rounded-lg border border-border p-6">{t(locale, 'common.loading')}</div>
@@ -436,6 +547,7 @@ function ProjectForm({
   project,
   statuses,
   departments,
+  users,
   workspaceTimezone,
   onSubmit,
   submitting,
@@ -443,6 +555,7 @@ function ProjectForm({
   project?: WorkspaceProjectSummary;
   statuses: { id: string; name: string }[];
   departments: { id: string; name: string; status: string }[];
+  users: WorkspaceUser[];
   workspaceTimezone: string;
   onSubmit: (body: ProjectPayload) => void;
   submitting: boolean;
@@ -456,6 +569,9 @@ function ProjectForm({
     description: string;
     statusDefinitionId: string;
     priority: ProjectPriority;
+    visibility: ProjectVisibility;
+    ownerMembershipId: string;
+    memberMembershipId: string;
     plannedStartAt: string;
     dueAt: string;
     departmentId: string;
@@ -464,6 +580,9 @@ function ProjectForm({
     description: project?.description ?? '',
     statusDefinitionId: project?.statusDefinitionId ?? statuses.find((item) => item)?.id ?? '',
     priority: project?.priority ?? 'MEDIUM',
+    visibility: project?.visibility ?? 'WORKSPACE',
+    ownerMembershipId: project?.ownerMembershipId ?? '',
+    memberMembershipId: '',
     plannedStartAt: toDateInput(project?.plannedStartAt, workspaceTimezone),
     dueAt: toDateInput(project?.dueAt, workspaceTimezone),
     departmentId: project?.departmentId ?? '',
@@ -481,6 +600,9 @@ function ProjectForm({
       dueAt: fromDateInput(form.dueAt, workspaceTimezone),
       description: advanced ? form.description : undefined,
       priority: form.priority as ProjectPriority,
+      visibility: form.visibility,
+      ownerMembershipId: form.ownerMembershipId || undefined,
+      memberMembershipIds: form.memberMembershipId ? [form.memberMembershipId] : undefined,
       plannedStartAt: advanced ? fromDateInput(form.plannedStartAt, workspaceTimezone) : undefined,
       departmentId: advanced ? form.departmentId || null : undefined,
     });
@@ -511,6 +633,39 @@ function ProjectForm({
             {statuses.map((status) => (
               <SelectItem key={status.id} value={status.id}>
                 {status.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={form.ownerMembershipId || noneValue}
+          onValueChange={(value) =>
+            setForm({ ...form, ownerMembershipId: value === noneValue ? '' : value })
+          }
+        >
+          <SelectTrigger label={t(locale, 'workspaceProjects.projectOwner')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={noneValue}>{t(locale, 'workspaceProjects.currentUser')}</SelectItem>
+            {users.map((user) => (
+              <SelectItem key={user.membershipId} value={user.membershipId}>
+                {user.name || user.email}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={form.visibility}
+          onValueChange={(value) => setForm({ ...form, visibility: value as ProjectVisibility })}
+        >
+          <SelectTrigger label={t(locale, 'workspaceProjects.visibility')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {visibilities.map((visibility) => (
+              <SelectItem key={visibility} value={visibility}>
+                {visibilityLabel(visibility, locale, t)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -586,6 +741,26 @@ function ProjectForm({
                 ))}
             </SelectContent>
           </Select>
+          {!project ? (
+            <Select
+              value={form.memberMembershipId || noneValue}
+              onValueChange={(value) =>
+                setForm({ ...form, memberMembershipId: value === noneValue ? '' : value })
+              }
+            >
+              <SelectTrigger label={t(locale, 'workspaceProjects.addMember')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={noneValue}>{t(locale, 'workspaceProjects.none')}</SelectItem>
+                {users.map((user) => (
+                  <SelectItem key={user.membershipId} value={user.membershipId}>
+                    {user.name || user.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
         </div>
       ) : null}
       {invalidRange ? (
@@ -628,6 +803,26 @@ function useDepartments(workspaceId: string | null, accessToken: string | null) 
   });
 }
 
+function useWorkspaceMemberSearch(
+  workspaceId: string | null,
+  accessToken: string | null,
+  search: string,
+) {
+  const params = { page: 1, pageSize: 50, search };
+  return useQuery({
+    queryKey: ['workspace', workspaceId, 'project-member-search', params],
+    queryFn: () =>
+      listWorkspaceUsers({
+        workspaceId: workspaceId as string,
+        page: params.page,
+        pageSize: params.pageSize,
+        search,
+        status: 'ACTIVE',
+      }),
+    enabled: Boolean(accessToken && workspaceId),
+  });
+}
+
 function useWorkspaceTimezone(workspaceId: string | null) {
   return useSessionStore((state) => {
     for (const agency of state.agencies) {
@@ -638,8 +833,139 @@ function useWorkspaceTimezone(workspaceId: string | null) {
   });
 }
 
+function useCurrentWorkspaceMembershipId(workspaceId: string | null) {
+  return useSessionStore((state) => {
+    for (const agency of state.agencies) {
+      const workspace = agency.workspaces.find((item) => item.id === workspaceId);
+      if (workspace) return workspace.membershipId;
+    }
+    return null;
+  });
+}
+
+function clearProjectDetailAndReturn(
+  queryClient: QueryClient,
+  workspaceId: string | null,
+  projectId: string,
+  router: ReturnType<typeof useRouter>,
+  message: string,
+) {
+  queryClient.removeQueries({ queryKey: projectKeys.detail(workspaceId, projectId) });
+  toast.info(message);
+  router.replace('/workspace/projects' as Route);
+}
+
 function ProjectShell({ children }: { children: React.ReactNode }) {
   return <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6">{children}</main>;
+}
+
+function ProjectMembersSection({
+  project,
+  members,
+  users,
+  search,
+  onSearch,
+  onAdd,
+  onRemove,
+  onOwnerChange,
+}: {
+  project: WorkspaceProjectSummary;
+  members: ProjectMember[];
+  users: WorkspaceUser[];
+  search: string;
+  onSearch: (value: string) => void;
+  onAdd: (membershipId: string) => void;
+  onRemove: (membershipId: string) => void;
+  onOwnerChange: (membershipId: string) => void;
+}) {
+  const { locale, t } = useLanguage();
+  const memberIds = new Set(members.map((member) => member.workspaceMembershipId));
+  const addableUsers = users.filter(
+    (user) => user.membershipId !== project.ownerMembershipId && !memberIds.has(user.membershipId),
+  );
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">
+            {t(locale, 'workspaceProjects.projectMembers')}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {project.visibility === 'RESTRICTED'
+              ? t(locale, 'workspaceProjects.projectAccessRestricted')
+              : visibilityLabel(project.visibility, locale, t)}
+          </p>
+        </div>
+        <div className="w-full md:max-w-xs">
+          <Select value={project.ownerMembershipId} onValueChange={onOwnerChange}>
+            <SelectTrigger label={t(locale, 'workspaceProjects.changeOwner')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {users.map((user) => (
+                <SelectItem key={user.membershipId} value={user.membershipId}>
+                  {user.name || user.email}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <label>
+          <span className="mb-1 block text-sm font-medium">
+            {t(locale, 'workspaceProjects.searchMembers')}
+          </span>
+          <Input value={search} onChange={(event) => onSearch(event.target.value)} />
+        </label>
+        <Select value={noneValue} onValueChange={(value) => value !== noneValue && onAdd(value)}>
+          <SelectTrigger label={t(locale, 'workspaceProjects.addMember')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={noneValue}>{t(locale, 'workspaceProjects.none')}</SelectItem>
+            {addableUsers.map((user) => (
+              <SelectItem key={user.membershipId} value={user.membershipId}>
+                {user.name || user.email}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="mt-4 divide-y divide-border rounded-lg border border-border">
+        {members.map((member) => {
+          const name = memberName(member.member);
+          return (
+            <div
+              key={member.id}
+              className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div>
+                <p className="text-sm font-medium">{name}</p>
+                <p className="text-xs text-muted-foreground">{member.member.user.email}</p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label={`${t(locale, 'workspaceProjects.removeMember')} ${name}`}
+                onClick={() => onRemove(member.workspaceMembershipId)}
+              >
+                {t(locale, 'workspaceProjects.removeMember')}
+              </Button>
+            </div>
+          );
+        })}
+        {members.length === 0 ? (
+          <p className="p-3 text-sm text-muted-foreground">
+            {t(locale, 'workspaceProjects.noMembers')}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
 function StatusBadge({ project }: { project: WorkspaceProjectSummary }) {
@@ -676,6 +1002,23 @@ function priorityLabel(
     URGENT: 'urgent',
   };
   return t(locale, `workspaceProjects.${keys[priority]}`);
+}
+
+function visibilityLabel(
+  visibility: ProjectVisibility,
+  locale: Locale,
+  t: (locale: Locale, key: `workspaceProjects.${string}`) => string,
+) {
+  return t(
+    locale,
+    visibility === 'RESTRICTED'
+      ? 'workspaceProjects.restricted'
+      : 'workspaceProjects.workspaceVisible',
+  );
+}
+
+function memberName(membership: ProjectMembershipSummary | null | undefined) {
+  return membership?.user.name || membership?.user.email || '-';
 }
 
 function formatDate(value: string | null, locale: Locale, timezone: string) {

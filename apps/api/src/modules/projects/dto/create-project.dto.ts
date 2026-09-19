@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TaskPriority } from '@prisma/client';
+import { ProjectVisibility, TaskPriority } from '@prisma/client';
 import {
+  ArrayMaxSize,
+  ArrayUnique,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -47,4 +49,21 @@ export class CreateProjectDto {
   @IsOptional()
   @IsUUID()
   departmentId?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  ownerMembershipId?: string;
+
+  @ApiPropertyOptional({ enum: ProjectVisibility, default: ProjectVisibility.WORKSPACE })
+  @IsOptional()
+  @IsEnum(ProjectVisibility)
+  visibility?: ProjectVisibility;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 100 })
+  @IsOptional()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  memberMembershipIds?: string[];
 }
