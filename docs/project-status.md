@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 8.2 - Project Owner + Members + Visibility - COMPLETE / PASS
-Next: Phase 8.3 - Project Tags + Progress + Completion
+Current: Phase 8.3 - Project Tags + Progress + Completion - COMPLETE / PASS
+Next: Phase 8.4 - Not started; do not start automatically
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -1477,6 +1477,53 @@ Verification:
 
 Phase 8.2 is complete/pass. Do not start Phase 8.3 automatically.
 
+### Phase 8.3 - Project Tags + Progress + Completion - COMPLETE / PASS
+
+Implemented:
+
+- Project tags reuse the existing `WorkspaceTag` catalog; no second tag catalog was introduced.
+- New explicit `ProjectTag` join model links Projects to same-Workspace `WorkspaceTag` records with unique `(projectId, tagId)`.
+- Project tag APIs list, add, and remove Project tags through Workspace-scoped Project routes.
+- Active `WorkspaceTag` records can be assigned to Projects; archived tags remain visible/filterable/removable but cannot be newly assigned.
+- Project list supports server-side `tagId` filtering composed with existing visibility, search, status, priority, department, date, pagination, and sorting predicates.
+- Project serialization now includes `calculatedProgress`, nullable `manualProgressPercent`, `effectiveProgress`, and task counts for total/open/completed/overdue linked active tasks.
+- Calculated progress is derived from linked non-deleted `TaskProject` tasks using current `StatusDefinition(TASK).isTerminal`.
+- Empty non-terminal Projects calculate to 0%; empty terminal Projects calculate to 100%.
+- Manual progress override is nullable 0-100 and gated by `projects.manage_progress`.
+- Terminal Project status transition is blocked while any active linked Task is non-terminal; empty Projects may complete.
+- Completion does not mutate linked Tasks; reopening a Project does not reopen Tasks; reopening a Task does not auto-reopen a completed Project.
+- `/workspace/projects` shows server-derived Project progress on list/detail, server-side tag filtering, Project tag add/remove, archived tag labels, and manual progress override/reset.
+- English and Tamil i18n strings were added for Project tags, progress, completion errors, and related task counts.
+
+Security/performance invariants:
+
+- Project tags are tenant-safe through same-Workspace foreign keys on Project and WorkspaceTag.
+- Foreign Workspace tags and archived tags are rejected on assignment.
+- Duplicate Project tag relationships are impossible at the database layer and idempotent at the API layer.
+- Project tag and progress routes use permission keys only; no role-name authorization was introduced.
+- Restricted Project access is checked before tag/progress reads or mutations.
+- Tag filtering composes after restricted Project visibility, so inaccessible Projects are excluded before count/pagination.
+- Progress summaries are computed in one batch query per Project list/detail call, avoiding Project list N+1 task-count queries.
+- Manual progress cannot bypass terminal Project completion rules.
+- Phase 8.3 did not add Project task management UI, link/create task UX, Kanban/Gantt, Project files redesign, activity feeds, reports, templates, notifications, automation, or gamification.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy` applied migration `0026_phase8_3_project_tags_progress_completion`.
+- `pnpm prisma:validate` passes.
+- `pnpm prisma:generate` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
+- `pnpm test:integration` passes 97/97 API integration tests plus 11/11 worker integration tests.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes.
+- `pnpm --filter @zea-play/api test:integration -- phase6-3-statuses.integration-spec.ts` passes 12/12 tests, including Phase 8.1, Phase 8.2, and focused Phase 8.3 regressions.
+
+Phase 8.3 is complete/pass. Do not start Phase 8.3 Refinement or Phase 8.4 automatically.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -1490,6 +1537,9 @@ Phase 8.2 is complete/pass. Do not start Phase 8.3 automatically.
 - Project CRUD and listing must remain Workspace scoped.
 - Project ownership and Project members must use same-Workspace `WorkspaceMembership`.
 - Project restricted visibility must be enforced before list pagination/count/search/filter/sort.
+- Project tags must use the existing same-Workspace `WorkspaceTag` catalog through `ProjectTag`.
+- Project progress is derived from linked active Tasks unless a nullable manual override is present.
+- Terminal Project status transitions must reject active non-terminal linked Tasks.
 - Project `plannedStartAt` and `dueAt` are UTC timestamps and must be validated as a final pair.
 - `TaskProject` and `ProjectAttachment` compatibility must be preserved while extending Project features.
 - Each initialized Workspace/entity type has exactly one active default status.
@@ -1519,7 +1569,7 @@ Phase 8.2 is complete/pass. Do not start Phase 8.3 automatically.
 - Role
 - Permission
 - StatusDefinition
-- Task / TaskAssignee / TaskFollower / TaskProject / TaskKanbanColumnSetting / TaskRecurrenceSeries / TaskRecurrenceCompletionApprover / TaskCompletionPolicy / TaskCompletionPolicyApprover / TaskCompletionSubmission / TaskCompletionProofItem / TaskCompletionProofAttachment / TaskCompletionSubmissionApprover / TaskCompletionApprovalDecision / WorkspaceTag / TaskTag / TaskComment / TaskCommentMention / TaskCommentReaction / Attachment / TaskAttachment / ProjectAttachment
+- Task / TaskAssignee / TaskFollower / TaskProject / TaskKanbanColumnSetting / TaskRecurrenceSeries / TaskRecurrenceCompletionApprover / TaskCompletionPolicy / TaskCompletionPolicyApprover / TaskCompletionSubmission / TaskCompletionProofItem / TaskCompletionProofAttachment / TaskCompletionSubmissionApprover / TaskCompletionApprovalDecision / WorkspaceTag / TaskTag / ProjectTag / TaskComment / TaskCommentMention / TaskCommentReaction / Attachment / TaskAttachment / ProjectAttachment
 - FeatureDefinition / FeatureEntitlement
 - Project
 - Asset
@@ -1597,6 +1647,7 @@ Do not infer or invent model fields from this list.
 | Phase 7       | PASS   | Not tagged                       |
 | Phase 8.1     | PASS   | Not tagged                       |
 | Phase 8.2     | PASS   | Not tagged                       |
+| Phase 8.3     | PASS   | Not tagged                       |
 
 ## Current Warnings
 
@@ -1644,6 +1695,7 @@ Confirmed current warnings:
 - Phase 7.10 Final Task Security + Performance + Integration Audit is complete/pass.
 - Phase 7 Task Management is complete/pass; the next phase is Phase 8 Project Management System.
 - Phase 8.1 Project Core + Status Migration is complete/pass.
-- Phase 8.2 Project Owner + Members + Visibility is complete/pass; the next phase is Phase 8.3 Project Tags + Progress + Completion.
+- Phase 8.2 Project Owner + Members + Visibility is complete/pass.
+- Phase 8.3 Project Tags + Progress + Completion is complete/pass; do not start Phase 8.3 Refinement or Phase 8.4 automatically.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

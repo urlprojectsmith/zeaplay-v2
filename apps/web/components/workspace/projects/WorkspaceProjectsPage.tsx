@@ -5,7 +5,8 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, X } from 'lucide-react';
+import { ApiClientError } from '@zea-play/api-client';
 import { toast } from 'sonner';
 import {
   Button,
@@ -25,24 +26,30 @@ import {
   type WorkspaceUser,
 } from '../../../services/workspace-management';
 import { listWorkspaceStatuses, statusKeys } from '../../../services/workspace-statuses';
+import { listWorkspaceTags, type WorkspaceTagSummary } from '../../../services/workspace-tasks';
 import {
+  addWorkspaceProjectTags,
   addWorkspaceProjectMembers,
   createWorkspaceProject,
   deleteWorkspaceProject,
   getWorkspaceProject,
+  listWorkspaceProjectTags,
   listWorkspaceProjectMembers,
   listWorkspaceProjects,
   normalizeProjectListParams,
   projectKeys,
+  removeWorkspaceProjectTags,
   removeWorkspaceProjectMember,
   type ProjectMember,
   type ProjectPayload,
   type ProjectMembershipSummary,
+  type ProjectTag,
   type ProjectPriority,
   type ProjectVisibility,
   type WorkspaceProjectSummary,
   updateWorkspaceProject,
   updateWorkspaceProjectOwner,
+  updateWorkspaceProjectProgress,
   updateWorkspaceProjectStatus,
 } from '../../../services/workspace-projects';
 
@@ -58,6 +65,7 @@ export function WorkspaceProjectsPage() {
   const [search, setSearch] = useState('');
   const [statusDefinitionId, setStatusDefinitionId] = useState('');
   const [priority, setPriority] = useState('');
+  const [tagId, setTagId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
@@ -70,6 +78,7 @@ export function WorkspaceProjectsPage() {
     setSearch('');
     setStatusDefinitionId('');
     setPriority('');
+    setTagId('');
     setDepartmentId('');
     setPage(1);
     setCreateOpen(false);
@@ -81,6 +90,7 @@ export function WorkspaceProjectsPage() {
     search,
     statusDefinitionId,
     priority: priority as ProjectPriority,
+    tagId,
     departmentId,
     sortBy: 'updatedAt',
     sortDirection: 'desc',
@@ -94,6 +104,7 @@ export function WorkspaceProjectsPage() {
 
   const statusesQuery = useProjectStatuses(selectedWorkspaceId, accessToken);
   const departmentsQuery = useDepartments(selectedWorkspaceId, accessToken);
+  const tagsQuery = useWorkspaceTags(selectedWorkspaceId, accessToken);
   const usersQuery = useWorkspaceMemberSearch(selectedWorkspaceId, accessToken, '');
 
   const createMutation = useMutation({
@@ -205,6 +216,26 @@ export function WorkspaceProjectsPage() {
             </SelectContent>
           </Select>
           <Select
+            value={tagId || noneValue}
+            onValueChange={(value) => {
+              setPage(1);
+              setTagId(value === noneValue ? '' : value);
+            }}
+          >
+            <SelectTrigger label={t(locale, 'workspaceProjects.projectTags')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={noneValue}>{t(locale, 'workspaceProjects.all')}</SelectItem>
+              {(tagsQuery.data?.items ?? []).map((tag) => (
+                <SelectItem key={tag.id} value={tag.id}>
+                  {tag.name}
+                  {tag.status === 'ARCHIVED' ? ` (${t(locale, 'workspaceProjects.archived')})` : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
             value={departmentId || noneValue}
             onValueChange={(value) => {
               setPage(1);
@@ -259,6 +290,10 @@ export function WorkspaceProjectsPage() {
                   value={formatDate(project.updatedAt, locale, workspaceTimezone)}
                 />
               </dl>
+              <ProjectProgressMeter
+                project={project}
+                label={t(locale, 'workspaceProjects.effectiveProgress')}
+              />
             </Link>
           ))}
           {!projectsQuery.isLoading && projects.length === 0 ? (
@@ -334,6 +369,12 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
       }),
     enabled: Boolean(accessToken && selectedWorkspaceId && projectId),
   });
+  const tagsQuery = useQuery({
+    queryKey: projectKeys.tags(selectedWorkspaceId, projectId),
+    queryFn: () => listWorkspaceProjectTags(selectedWorkspaceId as string, projectId),
+    enabled: Boolean(accessToken && selectedWorkspaceId && projectId),
+  });
+  const tagCatalogQuery = useWorkspaceTags(selectedWorkspaceId, accessToken);
 
   const updateMutation = useMutation({
     mutationFn: (body: ProjectPayload) =>
@@ -364,8 +405,8 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
       toast.success(t(locale, 'workspaceProjects.projectUpdated'));
       void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
     },
-    onError() {
-      toast.error(t(locale, 'workspaceProjects.invalidProjectStatus'));
+    onError(error) {
+      toast.error(projectStatusErrorMessage(locale, t, error));
     },
   });
 
@@ -420,6 +461,50 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
           t(locale, 'workspaceProjects.accessLost'),
         );
       }
+    },
+  });
+
+  const addTagsMutation = useMutation({
+    mutationFn: (tagIds: string[]) =>
+      addWorkspaceProjectTags(selectedWorkspaceId as string, projectId, tagIds),
+    onSuccess() {
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.tags(selectedWorkspaceId, projectId),
+      });
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+    },
+    onError() {
+      toast.error(t(locale, 'workspaceProjects.tagUpdateFailed'));
+    },
+  });
+
+  const removeTagsMutation = useMutation({
+    mutationFn: (tagIds: string[]) =>
+      removeWorkspaceProjectTags(selectedWorkspaceId as string, projectId, tagIds),
+    onSuccess() {
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.tags(selectedWorkspaceId, projectId),
+      });
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+    },
+    onError() {
+      toast.error(t(locale, 'workspaceProjects.tagUpdateFailed'));
+    },
+  });
+
+  const progressMutation = useMutation({
+    mutationFn: (manualProgressPercent: number | null) =>
+      updateWorkspaceProjectProgress(
+        selectedWorkspaceId as string,
+        projectId,
+        manualProgressPercent,
+      ),
+    onSuccess() {
+      toast.success(t(locale, 'workspaceProjects.projectUpdated'));
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all(selectedWorkspaceId) });
+    },
+    onError() {
+      toast.error(t(locale, 'workspaceProjects.progressUpdateFailed'));
     },
   });
 
@@ -524,6 +609,18 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
                 </Select>
               </div>
             </section>
+            <ProjectProgressSection
+              project={project}
+              onUpdate={(value) => progressMutation.mutate(value)}
+              updating={progressMutation.isPending}
+            />
+            <ProjectTagsSection
+              tags={tagsQuery.data ?? []}
+              catalog={tagCatalogQuery.data?.items ?? []}
+              onAdd={(tagIds) => addTagsMutation.mutate(tagIds)}
+              onRemove={(tagId) => removeTagsMutation.mutate([tagId])}
+              updating={addTagsMutation.isPending || removeTagsMutation.isPending}
+            />
             <ProjectMembersSection
               project={project}
               members={membersQuery.data?.items ?? []}
@@ -803,6 +900,20 @@ function useDepartments(workspaceId: string | null, accessToken: string | null) 
   });
 }
 
+function useWorkspaceTags(workspaceId: string | null, accessToken: string | null) {
+  return useQuery({
+    queryKey: ['workspace', workspaceId, 'project-tags-catalog'],
+    queryFn: () =>
+      listWorkspaceTags(workspaceId as string, {
+        page: 1,
+        pageSize: 100,
+        sortBy: 'name',
+        sortDirection: 'asc',
+      }),
+    enabled: Boolean(accessToken && workspaceId),
+  });
+}
+
 function useWorkspaceMemberSearch(
   workspaceId: string | null,
   accessToken: string | null,
@@ -841,6 +952,210 @@ function useCurrentWorkspaceMembershipId(workspaceId: string | null) {
     }
     return null;
   });
+}
+
+function ProjectProgressSection({
+  project,
+  onUpdate,
+  updating,
+}: {
+  project: WorkspaceProjectSummary;
+  onUpdate: (value: number | null) => void;
+  updating: boolean;
+}) {
+  const { locale, t } = useLanguage();
+  const [value, setValue] = useState(
+    String(project.manualProgressPercent ?? project.effectiveProgress),
+  );
+
+  useEffect(() => {
+    setValue(String(project.manualProgressPercent ?? project.effectiveProgress));
+  }, [project.effectiveProgress, project.manualProgressPercent, project.id]);
+
+  const parsed = Number(value);
+  const invalid = !Number.isInteger(parsed) || parsed < 0 || parsed > 100;
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-semibold">
+            {t(locale, 'workspaceProjects.projectProgress')}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t(locale, 'workspaceProjects.progressCalculatedFromTasks')}
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.effectiveProgress')}
+              value={`${project.effectiveProgress}%`}
+            />
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.calculatedProgress')}
+              value={`${project.calculatedProgress}%`}
+            />
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.manualProgress')}
+              value={
+                project.manualProgressPercent === null
+                  ? t(locale, 'workspaceProjects.none')
+                  : `${project.manualProgressPercent}%`
+              }
+            />
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.taskCounts')}
+              value={`${project.taskCounts.completedTasks}/${project.taskCounts.totalTasks}`}
+            />
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.openTasks')}
+              value={String(project.taskCounts.openTasks)}
+            />
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.completedTasks')}
+              value={String(project.taskCounts.completedTasks)}
+            />
+            <ProjectFact
+              label={t(locale, 'workspaceProjects.overdueTasks')}
+              value={String(project.taskCounts.overdueTasks)}
+            />
+          </div>
+          <ProjectProgressMeter
+            project={project}
+            label={t(locale, 'workspaceProjects.effectiveProgress')}
+          />
+        </div>
+        <form
+          className="w-full space-y-3 lg:max-w-xs"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!invalid) onUpdate(parsed);
+          }}
+        >
+          <label>
+            <span className="mb-1 block text-sm font-medium">
+              {t(locale, 'workspaceProjects.manualOverride')}
+            </span>
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={updating || invalid}>
+              {t(locale, 'workspaceProjects.setManualProgress')}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={updating}
+              onClick={() => onUpdate(null)}
+            >
+              {t(locale, 'workspaceProjects.resetOverride')}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+function ProjectTagsSection({
+  tags,
+  catalog,
+  onAdd,
+  onRemove,
+  updating,
+}: {
+  tags: ProjectTag[];
+  catalog: WorkspaceTagSummary[];
+  onAdd: (tagIds: string[]) => void;
+  onRemove: (tagId: string) => void;
+  updating: boolean;
+}) {
+  const { locale, t } = useLanguage();
+  const attachedIds = new Set(tags.map((tag) => tag.tagId));
+  const addable = catalog.filter((tag) => tag.status === 'ACTIVE' && !attachedIds.has(tag.id));
+  const [selectedTagId, setSelectedTagId] = useState(noneValue);
+
+  useEffect(() => {
+    setSelectedTagId(noneValue);
+  }, [tags.length]);
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">{t(locale, 'workspaceProjects.projectTags')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t(locale, 'workspaceProjects.archivedTagsRemainVisible')}
+          </p>
+        </div>
+        <div className="flex w-full gap-2 md:max-w-md">
+          <div className="min-w-0 flex-1">
+            <Select value={selectedTagId} onValueChange={setSelectedTagId}>
+              <SelectTrigger label={t(locale, 'workspaceProjects.addTags')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={noneValue}>{t(locale, 'workspaceProjects.none')}</SelectItem>
+                {addable.map((tag) => (
+                  <SelectItem key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            type="button"
+            disabled={updating || selectedTagId === noneValue}
+            onClick={() => {
+              onAdd([selectedTagId]);
+              setSelectedTagId(noneValue);
+            }}
+          >
+            {t(locale, 'workspaceProjects.addTags')}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {tags.map((tag) => (
+          <span
+            key={tag.tagId}
+            className="inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1 text-sm"
+          >
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: tag.color ?? '#64748B' }}
+              aria-hidden="true"
+            />
+            <span className="truncate">
+              {tag.name}
+              {tag.status === 'ARCHIVED' ? ` (${t(locale, 'workspaceProjects.archived')})` : ''}
+            </span>
+            <button
+              type="button"
+              className="rounded-full p-0.5 text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              aria-label={`${t(locale, 'workspaceProjects.removeTag')} ${tag.name}`}
+              disabled={updating}
+              onClick={() => onRemove(tag.tagId)}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </span>
+        ))}
+        {tags.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t(locale, 'workspaceProjects.noTags')}</p>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
 function clearProjectDetailAndReturn(
@@ -981,6 +1296,34 @@ function StatusBadge({ project }: { project: WorkspaceProjectSummary }) {
   );
 }
 
+function ProjectProgressMeter({
+  project,
+  label,
+}: {
+  project: WorkspaceProjectSummary;
+  label: string;
+}) {
+  const value = Math.max(0, Math.min(100, project.effectiveProgress));
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+        <span>{label}</span>
+        <span>{value}%</span>
+      </div>
+      <div
+        className="h-2 rounded-full bg-muted"
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={value}
+      >
+        <div className="h-full rounded-full bg-primary" style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function ProjectFact({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -988,6 +1331,17 @@ function ProjectFact({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 break-words text-sm">{value}</dd>
     </div>
   );
+}
+
+function projectStatusErrorMessage(
+  locale: Locale,
+  t: (locale: Locale, key: `workspaceProjects.${string}`) => string,
+  error: unknown,
+) {
+  if (error instanceof ApiClientError && error.body.code === 'PROJECT_HAS_OPEN_TASKS') {
+    return t(locale, 'workspaceProjects.projectHasOpenTasks');
+  }
+  return t(locale, 'workspaceProjects.invalidProjectStatus');
 }
 
 function priorityLabel(

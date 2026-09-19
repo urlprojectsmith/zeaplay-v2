@@ -1367,6 +1367,262 @@ describe('Phase 6.3A shared statuses integration', () => {
       .expect(200);
   });
 
+  it('manages project tags, progress, and completion rules tenant-safely', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const activeProjectStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'PROJECT', isDefault: true },
+    });
+    const completedProjectStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'PROJECT', name: 'Completed' },
+    });
+    const openTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', isDefault: true },
+    });
+    const completedTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', name: 'Completed' },
+    });
+
+    const project = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Phase 8.3 Progress Project' })
+      .expect(201);
+    const projectId = project.body.data.id as string;
+    expect(project.body.data.calculatedProgress).toBe(0);
+    expect(project.body.data.effectiveProgress).toBe(0);
+    expect(project.body.data.taskCounts.totalTasks).toBe(0);
+
+    const activeTag = await prisma.workspaceTag.create({
+      data: {
+        workspaceId: workspaceA1,
+        name: 'Launch',
+        nameNormalized: 'launch',
+        color: '#2563EB',
+        createdById: admin.id,
+      },
+    });
+    const reviewTag = await prisma.workspaceTag.create({
+      data: {
+        workspaceId: workspaceA1,
+        name: 'Review',
+        nameNormalized: 'review',
+        color: '#16A34A',
+        createdById: admin.id,
+      },
+    });
+    const archivedTag = await prisma.workspaceTag.create({
+      data: {
+        workspaceId: workspaceA1,
+        name: 'Archived Only',
+        nameNormalized: 'archived only',
+        status: 'ARCHIVED',
+        createdById: admin.id,
+      },
+    });
+    const foreignTag = await prisma.workspaceTag.create({
+      data: {
+        workspaceId: workspaceA2,
+        name: 'Foreign Project Tag',
+        nameNormalized: 'foreign project tag',
+        createdById: admin.id,
+      },
+    });
+
+    const added = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags/add`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ tagIds: [activeTag.id, reviewTag.id] })
+      .expect(201);
+    expect(added.body.data).toMatchObject({ requestedCount: 2, changedCount: 2 });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags/add`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ tagIds: [activeTag.id] })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({ requestedCount: 1, changedCount: 0 }),
+      );
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags/add`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ tagIds: [archivedTag.id] })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags/add`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ tagIds: [foreignTag.id] })
+      .expect(400);
+
+    await prisma.workspaceTag.update({ where: { id: reviewTag.id }, data: { status: 'ARCHIVED' } });
+    const listedTags = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(listedTags.body.data.map((tag: { status: string }) => tag.status)).toEqual(
+      expect.arrayContaining(['ACTIVE', 'ARCHIVED']),
+    );
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects?tagId=${reviewTag.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).toContain(
+          projectId,
+        ),
+      );
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags/remove`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ tagIds: [reviewTag.id] })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({ requestedCount: 1, changedCount: 1 }),
+      );
+
+    const completedTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Completed linked task',
+        statusDefinitionId: completedTaskStatus.id,
+        createdById: admin.id,
+      },
+    });
+    const openTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Open linked task',
+        statusDefinitionId: openTaskStatus.id,
+        dueAt: new Date('2026-01-01T00:00:00.000Z'),
+        createdById: admin.id,
+      },
+    });
+    const deletedTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Soft deleted linked task',
+        statusDefinitionId: openTaskStatus.id,
+        deletedAt: new Date(),
+        createdById: admin.id,
+      },
+    });
+    await prisma.taskProject.createMany({
+      data: [completedTask.id, openTask.id, deletedTask.id].map((taskId) => ({
+        workspaceId: workspaceA1,
+        taskId,
+        projectId,
+      })),
+    });
+
+    const progress = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(progress.body.data.calculatedProgress).toBe(50);
+    expect(progress.body.data.effectiveProgress).toBe(50);
+    expect(progress.body.data.taskCounts).toMatchObject({
+      totalTasks: 2,
+      completedTasks: 1,
+      openTasks: 1,
+      overdueTasks: 1,
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/progress`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ manualProgressPercent: 75 })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/progress`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ manualProgressPercent: 101 })
+      .expect(422);
+    const overridden = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/progress`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ manualProgressPercent: 75 })
+      .expect(200);
+    expect(overridden.body.data.calculatedProgress).toBe(50);
+    expect(overridden.body.data.effectiveProgress).toBe(75);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.code).toBe('PROJECT_HAS_OPEN_TASKS');
+        expect(response.body.details).toEqual({ openTaskCount: 1 });
+      });
+
+    await prisma.task.update({
+      where: { id: openTask.id },
+      data: { statusDefinitionId: completedTaskStatus.id },
+    });
+    const completedProject = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(200);
+    expect(completedProject.body.data.status.terminal).toBe(true);
+    await expect(
+      prisma.task.findUniqueOrThrow({ where: { id: openTask.id } }),
+    ).resolves.toMatchObject({ statusDefinitionId: completedTaskStatus.id });
+
+    await prisma.task.update({
+      where: { id: openTask.id },
+      data: { statusDefinitionId: openTaskStatus.id },
+    });
+    const taskReopenedProject = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(taskReopenedProject.body.data.status.terminal).toBe(true);
+    expect(taskReopenedProject.body.data.calculatedProgress).toBe(50);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: activeProjectStatus.id })
+      .expect(200);
+    const reopenedTaskProject = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(reopenedTaskProject.body.data.status.terminal).toBe(false);
+    expect(reopenedTaskProject.body.data.calculatedProgress).toBe(50);
+
+    const emptyProject = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Empty Completion Project' })
+      .expect(201);
+    const emptyCompleted = await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${emptyProject.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(200);
+    expect(emptyCompleted.body.data.calculatedProgress).toBe(100);
+  });
+
   function createStatus(
     entityType: keyof typeof StatusEntityType,
     name: string,
@@ -1534,6 +1790,12 @@ async function seedRoles() {
     'projects.view_all',
     'projects.manage_members',
     'projects.manage_owner',
+    'projects.manage_progress',
+    'tags.view',
+    'tags.create',
+    'tags.update',
+    'tags.archive',
+    'tags.assign',
     'statuses.view',
     'statuses.create',
     'statuses.update',
@@ -1601,6 +1863,7 @@ async function resetDatabase() {
     prisma.taskCompletionPolicyApprover.deleteMany(),
     prisma.taskCompletionPolicy.deleteMany(),
     prisma.projectAttachment.deleteMany(),
+    prisma.projectTag.deleteMany(),
     prisma.projectMember.deleteMany(),
     prisma.attachment.deleteMany(),
     prisma.task.deleteMany(),

@@ -17,7 +17,9 @@ import { ProjectQueryDto } from './dto/project-query.dto';
 import {
   ProjectMemberQueryDto,
   ProjectMembersDto,
+  ProjectTagIdsDto,
   UpdateProjectDto,
+  UpdateProjectProgressDto,
 } from './dto/update-project.dto';
 
 @Injectable()
@@ -88,7 +90,10 @@ export class ProjectsService {
         memberCount: memberIds.length,
       },
     });
-    return serializeProject(project);
+    return serializeProject(
+      project,
+      await this.progressSummaryForProjects(tenant.workspaceId, [project]),
+    );
   }
 
   async list(tenant: WorkspaceTenantContext, query: ProjectQueryDto) {
@@ -104,8 +109,9 @@ export class ProjectsService {
       }),
       this.prisma.project.count({ where }),
     ]);
+    const progress = await this.progressSummaryForProjects(tenant.workspaceId, items);
     return {
-      items: items.map(serializeProject),
+      items: items.map((project) => serializeProject(project, progress)),
       page: query.page,
       pageSize: query.pageSize,
       total,
@@ -114,7 +120,10 @@ export class ProjectsService {
 
   async get(tenant: WorkspaceTenantContext, id: string) {
     const project = await this.readAccessibleProject(tenant, id, projectDetailSelect);
-    return serializeProject(project);
+    return serializeProject(
+      project,
+      await this.progressSummaryForProjects(tenant.workspaceId, [project]),
+    );
   }
 
   async update(tenant: WorkspaceTenantContext, id: string, dto: UpdateProjectDto) {
@@ -195,7 +204,10 @@ export class ProjectsService {
           ? { fromVisibility: existing.visibility, toVisibility: dto.visibility }
           : { changed },
     });
-    return serializeProject(project);
+    return serializeProject(
+      project,
+      await this.progressSummaryForProjects(tenant.workspaceId, [project]),
+    );
   }
 
   async updateStatus(tenant: WorkspaceTenantContext, id: string, statusDefinitionId: string) {
@@ -205,11 +217,23 @@ export class ProjectsService {
     } satisfies Prisma.ProjectSelect);
     const status = await this.projectStatus(tenant.workspaceId, statusDefinitionId);
     if (existing.statusDefinitionId === status.id) return this.get(tenant, id);
-    const project = await this.prisma.project.update({
-      where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
-      data: { statusDefinitionId: status.id },
-      select: projectDetailSelect,
-    });
+    const project = await this.prisma.$transaction(async (tx) => {
+      if (status.isTerminal) {
+        const openTaskCount = await this.openLinkedTaskCount(tenant.workspaceId, id, tx);
+        if (openTaskCount > 0) {
+          throw new BadRequestException({
+            code: 'PROJECT_HAS_OPEN_TASKS',
+            message: 'Project has open tasks.',
+            details: { openTaskCount },
+          });
+        }
+      }
+      return tx.project.update({
+        where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
+        data: { statusDefinitionId: status.id },
+        select: projectDetailSelect,
+      });
+    }, serializableTransaction);
     await this.audit.record({
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
@@ -222,7 +246,10 @@ export class ProjectsService {
         toStatusId: status.id,
       },
     });
-    return serializeProject(project);
+    return serializeProject(
+      project,
+      await this.progressSummaryForProjects(tenant.workspaceId, [project]),
+    );
   }
 
   async archive(tenant: WorkspaceTenantContext, id: string) {
@@ -370,7 +397,104 @@ export class ProjectsService {
       entityId: id,
       metadata: { fromMembershipId: project.ownerMembershipId, toMembershipId: owner.id },
     });
-    return serializeProject(updated);
+    return serializeProject(
+      updated,
+      await this.progressSummaryForProjects(tenant.workspaceId, [updated]),
+    );
+  }
+
+  async listTags(tenant: WorkspaceTenantContext, id: string) {
+    await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
+    const tags = await this.prisma.projectTag.findMany({
+      where: { workspaceId: tenant.workspaceId, projectId: id },
+      select: projectTagSelect,
+      orderBy: { createdAt: 'asc' },
+    });
+    return tags.map(serializeProjectTag);
+  }
+
+  async addTags(tenant: WorkspaceTenantContext, id: string, dto: ProjectTagIdsDto) {
+    await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
+    const tagIds = uniqueIds(dto.tagIds);
+    const changed = await this.prisma.$transaction(async (tx) => {
+      if (tagIds.length === 0) return 0;
+      await this.lockActiveWorkspaceTags(tx, tenant.workspaceId, tagIds);
+      const created = await tx.projectTag.createMany({
+        data: tagIds.map((tagId) => ({
+          workspaceId: tenant.workspaceId,
+          projectId: id,
+          tagId,
+          createdById: tenant.userId,
+        })),
+        skipDuplicates: true,
+      });
+      return created.count;
+    }, serializableTransaction);
+    if (changed > 0) {
+      await this.audit.record({
+        agencyId: tenant.agencyId,
+        workspaceId: tenant.workspaceId,
+        userId: tenant.userId,
+        action: 'project.tag_added',
+        entityType: 'Project',
+        entityId: id,
+        metadata: { requestedCount: tagIds.length, changedCount: changed },
+      });
+    }
+    return { requestedCount: tagIds.length, changedCount: changed };
+  }
+
+  async removeTags(tenant: WorkspaceTenantContext, id: string, dto: ProjectTagIdsDto) {
+    await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
+    const tagIds = uniqueIds(dto.tagIds);
+    const removed = await this.prisma.projectTag.deleteMany({
+      where: { workspaceId: tenant.workspaceId, projectId: id, tagId: { in: tagIds } },
+    });
+    if (removed.count > 0) {
+      await this.audit.record({
+        agencyId: tenant.agencyId,
+        workspaceId: tenant.workspaceId,
+        userId: tenant.userId,
+        action: 'project.tag_removed',
+        entityType: 'Project',
+        entityId: id,
+        metadata: { requestedCount: tagIds.length, changedCount: removed.count },
+      });
+    }
+    return { requestedCount: tagIds.length, changedCount: removed.count };
+  }
+
+  async updateProgress(tenant: WorkspaceTenantContext, id: string, dto: UpdateProjectProgressDto) {
+    const project = await this.readAccessibleProject(tenant, id, {
+      id: true,
+      manualProgressPercent: true,
+    } satisfies Prisma.ProjectSelect);
+    const next = dto.manualProgressPercent;
+    if (project.manualProgressPercent === next) return this.get(tenant, id);
+    const updated = await this.prisma.project.update({
+      where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
+      data: {
+        manualProgressPercent: next,
+        manualProgressUpdatedAt: new Date(),
+        manualProgressUpdatedByMembershipId: tenant.workspaceMembershipId,
+      },
+      select: projectDetailSelect,
+    });
+    const progress = await this.progressSummaryForProjects(tenant.workspaceId, [updated]);
+    await this.audit.record({
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
+      userId: tenant.userId,
+      action: next === null ? 'project.progress_override_cleared' : 'project.progress_override_set',
+      entityType: 'Project',
+      entityId: id,
+      metadata: {
+        fromManualProgressPercent: project.manualProgressPercent,
+        toManualProgressPercent: next,
+        calculatedProgress: progress.get(id)?.calculatedProgress ?? 0,
+      },
+    });
+    return serializeProject(updated, progress);
   }
 
   private projectWhere(
@@ -392,6 +516,9 @@ export class ProjectsService {
           { description: { contains: search, mode: Prisma.QueryMode.insensitive } },
         ],
       });
+    }
+    if (query.tagId) {
+      filters.push({ tags: { some: { tagId: query.tagId, workspaceId: tenant.workspaceId } } });
     }
     return {
       AND: filters,
@@ -483,6 +610,94 @@ export class ProjectsService {
       throw new BadRequestException('INVALID_PROJECT_MEMBERSHIP');
     return memberships;
   }
+
+  private async lockActiveWorkspaceTags(
+    tx: Prisma.TransactionClient,
+    workspaceId: string,
+    tagIds: string[],
+  ) {
+    const tags = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id"
+      FROM "workspace_tags"
+      WHERE "workspace_id" = ${workspaceId}::uuid
+        AND "id" IN (${Prisma.join(tagIds)})
+        AND "status" = 'ACTIVE'
+      FOR UPDATE
+    `);
+    if (tags.length !== tagIds.length) throw new BadRequestException('INVALID_PROJECT_TAG');
+    return tags;
+  }
+
+  private async openLinkedTaskCount(
+    workspaceId: string,
+    projectId: string,
+    tx: Prisma.TransactionClient,
+  ) {
+    await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id"
+      FROM "projects"
+      WHERE "workspace_id" = ${workspaceId}::uuid
+        AND "id" = ${projectId}::uuid
+      FOR UPDATE
+    `);
+    return tx.taskProject.count({
+      where: {
+        workspaceId,
+        projectId,
+        task: {
+          deletedAt: null,
+          statusDefinition: { isTerminal: false },
+        },
+      },
+    });
+  }
+
+  private async progressSummaryForProjects(workspaceId: string, projects: ProjectRecord[]) {
+    const result = new Map<string, ProjectProgressSummary>();
+    for (const project of projects) result.set(project.id, emptyProgress(project));
+    if (projects.length === 0) return result;
+
+    const now = new Date();
+    const rows = await this.prisma.taskProject.findMany({
+      where: {
+        workspaceId,
+        projectId: { in: projects.map((project) => project.id) },
+        task: { deletedAt: null },
+      },
+      select: {
+        projectId: true,
+        task: {
+          select: {
+            dueAt: true,
+            statusDefinition: { select: { isTerminal: true } },
+          },
+        },
+      },
+    });
+    for (const row of rows) {
+      const summary = result.get(row.projectId);
+      if (!summary) continue;
+      summary.taskCounts.totalTasks += 1;
+      if (row.task.statusDefinition.isTerminal) {
+        summary.taskCounts.completedTasks += 1;
+      } else {
+        summary.taskCounts.openTasks += 1;
+        if (row.task.dueAt && row.task.dueAt < now) summary.taskCounts.overdueTasks += 1;
+      }
+    }
+    for (const project of projects) {
+      const summary = result.get(project.id)!;
+      if (summary.taskCounts.totalTasks > 0) {
+        summary.calculatedProgress = Math.round(
+          (summary.taskCounts.completedTasks / summary.taskCounts.totalTasks) * 100,
+        );
+      } else {
+        summary.calculatedProgress = project.statusDefinition?.isTerminal ? 100 : 0;
+      }
+      summary.effectiveProgress = project.manualProgressPercent ?? summary.calculatedProgress;
+    }
+    return result;
+  }
 }
 
 const membershipSummarySelect = {
@@ -518,12 +733,16 @@ const projectListSelect = {
   statusDefinition: { select: statusSelect },
   priority: true,
   visibility: true,
+  manualProgressPercent: true,
+  manualProgressUpdatedAt: true,
+  manualProgressUpdatedByMembershipId: true,
   plannedStartAt: true,
   dueAt: true,
   departmentId: true,
   department: { select: departmentSelect },
   ownerMembershipId: true,
   ownerMembership: { select: membershipSummarySelect },
+  manualProgressUpdatedBy: { select: membershipSummarySelect },
   _count: { select: { members: true } },
   createdById: true,
   archivedAt: true,
@@ -544,10 +763,34 @@ const projectMemberSelect = {
   createdAt: true,
 } satisfies Prisma.ProjectMemberSelect;
 
+const projectTagSelect = {
+  workspaceId: true,
+  projectId: true,
+  tagId: true,
+  createdAt: true,
+  tag: { select: { id: true, name: true, color: true, status: true } },
+} satisfies Prisma.ProjectTagSelect;
+
 type ProjectRecord = Prisma.ProjectGetPayload<{ select: typeof projectDetailSelect }>;
 type ProjectMemberRecord = Prisma.ProjectMemberGetPayload<{ select: typeof projectMemberSelect }>;
+type ProjectTagRecord = Prisma.ProjectTagGetPayload<{ select: typeof projectTagSelect }>;
 
-function serializeProject(project: ProjectRecord) {
+interface ProjectProgressSummary {
+  calculatedProgress: number;
+  effectiveProgress: number;
+  taskCounts: {
+    totalTasks: number;
+    openTasks: number;
+    completedTasks: number;
+    overdueTasks: number;
+  };
+}
+
+function serializeProject(
+  project: ProjectRecord,
+  progressByProjectId: Map<string, ProjectProgressSummary>,
+) {
+  const progress = progressByProjectId.get(project.id) ?? emptyProgress(project);
   return {
     id: project.id,
     workspaceId: project.workspaceId,
@@ -564,6 +807,15 @@ function serializeProject(project: ProjectRecord) {
       : null,
     priority: project.priority,
     visibility: project.visibility,
+    calculatedProgress: progress.calculatedProgress,
+    manualProgressPercent: project.manualProgressPercent,
+    manualProgressUpdatedAt: project.manualProgressUpdatedAt,
+    manualProgressUpdatedByMembershipId: project.manualProgressUpdatedByMembershipId,
+    manualProgressUpdatedBy: project.manualProgressUpdatedBy
+      ? serializeMembership(project.manualProgressUpdatedBy)
+      : null,
+    effectiveProgress: project.manualProgressPercent ?? progress.calculatedProgress,
+    taskCounts: progress.taskCounts,
     plannedStartAt: project.plannedStartAt,
     dueAt: project.dueAt,
     departmentId: project.departmentId,
@@ -591,6 +843,33 @@ function serializeProjectMember(member: ProjectMemberRecord) {
     workspaceMembershipId: member.workspaceMembershipId,
     member: serializeMembership(member.workspaceMembership),
     createdAt: member.createdAt,
+  };
+}
+
+function serializeProjectTag(projectTag: ProjectTagRecord) {
+  return {
+    id: projectTag.tag.id,
+    workspaceId: projectTag.workspaceId,
+    projectId: projectTag.projectId,
+    tagId: projectTag.tagId,
+    name: projectTag.tag.name,
+    color: projectTag.tag.color,
+    status: projectTag.tag.status,
+    createdAt: projectTag.createdAt,
+  };
+}
+
+function emptyProgress(project: Pick<ProjectRecord, 'statusDefinition' | 'manualProgressPercent'>) {
+  const calculatedProgress = project.statusDefinition?.isTerminal ? 100 : 0;
+  return {
+    calculatedProgress,
+    effectiveProgress: project.manualProgressPercent ?? calculatedProgress,
+    taskCounts: {
+      totalTasks: 0,
+      openTasks: 0,
+      completedTasks: 0,
+      overdueTasks: 0,
+    },
   };
 }
 
@@ -688,3 +967,9 @@ function uniqueIds(ids: string[]) {
 function hasPermission(tenant: WorkspaceTenantContext, permission: string) {
   return tenant.permissions.includes('*') || tenant.permissions.includes(permission);
 }
+
+const serializableTransaction = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 5_000,
+  timeout: 10_000,
+};

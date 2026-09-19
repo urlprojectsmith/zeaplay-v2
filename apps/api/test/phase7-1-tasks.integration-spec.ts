@@ -5754,6 +5754,7 @@ async function resetDatabase() {
     prisma.taskTemplate.deleteMany(),
     prisma.taskRecurrenceSeries.deleteMany(),
     prisma.taskKanbanColumnSetting.deleteMany(),
+    prisma.projectTag.deleteMany(),
     prisma.workspaceTag.deleteMany(),
     prisma.auditLog.deleteMany(),
     prisma.refreshToken.deleteMany(),

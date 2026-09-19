@@ -28,8 +28,10 @@ import { ProjectQueryDto } from './dto/project-query.dto';
 import {
   ProjectMemberQueryDto,
   ProjectMembersDto,
+  ProjectTagIdsDto,
   UpdateProjectDto,
   UpdateProjectOwnerDto,
+  UpdateProjectProgressDto,
   UpdateProjectStatusDto,
 } from './dto/update-project.dto';
 import { ProjectsService } from './projects.service';
@@ -92,6 +94,45 @@ export class ProjectsController {
     @Body() dto: UpdateProjectStatusDto,
   ) {
     return this.projects.updateStatus(tenant, params.id, dto.statusDefinitionId);
+  }
+
+  @Patch(':id/progress')
+  @RequirePermissions(PermissionKeys.projectsManageProgress)
+  updateProgress(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+    @Body() dto: UpdateProjectProgressDto,
+  ) {
+    return this.projects.updateProgress(tenant, params.id, dto);
+  }
+
+  @Get(':id/tags')
+  @RequirePermissions(PermissionKeys.projectsView)
+  tags(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+  ) {
+    return this.projects.listTags(tenant, params.id);
+  }
+
+  @Post(':id/tags/add')
+  @RequirePermissions(PermissionKeys.projectsUpdate, PermissionKeys.tagsAssign)
+  addTags(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+    @Body() dto: ProjectTagIdsDto,
+  ) {
+    return this.projects.addTags(tenant, params.id, dto);
+  }
+
+  @Post(':id/tags/remove')
+  @RequirePermissions(PermissionKeys.projectsUpdate, PermissionKeys.tagsAssign)
+  removeTags(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: WorkspaceProjectParamDto,
+    @Body() dto: ProjectTagIdsDto,
+  ) {
+    return this.projects.removeTags(tenant, params.id, dto);
   }
 
   @Get(':id/members')

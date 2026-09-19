@@ -15,6 +15,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateProjectDto {
@@ -75,6 +76,24 @@ export class ProjectMembersDto {
   @ArrayUnique()
   @IsUUID('4', { each: true })
   membershipIds!: string[];
+}
+
+export class ProjectTagIdsDto {
+  @ApiPropertyOptional({ type: [String], maxItems: 50 })
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  tagIds!: string[];
+}
+
+export class UpdateProjectProgressDto {
+  @ApiPropertyOptional({ minimum: 0, maximum: 100, nullable: true })
+  @ValidateIf((_, value) => value !== null)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  manualProgressPercent!: number | null;
 }
 
 export class ProjectMemberQueryDto {

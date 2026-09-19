@@ -16,6 +16,16 @@ export interface WorkspaceProjectSummary {
   status: { id: string; name: string; color: string; terminal: boolean } | null;
   priority: ProjectPriority;
   visibility: ProjectVisibility;
+  calculatedProgress: number;
+  manualProgressPercent: number | null;
+  manualProgressUpdatedAt: string | null;
+  effectiveProgress: number;
+  taskCounts: {
+    totalTasks: number;
+    openTasks: number;
+    completedTasks: number;
+    overdueTasks: number;
+  };
   plannedStartAt: string | null;
   dueAt: string | null;
   departmentId: string | null;
@@ -43,6 +53,22 @@ export interface ProjectMember {
   createdAt: string;
 }
 
+export interface ProjectTag {
+  id: string;
+  workspaceId: string;
+  projectId: string;
+  tagId: string;
+  name: string;
+  color: string | null;
+  status: 'ACTIVE' | 'ARCHIVED';
+  createdAt: string;
+}
+
+export interface ProjectMutationCount {
+  requestedCount: number;
+  changedCount: number;
+}
+
 export interface ProjectPayload {
   name: string;
   description?: string | null;
@@ -62,6 +88,7 @@ export interface ListWorkspaceProjectsParams {
   search?: string;
   statusDefinitionId?: string;
   priority?: ProjectPriority;
+  tagId?: string;
   departmentId?: string;
   plannedFrom?: string;
   plannedTo?: string;
@@ -80,6 +107,7 @@ export type NormalizedProjectListParams = Required<
       | 'search'
       | 'statusDefinitionId'
       | 'priority'
+      | 'tagId'
       | 'departmentId'
       | 'plannedFrom'
       | 'plannedTo'
@@ -96,6 +124,8 @@ export const projectKeys = {
     ['workspace', workspaceId, 'projects', 'detail', projectId] as const,
   members: (workspaceId: string | null, projectId: string | null, params: object) =>
     ['workspace', workspaceId, 'projects', 'detail', projectId, 'members', params] as const,
+  tags: (workspaceId: string | null, projectId: string | null) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'tags'] as const,
 };
 
 export async function listWorkspaceProjects(
@@ -208,6 +238,49 @@ export async function updateWorkspaceProjectOwner(
   return response.data;
 }
 
+export async function listWorkspaceProjectTags(workspaceId: string, projectId: string) {
+  const response = await apiClient.request<ProjectTag[]>(
+    `/workspaces/${workspaceId}/projects/${projectId}/tags`,
+  );
+  return response.data;
+}
+
+export async function addWorkspaceProjectTags(
+  workspaceId: string,
+  projectId: string,
+  tagIds: string[],
+) {
+  const response = await apiClient.request<ProjectMutationCount>(
+    `/workspaces/${workspaceId}/projects/${projectId}/tags/add`,
+    { method: 'POST', body: JSON.stringify({ tagIds: uniqueIds(tagIds) }) },
+  );
+  return response.data;
+}
+
+export async function removeWorkspaceProjectTags(
+  workspaceId: string,
+  projectId: string,
+  tagIds: string[],
+) {
+  const response = await apiClient.request<ProjectMutationCount>(
+    `/workspaces/${workspaceId}/projects/${projectId}/tags/remove`,
+    { method: 'POST', body: JSON.stringify({ tagIds: uniqueIds(tagIds) }) },
+  );
+  return response.data;
+}
+
+export async function updateWorkspaceProjectProgress(
+  workspaceId: string,
+  projectId: string,
+  manualProgressPercent: number | null,
+) {
+  const response = await apiClient.request<WorkspaceProjectSummary>(
+    `/workspaces/${workspaceId}/projects/${projectId}/progress`,
+    { method: 'PATCH', body: JSON.stringify({ manualProgressPercent }) },
+  );
+  return response.data;
+}
+
 export function normalizeProjectListParams(
   params: ListWorkspaceProjectsParams,
 ): NormalizedProjectListParams {
@@ -219,6 +292,7 @@ export function normalizeProjectListParams(
     ...(params.search?.trim() ? { search: params.search.trim() } : {}),
     ...(params.statusDefinitionId ? { statusDefinitionId: params.statusDefinitionId } : {}),
     ...(params.priority ? { priority: params.priority } : {}),
+    ...(params.tagId ? { tagId: params.tagId } : {}),
     ...(params.departmentId ? { departmentId: params.departmentId } : {}),
     ...(isIsoDateString(params.plannedFrom) ? { plannedFrom: params.plannedFrom } : {}),
     ...(isIsoDateString(params.plannedTo) ? { plannedTo: params.plannedTo } : {}),
@@ -253,6 +327,7 @@ function projectListQueryString(params: NormalizedProjectListParams) {
     'search',
     'statusDefinitionId',
     'priority',
+    'tagId',
     'departmentId',
     'plannedFrom',
     'plannedTo',
@@ -282,4 +357,8 @@ function clampNumber(value: number | undefined, min: number, max: number, fallba
 
 function isIsoDateString(value: string | undefined) {
   return Boolean(value && !Number.isNaN(Date.parse(value)));
+}
+
+function uniqueIds(ids: string[]) {
+  return Array.from(new Set(ids.filter(Boolean)));
 }

@@ -51,6 +51,11 @@ export class ProjectQueryDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsUUID()
+  tagId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsDateString()
   plannedFrom?: string;
 

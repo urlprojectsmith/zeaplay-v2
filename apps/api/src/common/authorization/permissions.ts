@@ -73,6 +73,7 @@ export const PermissionKeys = {
   projectsViewAll: 'projects.view_all',
   projectsManageMembers: 'projects.manage_members',
   projectsManageOwner: 'projects.manage_owner',
+  projectsManageProgress: 'projects.manage_progress',
   projectRead: 'project.read',
   projectCreate: 'project.create',
   projectUpdate: 'project.update',
