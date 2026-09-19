@@ -185,7 +185,13 @@ export function toggleRelationshipSelection(
   return [...current, candidate];
 }
 
-export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null }) {
+export function AllTasksBrowser({
+  workspaceId,
+  projectContext,
+}: {
+  workspaceId: string | null;
+  projectContext?: ProjectTaskContext;
+}) {
   const { locale, t } = useLanguage();
   const labels = allTaskLabels(locale, t);
   const router = useRouter();
@@ -195,6 +201,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
   const accessToken = useSessionStore((state) => state.accessToken);
   const searchParamString = searchParams.toString();
   const previousWorkspaceId = useRef(workspaceId);
+  const previousProjectContextId = useRef(projectContext?.projectId ?? null);
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
   const debouncedSearch = useDebouncedValue(searchInput.trim(), 300);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -216,7 +223,10 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
   const debouncedTagSearch = useDebouncedValue(tagSearch.trim(), 300);
 
   const urlState = useMemo(() => readTaskUrlState(searchParams), [searchParamString]);
-  const activeView = urlState.view ?? (preferenceReady ? preferredView : 'list');
+  const rawActiveView = urlState.view ?? (preferenceReady ? preferredView : 'list');
+  const activeView =
+    projectContext?.view ??
+    (projectContext && !isProjectTaskView(rawActiveView) ? 'list' : rawActiveView);
   const listParams = useMemo(
     () =>
       normalizeTaskListParams({
@@ -229,7 +239,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         priority: urlState.priority,
         assigneeMembershipId: urlState.assignee,
         departmentId: urlState.department,
-        projectId: urlState.project,
+        projectId: projectContext?.projectId ?? urlState.project,
         tagId: urlState.tagId,
         dueFrom: urlState.dueFrom
           ? taskDueBoundaryFromLocalDate(urlState.dueFrom, 'start')
@@ -244,6 +254,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
       urlState.page,
       urlState.pageSize,
       urlState.priority,
+      projectContext?.projectId,
       urlState.project,
       urlState.tagId,
       urlState.search,
@@ -263,7 +274,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         priority: urlState.priority,
         assigneeMembershipId: urlState.assignee,
         departmentId: urlState.department,
-        projectId: urlState.project,
+        projectId: projectContext?.projectId ?? urlState.project,
         tagId: urlState.tagId,
         dueFrom: urlState.dueFrom
           ? taskDueBoundaryFromLocalDate(urlState.dueFrom, 'start')
@@ -276,6 +287,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
       urlState.dueFrom,
       urlState.dueTo,
       urlState.priority,
+      projectContext?.projectId,
       urlState.project,
       urlState.tagId,
       urlState.search,
@@ -311,7 +323,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         pageSize: 10,
         search: debouncedAssigneeSearch.length >= 2 ? debouncedAssigneeSearch : undefined,
       }),
-    enabled: Boolean(workspaceId),
+    enabled: Boolean(workspaceId && !projectContext),
   });
 
   const projectsQuery = useQuery({
@@ -444,6 +456,18 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
     if (changed) replaceUrl(router, pathname, next);
   }, [pathname, router, searchParams, workspaceId]);
 
+  useEffect(() => {
+    const nextProjectId = projectContext?.projectId ?? null;
+    if (previousProjectContextId.current === nextProjectId) return;
+    previousProjectContextId.current = nextProjectId;
+    setSelectedTask(null);
+    setFilterOpen(false);
+    setAssigneeSearch('');
+    setProjectSearch('');
+    setTagSearch('');
+    clearBulkState();
+  }, [projectContext?.projectId]);
+
   const total = tasksQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / urlState.pageSize));
   const activeFilterCount = activeFilters(urlState).length;
@@ -570,7 +594,9 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
                 ? labels.calendar
                 : activeView === 'gantt'
                   ? labels.gantt
-                  : `${total} ${labels.tasks}`}
+                  : projectContext
+                    ? labels.projectTasks
+                    : `${total} ${labels.tasks}`}
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -593,7 +619,18 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
             {labels.filters}
             {activeFilterCount ? ` (${activeFilterCount})` : ''}
           </Button>
-          <TaskViewSwitcher labels={labels} view={activeView} onViewChange={changeView} />
+          <TaskViewSwitcher
+            labels={labels}
+            view={activeView}
+            onViewChange={changeView}
+            allowedViews={
+              projectContext?.view
+                ? [projectContext.view]
+                : projectContext
+                  ? ['list', 'grid', 'compact']
+                  : undefined
+            }
+          />
         </div>
       </div>
 
@@ -615,6 +652,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
           onChange={updateState}
           onClearFilters={clearFilters}
           activeFilterCount={activeFilterCount}
+          hideProjectFilter={Boolean(projectContext)}
         />
       </div>
 
@@ -644,6 +682,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
             onChange={updateState}
             onClearFilters={clearFilters}
             activeFilterCount={activeFilterCount}
+            hideProjectFilter={Boolean(projectContext)}
           />
         </DialogContent>
       </Dialog>
@@ -658,6 +697,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
         tags={tagsQuery.data?.items ?? []}
         onRemove={(key) => updateState({ [key]: null, page: null })}
         onClear={clearFilters}
+        hideProjectFilter={Boolean(projectContext)}
       />
 
       {['list', 'grid', 'compact'].includes(activeView) && tasks.length > 0 ? (
@@ -702,6 +742,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
               workspaceId={workspaceId}
               labels={labels}
               filters={listParams}
+              projectContext={projectContext}
               onOpenDetail={(taskId) =>
                 workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
               }
@@ -712,6 +753,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
               labels={labels}
               filters={kanbanBaseParams}
               hasSearchOrFilters={hasSearchOrFilters}
+              projectContext={projectContext}
               onOpenDetail={(taskId) =>
                 workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
               }
@@ -755,6 +797,7 @@ export function AllTasksBrowser({ workspaceId }: { workspaceId: string | null })
               onOpenDetail={(taskId) =>
                 workspaceId ? setSelectedTask({ workspaceId, taskId }) : setSelectedTask(null)
               }
+              projectContext={projectContext}
             />
           )}
         </CardContent>
@@ -902,10 +945,12 @@ function TaskViewSwitcher({
   labels,
   view,
   onViewChange,
+  allowedViews,
 }: {
   labels: AllTaskLabels;
   view: TaskView;
   onViewChange: (view: TaskView) => void;
+  allowedViews?: TaskView[];
 }) {
   const options = [
     { value: 'list' as const, label: labels.viewList, icon: List },
@@ -914,7 +959,7 @@ function TaskViewSwitcher({
     { value: 'kanban' as const, label: labels.kanban, icon: KanbanSquare },
     { value: 'calendar' as const, label: labels.calendar, icon: CalendarDays },
     { value: 'gantt' as const, label: labels.gantt, icon: BarChart3 },
-  ];
+  ].filter((option) => !allowedViews || allowedViews.includes(option.value));
   return (
     <div
       className="flex max-w-full flex-wrap rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-1"
@@ -963,6 +1008,7 @@ function TaskFilterControls({
   onChange,
   onClearFilters,
   activeFilterCount,
+  hideProjectFilter,
 }: {
   labels: AllTaskLabels;
   state: TaskUrlState;
@@ -980,6 +1026,7 @@ function TaskFilterControls({
   onChange: (patch: Record<string, string | number | null>) => void;
   onClearFilters: () => void;
   activeFilterCount: number;
+  hideProjectFilter?: boolean;
 }) {
   return (
     <div className="grid gap-4">
@@ -1071,16 +1118,18 @@ function TaskFilterControls({
           onSearch={onAssigneeSearch}
           onChange={(value) => onChange({ assignee: value, page: null })}
         />
-        <RelationFilter
-          label={labels.project}
-          searchLabel={labels.searchProjects}
-          search={projectSearch}
-          selectedId={state.project}
-          items={projects.map((project) => ({ id: project.id, label: project.name }))}
-          anyLabel={labels.anyProject}
-          onSearch={onProjectSearch}
-          onChange={(value) => onChange({ project: value, page: null })}
-        />
+        {hideProjectFilter ? null : (
+          <RelationFilter
+            label={labels.project}
+            searchLabel={labels.searchProjects}
+            search={projectSearch}
+            selectedId={state.project}
+            items={projects.map((project) => ({ id: project.id, label: project.name }))}
+            anyLabel={labels.anyProject}
+            onSearch={onProjectSearch}
+            onChange={(value) => onChange({ project: value, page: null })}
+          />
+        )}
         <RelationFilter
           label={labels.filterByTag}
           searchLabel={labels.searchTags}
@@ -1179,6 +1228,7 @@ function ActiveFilterChips({
   tags,
   onRemove,
   onClear,
+  hideProjectFilter,
 }: {
   labels: AllTaskLabels;
   state: TaskUrlState;
@@ -1189,11 +1239,23 @@ function ActiveFilterChips({
   tags: WorkspaceTagSummary[];
   onRemove: (key: string) => void;
   onClear: () => void;
+  hideProjectFilter?: boolean;
 }) {
-  const chips = activeFilters(state).map((key) => ({
-    key,
-    label: activeFilterLabel(key, state, labels, statuses, departments, assignees, projects, tags),
-  }));
+  const chips = activeFilters(state)
+    .filter((key) => !(hideProjectFilter && key === 'project'))
+    .map((key) => ({
+      key,
+      label: activeFilterLabel(
+        key,
+        state,
+        labels,
+        statuses,
+        departments,
+        assignees,
+        projects,
+        tags,
+      ),
+    }));
   if (!chips.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-2" aria-label={labels.activeFilters}>
@@ -1429,17 +1491,20 @@ function TaskGanttView({
   workspaceId,
   labels,
   filters,
+  projectContext,
   onOpenDetail,
 }: {
   workspaceId: string | null;
   labels: AllTaskLabels;
   filters: NormalizedTaskListParams;
+  projectContext?: ProjectTaskContext;
   onOpenDetail: (taskId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [from, setFrom] = useState(() => localInputDate(startOfMonth(new Date())));
   const [to, setTo] = useState(() => localInputDate(endOfMonth(new Date())));
   const [editing, setEditing] = useState<WorkspaceTask | null>(null);
+  const projectId = projectContext?.projectId ?? null;
   const params = {
     from,
     to,
@@ -1465,12 +1530,29 @@ function TaskGanttView({
       }),
     onSuccess: () => {
       toast.success(labels.updated);
-      if (workspaceId) void queryClient.invalidateQueries({ queryKey: taskKeys.all(workspaceId) });
+      if (workspaceId) {
+        void queryClient.invalidateQueries({
+          predicate: (query) =>
+            query.queryKey[0] === 'workspace' &&
+            query.queryKey[1] === workspaceId &&
+            query.queryKey[2] === 'tasks' &&
+            (query.queryKey[3] === 'gantt' || query.queryKey[3] === 'detail'),
+        });
+      }
+      projectContext?.onScheduleChanged?.();
       setEditing(null);
     },
     onError: (error) => toast.error(safeTaskError(error, labels)),
   });
   const tasks = ganttQuery.data?.items ?? [];
+  const unscheduledTasks = ganttQuery.data?.unscheduledItems ?? [];
+
+  useEffect(() => {
+    setFrom(localInputDate(startOfMonth(new Date())));
+    setTo(localInputDate(endOfMonth(new Date())));
+    setEditing(null);
+  }, [workspaceId, projectId]);
+
   return (
     <div className="grid gap-4 overflow-x-auto p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -1524,6 +1606,38 @@ function TaskGanttView({
           {!tasks.length ? <EmptyState title={labels.noTasks} /> : null}
         </div>
       )}
+      {!ganttQuery.isLoading && !ganttQuery.isError && ganttQuery.data?.unscheduledCount ? (
+        <section
+          className="min-w-[760px] rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3"
+          aria-label={labels.unscheduled}
+        >
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold">{labels.unscheduled}</h4>
+            <span className="text-xs text-[hsl(var(--muted-foreground))]">
+              {ganttQuery.data.unscheduledCount} {labels.tasks}
+            </span>
+          </div>
+          <div className="grid gap-2">
+            {unscheduledTasks.map((task) => (
+              <div
+                key={task.id}
+                className="grid gap-2 rounded-md border border-[hsl(var(--border))] p-3 sm:grid-cols-[1fr_auto] sm:items-center"
+              >
+                <button
+                  type="button"
+                  className="text-left text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+                  onClick={() => onOpenDetail(task.id)}
+                >
+                  {task.title}
+                </button>
+                <Button variant="secondary" onClick={() => setEditing(task)}>
+                  {labels.scheduleTask}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
           <DialogHeader>
@@ -1573,12 +1687,14 @@ function TaskKanbanBoard({
   labels,
   filters,
   hasSearchOrFilters,
+  projectContext,
   onOpenDetail,
 }: {
   workspaceId: string | null;
   labels: AllTaskLabels;
   filters: NormalizedTaskListParams;
   hasSearchOrFilters: boolean;
+  projectContext?: ProjectTaskContext;
   onOpenDetail: (taskId: string) => void;
 }) {
   const queryClient = useQueryClient();
@@ -1589,6 +1705,7 @@ function TaskKanbanBoard({
     statusDefinitionId: string;
   } | null>(null);
   const [wipInput, setWipInput] = useState('');
+  const projectId = projectContext?.projectId ?? null;
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1605,7 +1722,7 @@ function TaskKanbanBoard({
     setEditingColumn(null);
     setCompletionRequest(null);
     setWipInput('');
-  }, [workspaceId]);
+  }, [workspaceId, projectId]);
 
   const columns = settingsQuery.data?.columns ?? [];
   const columnQueries = useQueries({
@@ -1652,6 +1769,7 @@ function TaskKanbanBoard({
       if (workspaceId) {
         void queryClient.invalidateQueries({ queryKey: taskKeys.kanbanColumns(workspaceId) });
       }
+      projectContext?.onTaskStatusChanged?.();
     },
     onError: (error) => {
       if (isCompletionFlowRequired(error)) {
@@ -1829,6 +1947,7 @@ function TaskKanbanBoard({
             if (workspaceId) {
               void queryClient.invalidateQueries({ queryKey: taskKeys.kanbanColumns(workspaceId) });
             }
+            projectContext?.onTaskStatusChanged?.();
           }}
         />
       ) : null}
@@ -2066,6 +2185,7 @@ function TaskResults({
   onSort,
   onToggleSelection,
   onOpenDetail,
+  projectContext,
 }: {
   labels: AllTaskLabels;
   tasks: WorkspaceTask[];
@@ -2076,6 +2196,7 @@ function TaskResults({
   onSort: (sortBy: TaskSortBy) => void;
   onToggleSelection: (taskId: string, checked: boolean) => void;
   onOpenDetail: (taskId: string) => void;
+  projectContext?: ProjectTaskContext;
 }) {
   if (view === 'grid') {
     return (
@@ -2085,6 +2206,7 @@ function TaskResults({
         selectedTaskIds={selectedTaskIds}
         onToggleSelection={onToggleSelection}
         onOpenDetail={onOpenDetail}
+        projectContext={projectContext}
       />
     );
   }
@@ -2134,6 +2256,7 @@ function TaskResults({
                 sortDirection={sortDirection}
                 onSort={onSort}
               />
+              {projectContext ? <th className="px-4 py-3">{labels.actions}</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -2186,6 +2309,15 @@ function TaskResults({
                     <DueDateCell task={task} labels={labels} />
                   </td>
                   <td className="px-4 py-4">{formatDateTime(task.updatedAt)}</td>
+                  {projectContext ? (
+                    <td className="px-4 py-4">
+                      <RemoveFromProjectButton
+                        labels={labels}
+                        task={task}
+                        projectContext={projectContext}
+                      />
+                    </td>
+                  ) : null}
                 </tr>
               );
             })}
@@ -2236,6 +2368,13 @@ function TaskResults({
                   {labels.projects}: {projectSummary(task, labels)}
                 </span>
               </span>
+              {projectContext ? (
+                <RemoveFromProjectButton
+                  labels={labels}
+                  task={task}
+                  projectContext={projectContext}
+                />
+              ) : null}
             </div>
           );
         })}
@@ -2250,12 +2389,14 @@ function TaskGridView({
   selectedTaskIds,
   onToggleSelection,
   onOpenDetail,
+  projectContext,
 }: {
   labels: AllTaskLabels;
   tasks: WorkspaceTask[];
   selectedTaskIds: Set<string>;
   onToggleSelection: (taskId: string, checked: boolean) => void;
   onOpenDetail: (taskId: string) => void;
+  projectContext?: ProjectTaskContext;
 }) {
   return (
     <div className="grid gap-3 p-3 sm:grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
@@ -2288,6 +2429,13 @@ function TaskGridView({
                 onToggle={onToggleSelection}
               />
             </span>
+            {projectContext ? (
+              <RemoveFromProjectButton
+                labels={labels}
+                task={task}
+                projectContext={projectContext}
+              />
+            ) : null}
             <span className="flex flex-wrap gap-2">
               <StatusBadge task={task} />
               <Badge variant={priorityBadge(task.priority)}>
@@ -2330,12 +2478,14 @@ function TaskCompactView({
   selectedTaskIds,
   onToggleSelection,
   onOpenDetail,
+  projectContext,
 }: {
   labels: AllTaskLabels;
   tasks: WorkspaceTask[];
   selectedTaskIds: Set<string>;
   onToggleSelection: (taskId: string, checked: boolean) => void;
   onOpenDetail: (taskId: string) => void;
+  projectContext?: ProjectTaskContext;
 }) {
   return (
     <div className="divide-y divide-[hsl(var(--border))]">
@@ -2387,10 +2537,42 @@ function TaskCompactView({
               {labels.department}: {task.department?.name ?? labels.emptyDash} · {labels.projects}:{' '}
               {projectSummary(task, labels)}
             </span>
+            {projectContext ? (
+              <span className="sm:col-span-5">
+                <RemoveFromProjectButton
+                  labels={labels}
+                  task={task}
+                  projectContext={projectContext}
+                />
+              </span>
+            ) : null}
           </div>
         );
       })}
     </div>
+  );
+}
+
+function RemoveFromProjectButton({
+  labels,
+  task,
+  projectContext,
+}: {
+  labels: AllTaskLabels;
+  task: WorkspaceTask;
+  projectContext: ProjectTaskContext;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      onClick={() => projectContext.onRemove(task)}
+      disabled={projectContext.removingTaskId === task.id}
+      aria-label={`${labels.removeFromProject}: ${task.title}`}
+    >
+      <X aria-hidden="true" className="h-4 w-4" />
+      {labels.removeFromProject}
+    </Button>
   );
 }
 
@@ -6384,6 +6566,16 @@ function isTaskView(value: unknown): value is TaskView {
   );
 }
 
+function isProjectTaskView(value: TaskView) {
+  return (
+    value === 'list' ||
+    value === 'grid' ||
+    value === 'compact' ||
+    value === 'kanban' ||
+    value === 'gantt'
+  );
+}
+
 function useDebouncedValue(value: string, delay: number) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -6416,6 +6608,14 @@ interface SelectedTask {
 }
 
 type TaskView = 'list' | 'grid' | 'compact' | 'kanban' | 'calendar' | 'gantt';
+type ProjectTaskContext = {
+  projectId: string;
+  view?: Extract<TaskView, 'list' | 'grid' | 'compact' | 'kanban' | 'gantt'>;
+  removingTaskId: string | null;
+  onRemove: (task: WorkspaceTask) => void;
+  onTaskStatusChanged?: () => void;
+  onScheduleChanged?: () => void;
+};
 type BulkAction = 'status' | 'priority' | 'addAssignees' | 'removeAssignees' | 'delete';
 type BulkResultLike = {
   changedCount: number;
@@ -6495,6 +6695,7 @@ function allTaskLabels(
     'loadMore',
     'openTaskDetails',
     'tasks',
+    'projectTasks',
     'searchTasks',
     'filters',
     'filterDescription',
@@ -6731,6 +6932,7 @@ function allTaskLabels(
     'updateTasks',
     'addToTasks',
     'removeFromTasks',
+    'removeFromProject',
     'deleteTasksCount',
     'changeStatusForTasks',
     'changePriorityForTasks',

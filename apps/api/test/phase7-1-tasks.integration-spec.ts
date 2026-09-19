@@ -4812,6 +4812,209 @@ describe('Phase 7.1 task core backend integration', () => {
     }
   });
 
+  it('serves Phase 8.7 project reports with fixed project scope, audit completion trend, time permissions, and safe CSV', async () => {
+    await prisma.workspace.update({
+      where: { id: workspaceA1 },
+      data: { timezone: 'America/New_York' },
+    });
+    try {
+      const prefix = 'Phase 8.7 project report';
+      const open = await createTask({
+        title: `+cmd ${prefix} open`,
+        projectIds: [activeProjectId],
+        dueAt: '2026-09-20T12:00:00.000Z',
+        priority: 'HIGH',
+        departmentId: activeDepartmentId,
+        assigneeMembershipIds: [adminMembershipId, memberMembershipId],
+        estimatedMinutes: 45,
+      }).expect(201);
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${open.body.data.id}`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ title: `+cmd ${prefix} open` })
+        .expect(200);
+
+      const completed = await createTask({
+        title: `${prefix} தமிழ் completed`,
+        projectIds: [activeProjectId, secondProjectId],
+        dueAt: '2026-09-20T18:00:00.000Z',
+        priority: 'LOW',
+        estimatedMinutes: 15,
+      }).expect(201);
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${completed.body.data.id}/status`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: taskCompletedStatusId })
+        .expect(200);
+      await prisma.auditLog.create({
+        data: {
+          agencyId: agencyA,
+          workspaceId: workspaceA1,
+          action: 'task.completion_approved',
+          entityType: 'TaskCompletionSubmission',
+          entityId: randomUUID(),
+          metadata: { taskId: completed.body.data.id, completed: true },
+        },
+      });
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tasks/${completed.body.data.id}/time`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          startedAt: '2026-04-10T13:00:00.000Z',
+          endedAt: '2026-04-10T13:20:00.000Z',
+        })
+        .expect(201);
+
+      const report = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/projects/${activeProjectId}/reports?search=${encodeURIComponent(
+            prefix,
+          )}`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+
+      expect(report.body.data.timezone).toBe('America/New_York');
+      expect(report.body.data.kpis).toMatchObject({
+        totalTasks: 2,
+        openTasks: 1,
+        completedTasks: 1,
+        overdueTasks: 0,
+        completionRate: 50,
+        estimatedMinutes: 60,
+        trackedSeconds: 1200,
+        trackedTimeAvailable: true,
+      });
+      expect(report.body.data.progress.effectiveProgress).toBeGreaterThanOrEqual(0);
+      expect(report.body.data.distributions.priority).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ priority: 'HIGH', count: 1 }),
+          expect.objectContaining({ priority: 'LOW', count: 1 }),
+        ]),
+      );
+      expect(report.body.data.distributions.assignees).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            membershipId: adminMembershipId,
+            taskAssignmentCount: 1,
+            openTaskCount: 1,
+          }),
+          expect.objectContaining({
+            membershipId: memberMembershipId,
+            taskAssignmentCount: 1,
+            openTaskCount: 1,
+          }),
+        ]),
+      );
+      expect(
+        report.body.data.completionTrend.reduce(
+          (sum: number, item: { count: number }) => sum + item.count,
+          0,
+        ),
+      ).toBe(1);
+
+      const restrictedTime = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/projects/${activeProjectId}/reports?search=${encodeURIComponent(
+            prefix,
+          )}`,
+        )
+        .set(auth(viewerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(403);
+      expect(restrictedTime.body.code).toBeTruthy();
+
+      const viewer = await prisma.user.findUniqueOrThrow({
+        where: { email: 'viewer-a@zeaplay.test' },
+      });
+      const viewerMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: viewer.id, workspaceId: workspaceA1 } },
+      });
+      const reportPermission = await prisma.permission.findUniqueOrThrow({
+        where: { key: 'projects.reports.view' },
+      });
+      const projectViewPermission = await prisma.permission.findUniqueOrThrow({
+        where: { key: 'projects.view' },
+      });
+      const memberMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+        where: { id: memberMembershipId },
+      });
+      await prisma.rolePermission.createMany({
+        data: [
+          { roleId: memberMembership.roleId, permissionId: projectViewPermission.id },
+          { roleId: memberMembership.roleId, permissionId: reportPermission.id },
+        ],
+        skipDuplicates: true,
+      });
+      await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/projects/${activeProjectId}/reports?search=${encodeURIComponent(
+            prefix,
+          )}`,
+        )
+        .set(auth(memberToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(403);
+      await prisma.rolePermission.deleteMany({
+        where: {
+          roleId: memberMembership.roleId,
+          permissionId: { in: [projectViewPermission.id, reportPermission.id] },
+        },
+      });
+
+      await prisma.rolePermission.create({
+        data: { roleId: viewerMembership.roleId, permissionId: reportPermission.id },
+      });
+      await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/projects/${activeProjectId}/reports?search=${encodeURIComponent(
+            prefix,
+          )}`,
+        )
+        .set(auth(viewerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200)
+        .expect((response) => {
+          expect(response.body.data.kpis.trackedTimeAvailable).toBe(false);
+          expect(response.body.data.kpis.trackedSeconds).toBeNull();
+        });
+      await prisma.rolePermission.delete({
+        where: {
+          roleId_permissionId: {
+            roleId: viewerMembership.roleId,
+            permissionId: reportPermission.id,
+          },
+        },
+      });
+
+      const csv = await request(app.getHttpServer())
+        .get(
+          `/api/v1/workspaces/${workspaceA1}/projects/${activeProjectId}/reports/export?search=${encodeURIComponent(
+            prefix,
+          )}`,
+        )
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .expect(200);
+      expect(csv.body.data.csv).toContain(`'+cmd ${prefix} open`);
+      expect(csv.body.data.csv).toContain('தமிழ்');
+      expect(csv.body.data.csv).toContain('Tracked Seconds');
+      expect(csv.body.data.csv).not.toContain('comments');
+
+      await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${workspaceA2}/projects/${activeProjectId}/reports`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA2))
+        .expect(404);
+    } finally {
+      await prisma.workspace.update({ where: { id: workspaceA1 }, data: { timezone: 'UTC' } });
+    }
+  });
+
   it('returns structured completion-required errors and keeps bulk terminal changes atomic', async () => {
     const task = await createTask({ title: 'Completion gate structured error' }).expect(201);
     const taskId = task.body.data.id;
@@ -5456,6 +5659,7 @@ describe('Phase 7.1 task core backend integration', () => {
       'tasks.time.view_all',
       'tasks.time.manage',
       'projects.view',
+      'projects.reports.view',
       'tags.view',
       'tags.create',
       'tags.update',

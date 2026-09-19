@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 8.3 - Project Tags + Progress + Completion - COMPLETE / PASS
-Next: Phase 8.4 - Not started; do not start automatically
+Current: Phase 8.8 - Project UI Integration - COMPLETE / PASS
+Next: Phase 8.9 - Final Project Security + Performance Audit; do not start automatically
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -310,7 +310,7 @@ Dashboard page inventory summary:
 - Developer: Dashboard is IMPLEMENTED; Agencies, Sub-Accounts, Modules, Feature Flags, Templates, Isolated Space, Releases, Deployments, System Health, Logs, API & Webhooks, Database, Jobs, Security, and Settings are INTENTIONALLY DEFERRED.
 - Super Admin: Dashboard is IMPLEMENTED; Agencies, Sub-Accounts, Users, Plans & Billing, Feature Management, Modules, Isolated Space, Global Leaderboard, API Management, Webhooks, Audit Logs, Notifications, Developer Access, and System Settings are INTENTIONALLY DEFERRED.
 - Agency: Dashboard is IMPLEMENTED; Sub-Accounts, Users, Departments, Roles & Permissions, Plans & Usage, Feature Controls, Agency Leaderboard, Reports, API & Webhooks, Integrations, Notifications, and Settings are INTENTIONALLY DEFERRED.
-- Workspace: Dashboard, Users, Departments, Roles & Permissions, and Status Management are IMPLEMENTED; Tasks, Projects, Tickets, Gamification, Calendar, Automation, Docs, Forms, Goals, Reports, Custom Dashboard, Notifications, Integrations, and Settings are INTENTIONALLY DEFERRED. Legacy `/dashboard/projects` remains working.
+- Workspace: Dashboard, Users, Departments, Roles & Permissions, Status Management, Tasks, and Projects are IMPLEMENTED; Tickets, Gamification, Calendar, Automation, Docs, Forms, Goals, Reports, Custom Dashboard, Notifications, Integrations, and Settings are INTENTIONALLY DEFERRED. Legacy `/dashboard/projects` redirects to the canonical Workspace Project route.
 
 Warnings:
 
@@ -1171,7 +1171,7 @@ Security/performance invariants:
 Verification:
 
 - `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check` pass.
-- `pnpm test:e2e` passes 18/18.
+- `pnpm test:e2e` passes 19/19, including the deterministic Project UI route/create/tab journey.
 - `pnpm test:integration` passes 83/83 API integration tests plus worker integration tests.
 - `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 10 worker tests.
 - Focused recurrence schedule tests cover daily, weekdays, weekly selected days, monthly clamp, custom day/week/month intervals, On Date, After Count, timezone validation, and DST behavior.
@@ -1221,7 +1221,7 @@ Security/performance invariants:
 Verification:
 
 - `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:integration`, `pnpm build`, `pnpm test:e2e`, `pnpm audit --audit-level high`, and `git diff --check` pass.
-- `pnpm test:e2e` passes 18/18.
+- `pnpm test:e2e` passes 19/19, including the deterministic Project UI route/create/tab journey.
 - `pnpm test:integration` passes 87/87 API integration tests plus 11/11 worker integration tests.
 - `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
 - Build passes with the existing Next ESLint-plugin detection warning.
@@ -1269,7 +1269,7 @@ Known limitations:
 Verification:
 
 - `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy`, `pnpm prisma:validate`, `pnpm prisma:generate`, `pnpm format`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:integration`, `pnpm build`, `pnpm test:e2e`, `pnpm audit --audit-level high`, and `git diff --check` pass.
-- `pnpm test:e2e` passes 18/18.
+- `pnpm test:e2e` passes 19/19, including the deterministic Project UI route/create/tab journey.
 - `pnpm test:integration` passes 92/92 API integration tests plus 11/11 worker integration tests.
 - `pnpm test` passes root unit/app tests, including 106 web tests, 23 API tests, and 11 worker tests.
 - Focused Phase 7.8 integration coverage verifies global timer switching, terminal auto-stop, manual time on completed Tasks, report clipping across the full filtered dataset, Workspace-timezone workload/report boundaries, recurrence timezone defaults/snapshots, workload allocation math, unallocated/unscheduled/overdue buckets, and capacity overrides.
@@ -1521,8 +1521,285 @@ Verification:
 - `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
 - `git diff --check` passes.
 - `pnpm --filter @zea-play/api test:integration -- phase6-3-statuses.integration-spec.ts` passes 12/12 tests, including Phase 8.1, Phase 8.2, and focused Phase 8.3 regressions.
+- Final formatting-gate refinement passes `pnpm format` after formatting the tracked repository README and VS Code settings.
 
-Phase 8.3 is complete/pass. Do not start Phase 8.3 Refinement or Phase 8.4 automatically.
+Phase 8.3 is complete/pass. Do not start Phase 8.4 automatically.
+
+### Phase 8.4 - Project Tasks Integration - COMPLETE / PASS
+
+Implemented:
+
+- Project Tasks surface reuses the existing Task engine and `TaskProject` many-to-many relation.
+- Project Tasks use the existing server-side Task list endpoint with a forced `projectId` filter; no client-side Workspace-task filtering or duplicate ProjectTask model was introduced.
+- The Project Tasks tab lazy-loads; Project Overview makes zero Project task-list requests.
+- Create Task inside Project reuses the normal Task Create dialog and preselects the current Project.
+- Link Existing Task uses bounded server-side Task search and a single transactional Project relation request.
+- Duplicate links are idempotent through the existing unique `TaskProject` key and `createMany(...skipDuplicates)`.
+- Remove from Project deletes only the `TaskProject` relation and never deletes, archives, or mutates the Task.
+- Tasks may belong to zero or multiple Projects.
+- Project membership does not create a Task ACL; Project visibility and Task access are independently enforced.
+- Restricted Project access is enforced independently on Project task relation endpoints.
+- Task Project metadata remains visibility-safe through existing Task serialization.
+- Project progress/counts refresh from derived Task state after create/link/unlink.
+- Terminal Projects may later receive or contain reopened Tasks without auto-reopening the Project.
+- Project Tasks avoid Project list N+1 behavior and avoid fetching hidden Project selector data inside Project context.
+- No role-name authorization was added.
+- No Phase 8.5+ Project Kanban, Timeline/Gantt, Files UI, Activity, Reports, or Templates functionality was added.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm --filter @zea-play/api exec dotenv -e ../../.env.example -- prisma migrate deploy` passes with no pending migrations.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes root unit/app tests, including 108 web tests, 23 API tests, and 11 worker tests.
+- `pnpm test:integration` passes 99/99 API integration tests plus 11/11 worker integration tests.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes.
+- `pnpm --filter @zea-play/api test:integration -- phase6-3-statuses.integration-spec.ts` passes 14/14 tests, including Phase 8.1, Phase 8.2, Phase 8.3, Phase 8.4, and focused access-boundary regressions.
+- Phase 8.4 focused refinement passed with final invariants: `TaskProject` remains the only Project/Task many-to-many relation; no duplicate `ProjectTask` model exists; Project Tasks use the existing Task list with server-side `projectId`; Project membership does not create Task ACL; Project and Task access remain independently enforced; Create Task inside Project reuses normal Task Create and remains transactional; Link Existing uses bounded server-side Task search; batch linking is transactional/idempotent; cross-Workspace Task linking is impossible; unlink removes only `TaskProject` and never deletes Tasks; Tasks may have zero/multiple Projects; Project progress/counts derive correctly after relation changes; terminal Projects may receive/reopen open Tasks without auto-reopen; Tasks tab/search load lazily; no Project Task N+1 or role-name authorization was introduced; no Phase 8.5+ functionality was introduced.
+
+Phase 8.4 is complete/pass. Do not start Phase 8.5 automatically.
+
+### Phase 8.5 - Project Kanban + Timeline - COMPLETE / PASS
+
+Implemented:
+
+- Project Kanban reuses the Phase 7.5 Task Kanban surface with a forced server-side `projectId` filter.
+- Project Timeline reuses the Phase 7.9 Task Gantt/Timeline surface with a forced server-side `projectId` filter.
+- Project detail adds lazy-loaded Project Kanban and Project Timeline tabs; Overview and Project Tasks do not load these views until selected.
+- Task Kanban moves from the Project tab mutate the real Task status/rank globally through the existing Task Kanban API.
+- Terminal Task completion rules remain authoritative; terminal status moves still use the existing Task completion flow.
+- Project progress/list/detail summaries refresh after Project Kanban Task status changes.
+- Project Timeline schedule edits mutate the real Task `plannedStartAt`/`dueAt` through the existing Task schedule API.
+- Project Timeline exposes a bounded accessible unscheduled list from the same server-side Task Gantt query; missing `plannedStartAt` or `dueAt` does not invent dates.
+- Timeline date-only edits invalidate Task Gantt/detail cache without forcing Project progress refresh.
+- Timeline dependencies remain `TaskDependency` only; no Project dependency or Project schedule model was introduced.
+- Off-Project dependencies do not auto-link outside Tasks or fan out the full dependency graph; Task Detail remains the authoritative dependency UI.
+- Multi-Project Tasks use the same Task state across all Projects and Task views.
+- Project-filtered Task list, Kanban, calendar, reports, and timeline queries now require visible same-Workspace Project access when `projectId` is supplied.
+- Restricted Project visibility is enforced inside Project-filtered Task queries, preventing direct Task list/timeline route leakage.
+- Project view and `projects.view_all` do not grant Task view/update or Kanban/Timeline mutation authority.
+- Project and Workspace switches clear Project-context Task browser state, schedule editors, Kanban pagination, drag/completion dialogs, and local filters.
+- No Project-specific task model, task status model, rank model, WIP model, dependency model, scheduling model, or Project Task ACL was introduced.
+- English and Tamil i18n labels were added for Project Kanban and Project Timeline tabs.
+- No role-name authorization was added.
+- No Phase 8.6+ Files, Activity, Reports, Templates, Notifications, Automation, Billing, or Gamification scope was added.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- No Prisma schema or migration files changed; previous clean migration deploy remains valid for Phase 8.5.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes root unit/app tests, including 110 web tests, 23 API tests, and 11 worker tests.
+- `pnpm test:integration` passes 100/100 API integration tests plus 11/11 worker integration tests.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm build` passes when rerun after E2E; an earlier concurrent build overlapped with the Playwright `next dev` web server and failed with a transient `/_document` page collection error.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes.
+- `pnpm --filter @zea-play/api test:integration -- phase6-3-statuses.integration-spec.ts` passes 15/15 tests, including Phase 8.1 through Phase 8.5 Project access regressions.
+- `pnpm --filter @zea-play/web test -- phase7-2.test.tsx` passes 110/110 web tests, including Project Kanban/Timeline lazy-load and shared schedule mutation coverage.
+- Phase 8.5 focused refinement passes with final invariants: Project Kanban is the existing Task Kanban filtered by `projectId`; `StatusDefinition(TASK)`, `Task.kanbanRank`, and Workspace Task WIP remain global Task authority; Project access does not grant Task mutation access; Project-filtered Kanban counts/pagination are server-side; Task moves mutate the real Task globally; multi-Project Tasks share status/rank; Task completion/approval rules remain authoritative; Project Timeline is the existing Task Gantt filtered by `projectId`; `plannedStartAt`/`dueAt` remain global Task scheduling fields; `TaskDependency` remains the only dependency graph; off-Project dependencies do not auto-link/fan out; no dependent auto-scheduling exists; multi-Project Tasks share schedule; Kanban and Timeline are independently lazy; no card/bar N+1 exists; Project progress remains server-derived after status changes; no role-name authorization was added; no Phase 8.6+ functionality was added.
+
+Phase 8.5 is complete/pass. Do not start Phase 8.6 automatically.
+
+### Phase 8.6 - Project Files + Members UI + Activity - COMPLETE / PASS
+
+Implemented:
+
+- Project Files tab reuses existing `ProjectAttachment`, `Attachment`, and `Asset` records; no duplicate Project file model or migration was introduced.
+- Project Files upload uses the existing presigned MinIO upload architecture, workspace quota accounting, asset processing queue, and server-authorized download URL pattern.
+- Project URL attachments use `Attachment(URL)` with strict http/https validation.
+- Project file unlink updates `ProjectAttachment.removedAt`; it does not delete `Attachment` or physically delete `Asset` objects.
+- Project attachment list/search is server-side, Workspace scoped, Project scoped, and restricted-Project access checked before query/count.
+- Project file upload, finalize, link-existing API, URL add, download, and unlink endpoints are gated by Project file permission keys and visible Project access.
+- Members UI is now a lazy-loaded Project Members tab that reuses Phase 8.2 owner/member APIs; owner remains separate from `ProjectMember`.
+- Project Files, Members, and Activity tabs lazy-load independently; Overview, Tasks, Kanban, and Timeline do not preload them.
+- Project Activity tab reads `AuditLog` only; no `ProjectActivity` table or event stream model was introduced.
+- Project Activity is restricted to allowlisted Project audit actions and safe metadata fields, with Project visibility checked before any activity query.
+- Project Activity filters include server-backed action, user, and date range filters; date-only filters remain Workspace-timezone aware on the backend.
+- Project Files UI actions are permission-key controlled for add, remove, and download; backend permission guards remain authoritative.
+- Member add UI supports selecting multiple active WorkspaceMembership rows and submits one batched Project member mutation.
+- Member selections and Project Files/Activity filter state clear on Project/Workspace switch.
+- English and Tamil i18n labels were added for Project Files, Members, and Activity surfaces.
+- No role-name authorization was added.
+- No Phase 8.7 Reports/CSV/Templates, comments, notifications, automation, gamification, billing, or storage-management scope was added.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- No Prisma schema/model changed.
+- Migration `0027_phase8_6_project_files_activity` adds deployable Project files/activity permission catalog rows.
+- Migration `0028_phase8_6_system_role_permissions` grants those permissions only to repository-owned Workspace system roles, not arbitrary custom roles.
+- Clean migration deploy passes and applied `0027_phase8_6_project_files_activity` and `0028_phase8_6_system_role_permissions`.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes root unit/app tests, including 111 web tests, 23 API tests, and 11 worker tests.
+- `pnpm test:integration` passes 100/100 API integration tests plus 11/11 worker integration tests.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- `pnpm --filter @zea-play/web test -- phase7-2.test.tsx` passes 111/111 web tests, including Project Files/Members/Activity lazy-load coverage.
+- `pnpm --filter @zea-play/api test -- projects.service.spec.ts` passes 1/1 API unit test.
+
+Final invariants:
+
+- Project Files reuse `ProjectAttachment` / `Attachment` / `Asset`.
+- No duplicate Project storage model exists.
+- Project file authorization is independently enforced.
+- Uploads reuse presigned MinIO architecture.
+- File download is authorized and generated on demand.
+- Presigned URLs are never prefetched, logged, or persisted.
+- Project unlink never deletes physical `Asset`.
+- Quota changes only for physical `Asset` creation.
+- Members UI reuses Phase 8.2 WorkspaceMembership-backed architecture.
+- Owner remains separate from `ProjectMember`.
+- Member/owner changes preserve RESTRICTED access rules.
+- Member searches remain server-side and bounded.
+- Project Activity uses immutable `AuditLog` only.
+- Project Activity includes direct Project events only.
+- Activity response is allowlisted and does not expose unsafe raw metadata.
+- Files, Members, and Activity tabs are independently lazy.
+- All list queries are bounded/paginated.
+- No role-name authorization was added.
+- No Phase 8.7+ functionality was added.
+
+Phase 8.6 is complete/pass. Do not start Phase 8.7 automatically.
+
+### Phase 8.7 - Project Reports + CSV - COMPLETE / PASS
+
+Implemented:
+
+- Project Reports backend is derived server-side from the fixed `Project -> TaskProject -> Task` population.
+- Project Reports require visible Project access plus `projects.reports.view`; `projects.view_all` remains Project visibility only.
+- Permission migration `0029_phase8_7_project_reports_permission` adds `projects.reports.view` and grants it only to repository-owned Workspace system roles.
+- Project report filters support date range, Task status, priority, assignee, department, tag, and search; Project ID comes only from the route.
+- Report date filters use Task `dueAt` boundaries in the Workspace timezone, matching Phase 7.9 Task Reports semantics.
+- One consistent filtered Project Task population powers KPIs, distributions, completion trend, time totals, and CSV export.
+- KPIs include total/open/completed/overdue/pending approval, completion rate, estimated minutes, and permission-aware tracked seconds.
+- Project progress reporting reuses Phase 8.3 `progressSummaryForProjects`; calculated, manual override, and effective progress are returned separately.
+- Status, priority, assignee, and department breakdowns are server aggregated from the filtered Project Task population.
+- Completion trend uses Phase 7.9 AuditLog completion evidence semantics and deduplicates same-day status-change/approval evidence.
+- Estimated time sums `Task.estimatedMinutes`; tracked time reuses Phase 7.8 `TaskTimeEntry` aggregation.
+- Tracked time returns unavailable/null for users without all-time visibility rather than returning a misleading zero.
+- Multi-Project Tasks contribute fully to each linked Project report by design.
+- Project CSV export uses the exact active filters, exports all authorized matching rows up to the server cap, is UTF-8, and protects formula-leading cells.
+- CSV omits comments, completion proof bodies, rejection reasons, attachments, presigned URLs, raw audit metadata, and time-entry notes.
+- Reports tab is lazy-loaded on Project detail; Overview, Tasks, Kanban, Timeline, Files, Members, and Activity do not preload report data.
+- Reports query keys include Workspace, Project, and every report filter.
+- Reports UI includes KPI cards, progress, status/priority/assignee/department breakdowns, completion events, estimated/tracked time, filters, restricted-time messaging, and CSV export.
+- English and Tamil i18n labels were added for Project Reports.
+- No role-name authorization was added.
+- No Phase 8.8+ functionality was added.
+- Focused refinement hardened report authorization, requiring Project access plus `projects.reports.view` plus `tasks.view`.
+- Focused refinement moved Project report estimated minutes, status distribution, priority distribution, and department breakdown to server-side aggregate queries using the same filtered Project Task population.
+- Focused refinement removed the CSV export cap from normal report viewing; the cap remains explicit for CSV export only.
+- Focused refinement preserved CSV filter/authorization semantics and tracked-time permission behavior.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- Clean migration deploy passes and applied `0029_phase8_7_project_reports_permission`.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes root unit/app tests, including 111 web tests, 23 API tests, and 11 worker tests.
+- `pnpm test:integration` passes 101/101 API integration tests plus 11/11 worker integration tests.
+- `pnpm test:e2e` passes 18/18.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+
+Final invariants:
+
+- Project Reports are derived server-side and no Project report snapshot/cache model exists.
+- Project Reports require Project access, `projects.reports.view`, and `tasks.view`.
+- Project visibility and Task visibility filters are enforced before report results.
+- Project report permission is separate from Project visibility.
+- Project progress matches Project Overview semantics.
+- Project KPIs and status/priority/department/estimate values are server aggregated from one authorized filtered Project Task population.
+- Assignee breakdown uses Task assignment semantics, not a unique partition of total Tasks.
+- Completion trend remains AuditLog-based and Workspace-timezone bucketed.
+- Tracked time reuses Phase 7.8 `TaskTimeEntry` aggregation and respects Time permissions.
+- Multi-Project Tasks contribute fully to each relevant Project report.
+- CSV is tenant-safe, filter-consistent, not current-page-only, and formula-injection protected.
+- CSV remains UTF-8 and omits sensitive comments, proof bodies, rejection reasons, presigned URLs, raw audit metadata, credentials, and attachment content.
+- Reports tab lazy-loads and does not affect other Project detail tabs.
+- No role-name authorization was added.
+- No Phase 8.8+ features were introduced.
+
+Phase 8.7 is complete/pass. Do not start Phase 8.8 automatically.
+
+### Phase 8.8 - Project UI Integration - COMPLETE / PASS
+
+Implemented:
+
+- `/workspace/projects` is the canonical Workspace Project route in scope-aware navigation.
+- Legacy `/dashboard/projects` and `/dashboard/projects/[projectId]` now redirect to the modern Workspace Project routes and no longer render the stale Project UI.
+- One Project Detail implementation exists at `/workspace/projects/[projectId]`.
+- Project Detail tabs remain locked as Overview, Tasks, Kanban, Timeline, Files, Members, Activity, and Reports.
+- Project tab state is URL/deep-link compatible with `?tab=` values and tab changes use browser history.
+- Each heavy Project tab lazy-loads independently; Overview loads only bounded Project summary/tag data.
+- Project list remains backed by the Phase 8 server-paginated Project list API.
+- Project list supports server-side search, status, priority, department, tag, planned date, due date, sort, and pagination parameters.
+- Project list cards show bounded summary data: name, status, priority, owner, visibility, progress, due date, department, updated date, and task summary.
+- Project list distinguishes no Projects, no matching Projects, loading, and retryable error states.
+- Project Create keeps compact visible fields for name, owner, due date, and visibility, with advanced status, priority, planned start, department, description, and initial member assignment.
+- Successful Project creation resets the create form and opens the created Project detail route.
+- Project Detail header shows compact primary context: status, priority, owner, effective/calculated/manual progress, due date, and visibility.
+- Overview consolidates Project summary, progress, tags, and counts without loading Tasks, Kanban, Timeline, Files, Members, Activity, or Reports tab datasets.
+- Existing Task list/Kanban/Gantt, Project Files, Members, Activity, and Reports services/components remain reused.
+- Reports tab visibility now requires both `projects.reports.view` and `tasks.view`, matching backend enforcement.
+- Restricted access loss cleanup still clears Project detail cache and returns safely to Project list.
+- Project/Workspace switching clears tenant-bound transient Project UI state.
+- English and Tamil Project UI labels were completed for added Project list filters and states.
+- Mobile Project tabs remain horizontally scrollable through the existing tab list behavior.
+
+Focused refinement:
+
+- Canonical Project navigation remains `/workspace/projects`; the legacy protected dashboard link now opens that Workspace route.
+- Project list search/filter/sort/page state is URL-backed and Workspace switch cleanup clears tenant-bound Project list state.
+- Project Create is permission-gated by `projects.create`; Project update/delete/status/progress/tag/file/activity/member/owner actions remain permission-key gated with backend authority.
+- Invalid or unauthorized Project tab URLs fall back safely to Overview without loading hidden tab datasets.
+- Restricted access-loss paths are covered for visibility changes, current-member removal, and owner transfer.
+- Heavy Project tabs remain independently lazy-loaded; Overview does not request Tasks, Kanban, Timeline, Files, Members, Activity, or Reports data.
+- Focused React and Playwright coverage was added for canonical routing, create/detail/tab URL behavior, lazy loading, permission gating, access-loss cleanup, and mobile tab visibility.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes.
+- `pnpm test:e2e` passes 19/19, including the deterministic Project UI route/create/tab journey.
+- `pnpm build` passes on solo rerun after the initial parallel run collided with the active E2E `next dev` server.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+
+Final invariants:
+
+- No Project business logic was moved into the frontend.
+- No role-name authorization was added; UI tab/action gating remains permission-key based with backend authority.
+- No duplicate Project Detail implementation was introduced.
+- Project list and tab query keys remain Workspace/Project scoped.
+- Legacy dashboard Projects route does not hijack modern Workspace Project navigation.
+- No Phase 8.9 or future feature work was introduced.
+
+Phase 8.8 is complete/pass after focused refinement. Do not start Phase 8.9 automatically.
 
 ## Architecture Invariants
 
@@ -1540,6 +1817,10 @@ Phase 8.3 is complete/pass. Do not start Phase 8.3 Refinement or Phase 8.4 autom
 - Project tags must use the existing same-Workspace `WorkspaceTag` catalog through `ProjectTag`.
 - Project progress is derived from linked active Tasks unless a nullable manual override is present.
 - Terminal Project status transitions must reject active non-terminal linked Tasks.
+- Project Kanban and Project Timeline must reuse the existing Task Kanban/Gantt engines with server-side `projectId` filters.
+- Project-filtered Task views must enforce both Task access and visible Project access; Project membership must not create Task ACL.
+- Project Files must reuse `ProjectAttachment` / `Attachment` / `Asset`; unlink must remove only the Project relation and must not physically delete stored assets.
+- Project Activity must read from `AuditLog` with allowlisted Project actions and safe metadata only.
 - Project `plannedStartAt` and `dueAt` are UTC timestamps and must be validated as a final pair.
 - `TaskProject` and `ProjectAttachment` compatibility must be preserved while extending Project features.
 - Each initialized Workspace/entity type has exactly one active default status.
@@ -1648,6 +1929,11 @@ Do not infer or invent model fields from this list.
 | Phase 8.1     | PASS   | Not tagged                       |
 | Phase 8.2     | PASS   | Not tagged                       |
 | Phase 8.3     | PASS   | Not tagged                       |
+| Phase 8.4     | PASS   | Not tagged                       |
+| Phase 8.5     | PASS   | Not tagged                       |
+| Phase 8.6     | PASS   | Not tagged                       |
+| Phase 8.7     | PASS   | Not tagged                       |
+| Phase 8.8     | PASS   | Complete/pass; not tagged        |
 
 ## Current Warnings
 
@@ -1696,6 +1982,11 @@ Confirmed current warnings:
 - Phase 7 Task Management is complete/pass; the next phase is Phase 8 Project Management System.
 - Phase 8.1 Project Core + Status Migration is complete/pass.
 - Phase 8.2 Project Owner + Members + Visibility is complete/pass.
-- Phase 8.3 Project Tags + Progress + Completion is complete/pass; do not start Phase 8.3 Refinement or Phase 8.4 automatically.
+- Phase 8.3 Project Tags + Progress + Completion is complete/pass, including the final repository formatting gate; do not start Phase 8.4 automatically.
+- Phase 8.4 Project Tasks Integration is complete/pass; the next step is Phase 8.5 Project Kanban + Timeline, and it must not start automatically.
+- Phase 8.5 Project Kanban + Timeline is complete/pass; the next step is Phase 8.6 Project Files + Members UI + Activity, and it must not start automatically.
+- Phase 8.6 Project Files + Members UI + Activity is complete/pass; the next step is Phase 8.7 Project Reports + CSV, and it must not start automatically.
+- Phase 8.7 Project Reports + CSV is complete/pass; the next step is Phase 8.8 Project UI Integration, and it must not start automatically.
+- Phase 8.8 Project UI Integration is complete/pass after focused refinement; the next step is Phase 8.9 Final Project Security + Performance Audit, and it must not start automatically.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

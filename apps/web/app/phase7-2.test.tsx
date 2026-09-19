@@ -5,6 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LanguageProvider, useLanguage } from '../contexts/language-provider';
 import { ThemeProvider } from '../contexts/theme-provider';
 import { WorkspaceTasksPage } from '../components/workspace/tasks/WorkspaceTasksPage';
+import {
+  WorkspaceProjectDetailPage,
+  WorkspaceProjectsPage,
+} from '../components/workspace/projects/WorkspaceProjectsPage';
 import { toggleRelationshipSelection } from '../components/workspace/tasks/AllTasksBrowser';
 import { apiClient } from '../services/api';
 import type { StatusEntityType, WorkspaceStatusDefinition } from '../services/workspace-statuses';
@@ -18,6 +22,7 @@ import { useSessionStore } from '../stores/session';
 
 const listRecentWorkspaceTasks = vi.fn();
 const listWorkspaceTasks = vi.fn();
+const getTaskGantt = vi.fn();
 const getWorkspaceTask = vi.fn();
 const listWorkspaceSubtasks = vi.fn();
 const listWorkspaceTaskBlockedBy = vi.fn();
@@ -39,6 +44,7 @@ const listWorkspaceTags = vi.fn();
 const getTaskKanbanSettings = vi.fn();
 const moveWorkspaceTaskKanban = vi.fn();
 const updateTaskKanbanColumnSetting = vi.fn();
+const updateTaskSchedule = vi.fn();
 const createWorkspaceTag = vi.fn();
 const updateWorkspaceTag = vi.fn();
 const archiveWorkspaceTag = vi.fn();
@@ -55,19 +61,43 @@ const bulkAddTaskAssignees = vi.fn();
 const bulkRemoveTaskAssignees = vi.fn();
 const bulkDeleteTasks = vi.fn();
 const listWorkspaceProjects = vi.fn();
+const getWorkspaceProject = vi.fn();
+const listProjectManagementProjects = vi.fn();
+const listWorkspaceProjectTags = vi.fn();
+const listWorkspaceProjectMembers = vi.fn();
+const listWorkspaceProjectAttachments = vi.fn();
+const addWorkspaceProjectUrlAttachment = vi.fn();
+const downloadWorkspaceProjectAttachment = vi.fn();
+const removeWorkspaceProjectAttachment = vi.fn();
+const listWorkspaceProjectActivity = vi.fn();
+const linkWorkspaceProjectTasks = vi.fn();
+const unlinkWorkspaceProjectTasks = vi.fn();
+const createWorkspaceProject = vi.fn();
+const updateWorkspaceProject = vi.fn();
+const updateWorkspaceProjectStatus = vi.fn();
+const updateWorkspaceProjectProgress = vi.fn();
+const updateWorkspaceProjectOwner = vi.fn();
+const addWorkspaceProjectTags = vi.fn();
+const removeWorkspaceProjectTags = vi.fn();
+const addWorkspaceProjectMembers = vi.fn();
+const removeWorkspaceProjectMember = vi.fn();
+const deleteWorkspaceProject = vi.fn();
 const listWorkspaceUsers = vi.fn();
 const listDepartments = vi.fn();
 const listWorkspaceStatuses = vi.fn();
 const listWorkspaceRoles = vi.fn();
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
+const toastInfo = vi.fn();
 const routerReplace = vi.fn();
+const routerPush = vi.fn();
 let currentSearchParams = new URLSearchParams();
+let currentPathname = '/workspace/tasks';
 const isoDate = '2026-01-01T00:00:00.000Z';
 
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/workspace/tasks',
-  useRouter: () => ({ replace: routerReplace }),
+  usePathname: () => currentPathname,
+  useRouter: () => ({ push: routerPush, replace: routerReplace }),
   useSearchParams: () => currentSearchParams,
 }));
 
@@ -75,6 +105,7 @@ vi.mock('sonner', () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccess(...args),
     error: (...args: unknown[]) => toastError(...args),
+    info: (...args: unknown[]) => toastInfo(...args),
   },
 }));
 
@@ -117,6 +148,7 @@ vi.mock('../services/workspace-tasks', async () => {
     ...actual,
     listRecentWorkspaceTasks: (...args: unknown[]) => listRecentWorkspaceTasks(...args),
     listWorkspaceTasks: (...args: unknown[]) => listWorkspaceTasks(...args),
+    getTaskGantt: (...args: unknown[]) => getTaskGantt(...args),
     getWorkspaceTask: (...args: unknown[]) => getWorkspaceTask(...args),
     listWorkspaceSubtasks: (...args: unknown[]) => listWorkspaceSubtasks(...args),
     listWorkspaceTaskBlockedBy: (...args: unknown[]) => listWorkspaceTaskBlockedBy(...args),
@@ -142,6 +174,7 @@ vi.mock('../services/workspace-tasks', async () => {
     getTaskKanbanSettings: (...args: unknown[]) => getTaskKanbanSettings(...args),
     moveWorkspaceTaskKanban: (...args: unknown[]) => moveWorkspaceTaskKanban(...args),
     updateTaskKanbanColumnSetting: (...args: unknown[]) => updateTaskKanbanColumnSetting(...args),
+    updateTaskSchedule: (...args: unknown[]) => updateTaskSchedule(...args),
     createWorkspaceTag: (...args: unknown[]) => createWorkspaceTag(...args),
     updateWorkspaceTag: (...args: unknown[]) => updateWorkspaceTag(...args),
     archiveWorkspaceTag: (...args: unknown[]) => archiveWorkspaceTag(...args),
@@ -161,11 +194,46 @@ vi.mock('../services/workspace-tasks', async () => {
   };
 });
 
+vi.mock('../services/workspace-projects', async () => {
+  const actual = await vi.importActual<typeof import('../services/workspace-projects')>(
+    '../services/workspace-projects',
+  );
+  return {
+    ...actual,
+    getWorkspaceProject: (...args: unknown[]) => getWorkspaceProject(...args),
+    listWorkspaceProjects: (...args: unknown[]) => listProjectManagementProjects(...args),
+    listWorkspaceProjectTags: (...args: unknown[]) => listWorkspaceProjectTags(...args),
+    listWorkspaceProjectMembers: (...args: unknown[]) => listWorkspaceProjectMembers(...args),
+    listWorkspaceProjectAttachments: (...args: unknown[]) =>
+      listWorkspaceProjectAttachments(...args),
+    addWorkspaceProjectUrlAttachment: (...args: unknown[]) =>
+      addWorkspaceProjectUrlAttachment(...args),
+    downloadWorkspaceProjectAttachment: (...args: unknown[]) =>
+      downloadWorkspaceProjectAttachment(...args),
+    removeWorkspaceProjectAttachment: (...args: unknown[]) =>
+      removeWorkspaceProjectAttachment(...args),
+    listWorkspaceProjectActivity: (...args: unknown[]) => listWorkspaceProjectActivity(...args),
+    linkWorkspaceProjectTasks: (...args: unknown[]) => linkWorkspaceProjectTasks(...args),
+    unlinkWorkspaceProjectTasks: (...args: unknown[]) => unlinkWorkspaceProjectTasks(...args),
+    createWorkspaceProject: (...args: unknown[]) => createWorkspaceProject(...args),
+    updateWorkspaceProject: (...args: unknown[]) => updateWorkspaceProject(...args),
+    updateWorkspaceProjectStatus: (...args: unknown[]) => updateWorkspaceProjectStatus(...args),
+    updateWorkspaceProjectProgress: (...args: unknown[]) => updateWorkspaceProjectProgress(...args),
+    updateWorkspaceProjectOwner: (...args: unknown[]) => updateWorkspaceProjectOwner(...args),
+    addWorkspaceProjectTags: (...args: unknown[]) => addWorkspaceProjectTags(...args),
+    removeWorkspaceProjectTags: (...args: unknown[]) => removeWorkspaceProjectTags(...args),
+    addWorkspaceProjectMembers: (...args: unknown[]) => addWorkspaceProjectMembers(...args),
+    removeWorkspaceProjectMember: (...args: unknown[]) => removeWorkspaceProjectMember(...args),
+    deleteWorkspaceProject: (...args: unknown[]) => deleteWorkspaceProject(...args),
+  };
+});
+
 describe('Phase 7.2 task creation experience', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDefaultTags();
     currentSearchParams = new URLSearchParams();
+    currentPathname = '/workspace/tasks';
     localStorage.clear();
     useSessionStore.setState({
       selectedAgencyId: 'agency-1',
@@ -212,6 +280,30 @@ describe('Phase 7.2 task creation experience', () => {
       page: 1,
       pageSize: 20,
       total: 0,
+    });
+    getTaskGantt.mockResolvedValue({
+      window: { from: '2026-01-01', to: '2026-01-31', timezone: 'UTC' },
+      items: [
+        taskFixture({
+          id: 'project-task-1',
+          title: 'Project scoped task',
+          plannedStartAt: '2026-01-10T00:00:00.000Z',
+          dueAt: '2026-01-12T00:00:00.000Z',
+        }),
+      ],
+      dependencies: [],
+      unscheduledItems: [
+        taskFixture({
+          id: 'project-unscheduled-1',
+          title: 'Project unscheduled task',
+          plannedStartAt: null,
+          dueAt: '2026-01-18T00:00:00.000Z',
+        }),
+      ],
+      unscheduledCount: 1,
+      page: 1,
+      pageSize: 50,
+      total: 1,
     });
     getTaskKanbanSettings.mockResolvedValue({
       columns: [
@@ -308,6 +400,73 @@ describe('Phase 7.2 task creation experience', () => {
       pageSize: 10,
       total: 1,
     });
+    getWorkspaceProject.mockResolvedValue(projectFixture());
+    listProjectManagementProjects.mockResolvedValue({
+      items: [projectFixture()],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    listWorkspaceProjectTags.mockResolvedValue([]);
+    listWorkspaceProjectMembers.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    listWorkspaceProjectAttachments.mockResolvedValue({
+      items: [
+        {
+          id: 'attachment-1',
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          type: 'URL',
+          displayName: 'Creative brief',
+          url: 'https://example.com/brief',
+          file: null,
+          attachedAt: isoDate,
+          createdAt: isoDate,
+          updatedAt: isoDate,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    listWorkspaceProjectActivity.mockResolvedValue({
+      items: [
+        {
+          id: 'activity-1',
+          action: 'project.attachment_url_added',
+          entityType: 'Project',
+          entityId: 'project-1',
+          metadata: { attachmentId: 'attachment-1' },
+          createdAt: isoDate,
+          actor: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' },
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    addWorkspaceProjectUrlAttachment.mockResolvedValue({ id: 'attachment-url' });
+    downloadWorkspaceProjectAttachment.mockResolvedValue({ downloadUrl: 'https://files.test/x' });
+    removeWorkspaceProjectAttachment.mockResolvedValue({ changed: true });
+    linkWorkspaceProjectTasks.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    unlinkWorkspaceProjectTasks.mockResolvedValue({
+      requestedCount: 1,
+      changedCount: 1,
+      unchangedCount: 0,
+    });
+    createWorkspaceProject.mockResolvedValue(projectFixture());
+    updateWorkspaceProject.mockResolvedValue(projectFixture());
+    updateWorkspaceProjectStatus.mockResolvedValue(projectFixture());
+    updateWorkspaceProjectProgress.mockResolvedValue(projectFixture());
+    updateWorkspaceProjectOwner.mockResolvedValue(projectFixture());
+    addWorkspaceProjectTags.mockResolvedValue({ requestedCount: 1, changedCount: 1 });
+    removeWorkspaceProjectTags.mockResolvedValue({ requestedCount: 1, changedCount: 1 });
+    addWorkspaceProjectMembers.mockResolvedValue({ requestedCount: 1, changedCount: 1 });
+    removeWorkspaceProjectMember.mockResolvedValue({ changedCount: 1 });
+    deleteWorkspaceProject.mockResolvedValue(projectFixture());
     createTaskMock.mockResolvedValue({ id: 'task-1', title: 'Draft brief' });
     createSubtaskMock.mockResolvedValue(taskFixture({ id: 'task-child', title: 'Child task' }));
     addWorkspaceTaskBlockedBy.mockResolvedValue({
@@ -332,6 +491,13 @@ describe('Phase 7.2 task creation experience', () => {
     });
     updateTaskParentMock.mockImplementation((_workspaceId: string, taskId: string, parentTaskId) =>
       Promise.resolve(taskFixture({ id: taskId, parentTaskId })),
+    );
+    updateTaskSchedule.mockImplementation(
+      (
+        _workspaceId: string,
+        taskId: string,
+        body: { plannedStartAt: string | null; dueAt: string | null },
+      ) => Promise.resolve(taskFixture({ id: taskId, ...body })),
     );
   });
 
@@ -621,6 +787,347 @@ describe('Phase 7.2 task creation experience', () => {
       expect(await screen.findByRole('heading', { name: 'Tasks' })).toBeInTheDocument();
       unmount();
     }
+  });
+
+  it('keeps Project Tasks lazy and uses the existing server-side task list with projectId', async () => {
+    listWorkspaceTasks.mockResolvedValue({
+      items: [taskFixture({ id: 'project-task-1', title: 'Project scoped task' })],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+
+    renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    expect(listWorkspaceTasks).not.toHaveBeenCalled();
+
+    openProjectTasksTab();
+
+    await waitFor(() => expect(listWorkspaceTasks).toHaveBeenCalledTimes(1));
+    expect(listWorkspaceTasks).toHaveBeenCalledWith(
+      'workspace-1',
+      expect.objectContaining({ projectId: 'project-1', page: 1, pageSize: 25 }),
+    );
+    expect(screen.getByRole('tab', { name: 'Project Kanban' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Project Timeline' })).toBeInTheDocument();
+    expect(getTaskKanbanSettings).not.toHaveBeenCalled();
+    expect(getTaskGantt).not.toHaveBeenCalled();
+  });
+
+  it('keeps Workspace Project list bounded with server filters and opens created Projects', async () => {
+    currentPathname = '/workspace/projects';
+    renderWithProviders(<WorkspaceProjectsPage />);
+
+    await screen.findByText('Launch');
+    fireEvent.change(screen.getAllByLabelText('Search Projects')[0]!, {
+      target: { value: 'Launch' },
+    });
+    fireEvent.change(screen.getByLabelText('Planned From'), { target: { value: '2026-01-01' } });
+    fireEvent.change(screen.getByLabelText('Due To'), { target: { value: '2026-01-31' } });
+    await selectSelectOption('Sort By', 'Due Date');
+    await selectSelectOption('Sort Direction', 'Ascending');
+
+    await waitFor(() =>
+      expect(listProjectManagementProjects).toHaveBeenLastCalledWith(
+        'workspace-1',
+        expect.objectContaining({
+          search: 'Launch',
+          plannedFrom: '2026-01-01',
+          dueTo: '2026-01-31',
+          sortBy: 'dueAt',
+          sortDirection: 'asc',
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create Project' }));
+    const forms = screen.getAllByRole('button', { name: 'Create Project' });
+    fireEvent.change(screen.getByLabelText('Project Name'), { target: { value: 'New Project' } });
+    fireEvent.click(forms[forms.length - 1]!);
+
+    await waitFor(() => expect(createWorkspaceProject).toHaveBeenCalled());
+    expect(routerPush).toHaveBeenCalledWith('/workspace/projects/project-1');
+  });
+
+  it('pushes Project tab URLs and keeps Reports gated by Project reports plus Task view permissions', async () => {
+    currentPathname = '/workspace/projects/project-1';
+    renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    openProjectDetailTab('Project Reports');
+
+    expect(routerPush).toHaveBeenCalledWith('/workspace/projects/project-1?tab=reports');
+    await waitFor(() => expect(getWorkspaceProject).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Effective Progress')).toBeInTheDocument();
+  });
+
+  it('falls back safely to Overview for invalid Project tab URLs', async () => {
+    currentPathname = '/workspace/projects/project-1';
+    currentSearchParams = new URLSearchParams('tab=banana');
+
+    renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('data-state', 'active');
+    expect(listWorkspaceTasks).not.toHaveBeenCalled();
+    expect(listWorkspaceProjectAttachments).not.toHaveBeenCalled();
+    expect(listWorkspaceProjectActivity).not.toHaveBeenCalled();
+  });
+
+  it('clears Project detail when visibility, member removal, or owner transfer causes access loss', async () => {
+    currentPathname = '/workspace/projects/project-1';
+
+    const visibilityRender = renderWithProviders(
+      <WorkspaceProjectDetailPage projectId="project-1" />,
+    );
+    await screen.findByText('Launch');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Project' }));
+    await selectSelectOption('Visibility', 'Restricted');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit Project' }).at(-1)!);
+    await waitFor(() =>
+      expect(updateWorkspaceProject).toHaveBeenCalledWith(
+        'workspace-1',
+        'project-1',
+        expect.objectContaining({ visibility: 'RESTRICTED' }),
+      ),
+    );
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/workspace/projects'));
+    visibilityRender.unmount();
+    routerReplace.mockClear();
+
+    getWorkspaceProject.mockResolvedValueOnce(
+      projectFixture({
+        visibility: 'RESTRICTED',
+        ownerMembershipId: 'membership-c',
+        owner: {
+          id: 'membership-c',
+          status: 'ACTIVE',
+          user: { id: 'user-c', email: 'chen@zeaplay.test', name: 'Chen' },
+        },
+      }),
+    );
+    listWorkspaceProjectMembers.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'project-member-a',
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          workspaceMembershipId: 'membership-a',
+          member: {
+            id: 'membership-a',
+            status: 'ACTIVE',
+            user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' },
+          },
+          createdAt: isoDate,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    const memberRender = renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+    await screen.findByText('Launch');
+    openProjectDetailTab('Project Members');
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Member Anya' }));
+    await waitFor(() =>
+      expect(removeWorkspaceProjectMember).toHaveBeenCalledWith(
+        'workspace-1',
+        'project-1',
+        'membership-a',
+      ),
+    );
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/workspace/projects'));
+    memberRender.unmount();
+    routerReplace.mockClear();
+
+    getWorkspaceProject.mockResolvedValueOnce(
+      projectFixture({
+        visibility: 'RESTRICTED',
+        ownerMembershipId: 'membership-a',
+      }),
+    );
+    const ownerRender = renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+    await screen.findByText('Launch');
+    openProjectDetailTab('Project Members');
+    await selectSelectOption('Change Owner', 'Chen');
+    await waitFor(() =>
+      expect(updateWorkspaceProjectOwner).toHaveBeenCalledWith(
+        'workspace-1',
+        'project-1',
+        'membership-c',
+      ),
+    );
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/workspace/projects'));
+    ownerRender.unmount();
+  });
+
+  it('lazy-loads Project Kanban and Timeline with server-side projectId filters', async () => {
+    listWorkspaceTasks.mockResolvedValue({
+      items: [
+        taskFixture({
+          id: 'project-task-1',
+          title: 'Project scoped task',
+          plannedStartAt: '2026-01-10T00:00:00.000Z',
+          dueAt: '2026-01-12T00:00:00.000Z',
+        }),
+      ],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+    });
+
+    renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    expect(getTaskKanbanSettings).not.toHaveBeenCalled();
+    expect(getTaskGantt).not.toHaveBeenCalled();
+
+    openProjectDetailTab('Project Kanban');
+    await waitFor(() => expect(getTaskKanbanSettings).toHaveBeenCalledWith('workspace-1'));
+    await waitFor(() =>
+      expect(listWorkspaceTasks).toHaveBeenCalledWith(
+        'workspace-1',
+        expect.objectContaining({
+          projectId: 'project-1',
+          statusDefinitionId: 'status-task',
+          page: 1,
+          pageSize: 25,
+        }),
+      ),
+    );
+    expect(getTaskGantt).not.toHaveBeenCalled();
+
+    openProjectDetailTab('Project Timeline');
+    await waitFor(() =>
+      expect(getTaskGantt).toHaveBeenCalledWith(
+        'workspace-1',
+        expect.objectContaining({ projectId: 'project-1', page: 1, pageSize: 50 }),
+      ),
+    );
+    expect(await screen.findAllByRole('button', { name: 'Schedule Task' })).toHaveLength(2);
+    expect(screen.getByRole('region', { name: 'Unscheduled' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Project unscheduled task' })).toBeInTheDocument();
+  });
+
+  it('lazy-loads Project Files, Members, and Activity with Project-scoped queries', async () => {
+    renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    expect(listWorkspaceProjectAttachments).not.toHaveBeenCalled();
+    expect(listWorkspaceProjectMembers).not.toHaveBeenCalled();
+    expect(listWorkspaceProjectActivity).not.toHaveBeenCalled();
+
+    openProjectDetailTab('Files');
+    await screen.findByText('Creative brief');
+    expect(listWorkspaceProjectAttachments).toHaveBeenCalledWith(
+      'workspace-1',
+      'project-1',
+      expect.objectContaining({ page: 1, pageSize: 20 }),
+    );
+    expect(screen.getByRole('button', { name: 'Open Link' })).toBeInTheDocument();
+
+    openProjectDetailTab('Project Members');
+    await waitFor(() => expect(listWorkspaceProjectMembers).toHaveBeenCalledTimes(1));
+    expect(listWorkspaceProjectMembers).toHaveBeenCalledWith(
+      'workspace-1',
+      'project-1',
+      expect.objectContaining({ page: 1, pageSize: 20 }),
+    );
+
+    openProjectDetailTab('Activity');
+    await screen.findByText('Link added');
+    expect(listWorkspaceProjectActivity).toHaveBeenCalledWith(
+      'workspace-1',
+      'project-1',
+      expect.objectContaining({ page: 1, pageSize: 20 }),
+    );
+  });
+
+  it('schedules Project Timeline tasks through the shared task schedule mutation', async () => {
+    renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    openProjectDetailTab('Project Timeline');
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Schedule Task' }))[0]!);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Start Date'), {
+      target: { value: '2026-01-11' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('End Date'), {
+      target: { value: '2026-01-15' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(updateTaskSchedule).toHaveBeenCalledWith('workspace-1', 'project-task-1', {
+        plannedStartAt: new Date(2026, 0, 11).toISOString(),
+        dueAt: new Date(2026, 0, 15).toISOString(),
+      }),
+    );
+    expect(getWorkspaceProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('lazy-loads Link Existing search, submits one multi-link request, and clears on Project switch', async () => {
+    listWorkspaceTasks.mockImplementation((_workspaceId: string, params = {}) => {
+      const normalized = params as { projectId?: string; search?: string };
+      if (normalized.projectId) {
+        return Promise.resolve({ items: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return Promise.resolve({
+        items: [
+          taskFixture({ id: 'candidate-1', title: 'Candidate one' }),
+          taskFixture({ id: 'candidate-2', title: 'Candidate two' }),
+        ],
+        page: 1,
+        pageSize: 20,
+        total: 2,
+      });
+    });
+
+    const rendered = renderWithProviders(<WorkspaceProjectDetailPage projectId="project-1" />);
+
+    await screen.findByText('Launch');
+    openProjectTasksTab();
+    await waitFor(() => expect(listWorkspaceTasks).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link Existing Task' }));
+    await screen.findByText('Candidate one');
+    expect(listWorkspaceTasks).toHaveBeenLastCalledWith(
+      'workspace-1',
+      expect.objectContaining({ page: 1, pageSize: 20, sortBy: 'updatedAt' }),
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Candidate one/ }));
+    fireEvent.change(screen.getByLabelText('Search Tasks'), { target: { value: 'candidate' } });
+    expect(await screen.findAllByText('Candidate one')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link Tasks' }));
+    await waitFor(() =>
+      expect(linkWorkspaceProjectTasks).toHaveBeenCalledWith('workspace-1', 'project-1', [
+        'candidate-1',
+      ]),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link Existing Task' }));
+    await screen.findByText('Candidate one');
+    fireEvent.click(screen.getByRole('checkbox', { name: /Candidate one/ }));
+
+    getWorkspaceProject.mockResolvedValueOnce(projectFixture({ id: 'project-2', name: 'Second' }));
+    rendered.rerender(
+      <LanguageProvider>
+        <QueryHarness>
+          <WorkspaceProjectDetailPage projectId="project-2" />
+        </QueryHarness>
+      </LanguageProvider>,
+    );
+
+    await screen.findByText('Second');
+    openProjectTasksTab();
+    fireEvent.click(screen.getByRole('button', { name: 'Link Existing Task' }));
+    await screen.findByText('Candidate one');
+    expect(screen.getByRole('button', { name: 'Link Tasks' })).toBeDisabled();
   });
 });
 
@@ -3466,6 +3973,18 @@ function taskSurfaceFromOpenButton(button: HTMLElement) {
   return (button.closest('div.grid') ?? button.parentElement ?? button) as HTMLElement;
 }
 
+function openProjectTasksTab() {
+  openProjectDetailTab('Project Tasks');
+}
+
+function openProjectDetailTab(name: string) {
+  act(() => {
+    const tab = screen.getByRole('tab', { name });
+    tab.focus();
+    fireEvent.keyDown(tab, { key: 'Enter', code: 'Enter' });
+  });
+}
+
 function renderWithProviders(ui: React.ReactElement) {
   return render(
     <LanguageProvider>
@@ -3577,6 +4096,90 @@ function mockDefaultTags() {
           description: null,
           createdAt: isoDate,
         },
+        {
+          id: 'permission-tasks-view',
+          key: 'tasks.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-reports-view',
+          key: 'projects.reports.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-create',
+          key: 'projects.create',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-update',
+          key: 'projects.update',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-delete',
+          key: 'projects.delete',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-manage-status',
+          key: 'projects.manage_status',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-manage-members',
+          key: 'projects.manage_members',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-manage-owner',
+          key: 'projects.manage_owner',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-projects-manage-progress',
+          key: 'projects.manage_progress',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-project-files-view',
+          key: 'projects.files.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-project-files-add',
+          key: 'projects.files.add',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-project-files-remove',
+          key: 'projects.files.remove',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-project-files-download',
+          key: 'projects.files.download',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-project-activity-view',
+          key: 'projects.activity.view',
+          description: null,
+          createdAt: isoDate,
+        },
         { id: 'permission-tags-view', key: 'tags.view', description: null, createdAt: isoDate },
         { id: 'permission-tags-create', key: 'tags.create', description: null, createdAt: isoDate },
         { id: 'permission-tags-update', key: 'tags.update', description: null, createdAt: isoDate },
@@ -3627,6 +4230,44 @@ function status(
 
 function taskFixture(overrides: Partial<WorkspaceTask> = {}): WorkspaceTask {
   return { ...taskFixtureBase(), ...overrides };
+}
+
+function projectFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'project-1',
+    workspaceId: 'workspace-1',
+    name: 'Launch',
+    description: null,
+    statusDefinitionId: 'status-project',
+    status: { id: 'status-project', name: 'To Do', color: '#64748B', terminal: false },
+    priority: 'MEDIUM',
+    visibility: 'WORKSPACE',
+    calculatedProgress: 0,
+    manualProgressPercent: null,
+    manualProgressUpdatedAt: null,
+    effectiveProgress: 0,
+    taskCounts: {
+      totalTasks: 0,
+      openTasks: 0,
+      completedTasks: 0,
+      overdueTasks: 0,
+    },
+    plannedStartAt: null,
+    dueAt: null,
+    departmentId: null,
+    department: null,
+    ownerMembershipId: 'membership-a',
+    owner: {
+      id: 'membership-a',
+      status: 'ACTIVE',
+      user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' },
+    },
+    memberCount: 0,
+    createdById: 'admin-1',
+    createdAt: isoDate,
+    updatedAt: isoDate,
+    ...overrides,
+  };
 }
 
 function taskFixtureBase(): WorkspaceTask {

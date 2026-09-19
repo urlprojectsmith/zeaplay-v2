@@ -86,7 +86,7 @@ export function ProtectedDashboard() {
               ))}
             </select>
           </label>
-          <Link className="text-link" href={'/dashboard/projects' as Route}>
+          <Link className="text-link" href={'/workspace/projects' as Route}>
             Open projects
           </Link>
         </CardContent>

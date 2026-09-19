@@ -1,5 +1,5 @@
-import { ProjectList } from '../../../components/projects/project-workspace';
+import { redirect } from 'next/navigation';
 
 export default function ProjectsPage() {
-  return <ProjectList />;
+  redirect('/workspace/projects');
 }

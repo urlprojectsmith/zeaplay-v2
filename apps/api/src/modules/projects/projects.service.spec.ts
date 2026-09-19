@@ -19,6 +19,8 @@ describe('ProjectsService', () => {
     const service = new ProjectsService(
       { project: { findFirst } } as never,
       { record: jest.fn() } as never,
+      { createPresignedUploadUrl: jest.fn(), createPresignedDownloadUrl: jest.fn() } as never,
+      { add: jest.fn() } as never,
     );
 
     await expect(service.get(tenant, '00000000-0000-4000-8000-000000000005')).rejects.toThrow(

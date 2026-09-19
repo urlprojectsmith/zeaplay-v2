@@ -64,9 +64,117 @@ export interface ProjectTag {
   createdAt: string;
 }
 
+export interface ProjectAttachmentSummary {
+  id: string;
+  workspaceId: string;
+  projectId?: string;
+  type: 'FILE' | 'URL';
+  displayName: string;
+  url: string | null;
+  file: ProjectAttachmentFile | null;
+  attachedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: { id: string; email: string; name: string | null };
+  attachedBy?: { id: string; email: string; name: string | null };
+}
+
+export interface ProjectAttachmentFile {
+  id: string;
+  workspaceId: string;
+  projectId: string | null;
+  originalFilename: string;
+  displayName: string;
+  mimeType: string;
+  extension: string | null;
+  sizeBytes: number;
+  checksum: string | null;
+  status: string;
+  uploadExpiresAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectAttachmentUploadInit {
+  attachment: ProjectAttachmentSummary;
+  uploadUrl: string;
+  expiresAt: string;
+}
+
+export interface ProjectActivityItem {
+  id: string;
+  action: string;
+  entityType: 'Project';
+  entityId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  actor: { id: string; email: string; name: string | null } | null;
+}
+
+export interface ProjectReportParams {
+  from?: string;
+  to?: string;
+  statusDefinitionId?: string;
+  priority?: ProjectPriority;
+  assigneeMembershipId?: string;
+  departmentId?: string;
+  tagId?: string;
+  search?: string;
+}
+
+export interface ProjectReportsSummary {
+  project: { id: string; name: string };
+  timezone: string;
+  filters: ProjectReportParams;
+  kpis: {
+    totalTasks: number;
+    openTasks: number;
+    completedTasks: number;
+    overdueTasks: number;
+    pendingApprovalTasks: number;
+    completionRate: number;
+    estimatedMinutes: number;
+    trackedSeconds: number | null;
+    trackedTimeAvailable: boolean;
+  };
+  progress: {
+    calculatedProgress: number;
+    manualProgressPercent: number | null;
+    effectiveProgress: number;
+  };
+  distributions: {
+    status: Array<{
+      statusDefinitionId: string;
+      name: string;
+      color: string;
+      terminal: boolean;
+      count: number;
+    }>;
+    priority: Array<{ priority: ProjectPriority; count: number }>;
+    assignees: Array<{
+      membershipId: string | null;
+      displayName: string;
+      taskAssignmentCount: number;
+      openTaskCount: number;
+      completedTaskCount: number;
+      overdueTaskCount: number;
+    }>;
+    departments: Array<{ departmentId: string | null; name: string; count: number }>;
+  };
+  completionTrend: Array<{ date: string; count: number }>;
+  semantics: {
+    dateRange: string;
+    assigneeBreakdown: string;
+    completionTrend: string;
+    multiProject: string;
+  };
+}
+
 export interface ProjectMutationCount {
   requestedCount: number;
   changedCount: number;
+  unchangedCount?: number;
 }
 
 export interface ProjectPayload {
@@ -126,6 +234,16 @@ export const projectKeys = {
     ['workspace', workspaceId, 'projects', 'detail', projectId, 'members', params] as const,
   tags: (workspaceId: string | null, projectId: string | null) =>
     ['workspace', workspaceId, 'projects', 'detail', projectId, 'tags'] as const,
+  attachmentsBase: (workspaceId: string | null, projectId: string | null) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'attachments'] as const,
+  attachments: (workspaceId: string | null, projectId: string | null, params: object) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'attachments', params] as const,
+  activityBase: (workspaceId: string | null, projectId: string | null) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'activity'] as const,
+  activity: (workspaceId: string | null, projectId: string | null, params: object) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'activity', params] as const,
+  reports: (workspaceId: string | null, projectId: string | null, params: ProjectReportParams) =>
+    ['workspace', workspaceId, 'projects', 'detail', projectId, 'reports', params] as const,
 };
 
 export async function listWorkspaceProjects(
@@ -269,6 +387,30 @@ export async function removeWorkspaceProjectTags(
   return response.data;
 }
 
+export async function linkWorkspaceProjectTasks(
+  workspaceId: string,
+  projectId: string,
+  taskIds: string[],
+) {
+  const response = await apiClient.request<ProjectMutationCount>(
+    `/workspaces/${workspaceId}/projects/${projectId}/tasks`,
+    { method: 'POST', body: JSON.stringify({ taskIds: uniqueIds(taskIds) }) },
+  );
+  return response.data;
+}
+
+export async function unlinkWorkspaceProjectTasks(
+  workspaceId: string,
+  projectId: string,
+  taskIds: string[],
+) {
+  const response = await apiClient.request<ProjectMutationCount>(
+    `/workspaces/${workspaceId}/projects/${projectId}/tasks/remove`,
+    { method: 'POST', body: JSON.stringify({ taskIds: uniqueIds(taskIds) }) },
+  );
+  return response.data;
+}
+
 export async function updateWorkspaceProjectProgress(
   workspaceId: string,
   projectId: string,
@@ -277,6 +419,123 @@ export async function updateWorkspaceProjectProgress(
   const response = await apiClient.request<WorkspaceProjectSummary>(
     `/workspaces/${workspaceId}/projects/${projectId}/progress`,
     { method: 'PATCH', body: JSON.stringify({ manualProgressPercent }) },
+  );
+  return response.data;
+}
+
+export async function listWorkspaceProjectAttachments(
+  workspaceId: string,
+  projectId: string,
+  params: { page?: number; pageSize?: number; search?: string } = {},
+) {
+  const query = paginatedQuery(params);
+  const response = await apiClient.request<PageResult<ProjectAttachmentSummary>>(
+    `/workspaces/${workspaceId}/projects/${projectId}/attachments?${query}`,
+  );
+  return response.data;
+}
+
+export async function initWorkspaceProjectAttachmentUpload(
+  workspaceId: string,
+  projectId: string,
+  body: { filename: string; displayName?: string; mimeType: string; sizeBytes: number },
+) {
+  const response = await apiClient.request<ProjectAttachmentUploadInit>(
+    `/workspaces/${workspaceId}/projects/${projectId}/attachments/upload-init`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function completeWorkspaceProjectAttachmentUpload(
+  workspaceId: string,
+  projectId: string,
+  attachmentId: string,
+  body: { sizeBytes: number },
+) {
+  const response = await apiClient.request<ProjectAttachmentSummary>(
+    `/workspaces/${workspaceId}/projects/${projectId}/attachments/${attachmentId}/upload-complete`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function addWorkspaceProjectUrlAttachment(
+  workspaceId: string,
+  projectId: string,
+  body: { url: string; displayName?: string },
+) {
+  const response = await apiClient.request<ProjectAttachmentSummary>(
+    `/workspaces/${workspaceId}/projects/${projectId}/attachments/url`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function downloadWorkspaceProjectAttachment(
+  workspaceId: string,
+  projectId: string,
+  attachmentId: string,
+) {
+  const response = await apiClient.request<{ downloadUrl: string; expiresInSeconds: number }>(
+    `/workspaces/${workspaceId}/projects/${projectId}/attachments/${attachmentId}/download`,
+  );
+  return response.data;
+}
+
+export async function removeWorkspaceProjectAttachment(
+  workspaceId: string,
+  projectId: string,
+  attachmentId: string,
+) {
+  const response = await apiClient.request<{ changed: boolean }>(
+    `/workspaces/${workspaceId}/projects/${projectId}/attachments/${attachmentId}`,
+    { method: 'DELETE' },
+  );
+  return response.data;
+}
+
+export async function listWorkspaceProjectActivity(
+  workspaceId: string,
+  projectId: string,
+  params: {
+    page?: number;
+    pageSize?: number;
+    action?: string;
+    userId?: string;
+    from?: string;
+    to?: string;
+  } = {},
+) {
+  const query = paginatedQuery(params);
+  if (params.action) query.set('action', params.action);
+  if (params.userId) query.set('userId', params.userId);
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  const response = await apiClient.request<PageResult<ProjectActivityItem>>(
+    `/workspaces/${workspaceId}/projects/${projectId}/activity?${query}`,
+  );
+  return response.data;
+}
+
+export async function getWorkspaceProjectReports(
+  workspaceId: string,
+  projectId: string,
+  params: ProjectReportParams = {},
+) {
+  const response = await apiClient.request<ProjectReportsSummary>(
+    `/workspaces/${workspaceId}/projects/${projectId}/reports?${projectReportQueryString(params)}`,
+  );
+  return response.data;
+}
+
+export async function exportWorkspaceProjectReportsCsv(
+  workspaceId: string,
+  projectId: string,
+  params: ProjectReportParams = {},
+) {
+  const response = await apiClient.request<{ filename: string; contentType: string; csv: string }>(
+    `/workspaces/${workspaceId}/projects/${projectId}/reports/export?${projectReportQueryString(params)}`,
   );
   return response.data;
 }
@@ -335,6 +594,32 @@ function projectListQueryString(params: NormalizedProjectListParams) {
     'dueTo',
   ] as const) {
     if (params[key]) query.set(key, params[key]);
+  }
+  return query.toString();
+}
+
+function paginatedQuery(params: { page?: number; pageSize?: number; search?: string }) {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    pageSize: String(params.pageSize ?? 20),
+  });
+  if (params.search?.trim()) query.set('search', params.search.trim());
+  return query;
+}
+
+function projectReportQueryString(params: ProjectReportParams) {
+  const query = new URLSearchParams();
+  for (const key of [
+    'from',
+    'to',
+    'statusDefinitionId',
+    'priority',
+    'assigneeMembershipId',
+    'departmentId',
+    'tagId',
+    'search',
+  ] as const) {
+    if (params[key]) query.set(key, String(params[key]));
   }
   return query.toString();
 }

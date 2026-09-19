@@ -1764,11 +1764,11 @@ describe('Phase 6.3A shared statuses integration', () => {
       .set(auth(adminToken))
       .set(ctx(agencyA, workspaceA1))
       .send({
-        title: 'Open task cannot link terminal project',
+        title: 'Open task can link terminal project after completion',
         statusDefinitionId: openTaskStatus.id,
         projectIds: [emptyProject.body.data.id],
       })
-      .expect(400);
+      .expect(201);
     const terminalTask = await request(app.getHttpServer())
       .post(`/api/v1/workspaces/${workspaceA1}/tasks`)
       .set(auth(adminToken))
@@ -1779,7 +1779,9 @@ describe('Phase 6.3A shared statuses integration', () => {
         projectIds: [emptyProject.body.data.id],
       })
       .expect(201);
-    expect(terminalTask.body.data.projectIds).toContain(emptyProject.body.data.id);
+    expect(terminalTask.body.data.projects.map((project: { id: string }) => project.id)).toContain(
+      emptyProject.body.data.id,
+    );
     const replaceOpenTask = await prisma.task.create({
       data: {
         workspaceId: workspaceA1,
@@ -1793,7 +1795,419 @@ describe('Phase 6.3A shared statuses integration', () => {
       .set(auth(adminToken))
       .set(ctx(agencyA, workspaceA1))
       .send({ projectIds: [emptyProject.body.data.id] })
+      .expect(200);
+  });
+
+  it('integrates Project Tasks through TaskProject without cloning or leaking tenant data', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const openTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', isDefault: true },
+    });
+    const completedTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', name: 'Completed' },
+    });
+    const completedProjectStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'PROJECT', name: 'Completed' },
+    });
+
+    const project = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Phase 8.4 Task Project' })
+      .expect(201);
+    const projectId = project.body.data.id as string;
+
+    const createdInProject = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        title: 'Created inside project',
+        statusDefinitionId: openTaskStatus.id,
+        projectIds: [projectId],
+      })
+      .expect(201);
+    expect(createdInProject.body.data.projects.map((item: { id: string }) => item.id)).toContain(
+      projectId,
+    );
+
+    const projectTasks = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?projectId=${projectId}&page=1&pageSize=10`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(projectTasks.body.data.items.map((item: { id: string }) => item.id)).toContain(
+      createdInProject.body.data.id,
+    );
+
+    const linkOne = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Link one',
+        statusDefinitionId: completedTaskStatus.id,
+        createdById: admin.id,
+      },
+    });
+    const linkTwo = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Link two',
+        statusDefinitionId: openTaskStatus.id,
+        createdById: admin.id,
+      },
+    });
+    const linkResult = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [linkOne.id, linkTwo.id] })
+      .expect(201);
+    expect(linkResult.body.data).toMatchObject({
+      requestedCount: 2,
+      changedCount: 2,
+      unchangedCount: 0,
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [linkOne.id] })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 0,
+          unchangedCount: 1,
+        }),
+      );
+
+    await expect(
+      prisma.taskProject.count({
+        where: { workspaceId: workspaceA1, projectId, taskId: linkOne.id },
+      }),
+    ).resolves.toBe(1);
+
+    const progress = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(progress.body.data.taskCounts.totalTasks).toBe(3);
+    expect(progress.body.data.calculatedProgress).toBe(33);
+
+    const foreignTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA2,
+        title: 'Foreign task',
+        statusDefinitionId: (
+          await prisma.statusDefinition.findFirstOrThrow({
+            where: { workspaceId: workspaceA2, entityType: 'TASK', isDefault: true },
+          })
+        ).id,
+        createdById: admin.id,
+      },
+    });
+    const beforeForeignBatch = await prisma.taskProject.count({ where: { projectId } });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [linkOne.id, foreignTask.id] })
       .expect(400);
+    await expect(prisma.taskProject.count({ where: { projectId } })).resolves.toBe(
+      beforeForeignBatch,
+    );
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks/remove`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [linkOne.id] })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 1,
+          unchangedCount: 0,
+        }),
+      );
+    await expect(prisma.task.findUnique({ where: { id: linkOne.id } })).resolves.toBeTruthy();
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks/remove`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [linkOne.id] })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({
+          requestedCount: 1,
+          changedCount: 0,
+          unchangedCount: 1,
+        }),
+      );
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(400);
+    await prisma.task.update({
+      where: { id: linkTwo.id },
+      data: { statusDefinitionId: completedTaskStatus.id },
+    });
+    await prisma.task.update({
+      where: { id: createdInProject.body.data.id },
+      data: { statusDefinitionId: completedTaskStatus.id },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(200);
+    const lateOpenTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Late open task',
+        statusDefinitionId: openTaskStatus.id,
+        createdById: admin.id,
+      },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [lateOpenTask.id] })
+      .expect(201);
+    const terminalAfterLink = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(terminalAfterLink.body.data.status.terminal).toBe(true);
+    expect(terminalAfterLink.body.data.calculatedProgress).toBeLessThan(100);
+  });
+
+  it('keeps Project membership from becoming Task access or link authority', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const member = await prisma.user.findUniqueOrThrow({
+      where: { email: 'member-a@zeaplay.test' },
+    });
+    const memberMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: member.id, workspaceId: workspaceA1 } },
+    });
+    const taskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', isDefault: true },
+    });
+
+    const restrictedProject = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Restricted task boundary', visibility: 'RESTRICTED' })
+      .expect(201);
+    const projectId = restrictedProject.body.data.id as string;
+    const linkedTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Linked but not visible through project membership',
+        statusDefinitionId: taskStatus.id,
+        createdById: admin.id,
+      },
+      select: { id: true },
+    });
+    await prisma.taskProject.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId,
+        taskId: linkedTask.id,
+      },
+    });
+    await prisma.projectMember.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId,
+        workspaceMembershipId: memberMembership.id,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?projectId=${projectId}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [linkedTask.id] })
+      .expect(403);
+  });
+
+  it('requires Project visibility for Project-filtered Task list and timeline views', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const member = await prisma.user.findUniqueOrThrow({
+      where: { email: 'member-a@zeaplay.test' },
+    });
+    const memberMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: member.id, workspaceId: workspaceA1 } },
+    });
+    const taskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', isDefault: true },
+    });
+    const permissions = await prisma.permission.findMany({
+      where: { key: { in: ['workspace.read', 'tasks.view'] } },
+    });
+    const tasksOnlyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:phase8-5-tasks-only`,
+        workspaceId: workspaceA1,
+        name: 'Phase 8.5 Tasks Only',
+        nameNormalized: 'phase 8.5 tasks only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: permissions.map((permission) => ({
+        roleId: tasksOnlyRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: memberMembership.id },
+      data: { roleId: tasksOnlyRole.id },
+    });
+
+    const project = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Project filtered task boundary' })
+      .expect(201);
+    const scheduledTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Project filtered scheduled task',
+        statusDefinitionId: taskStatus.id,
+        createdById: admin.id,
+        plannedStartAt: new Date('2026-01-10T00:00:00.000Z'),
+        dueAt: new Date('2026-01-12T00:00:00.000Z'),
+      },
+      select: { id: true },
+    });
+    const unscheduledTask = await prisma.task.create({
+      data: {
+        workspaceId: workspaceA1,
+        title: 'Project filtered unscheduled task',
+        statusDefinitionId: taskStatus.id,
+        createdById: admin.id,
+        plannedStartAt: null,
+        dueAt: new Date('2026-01-15T00:00:00.000Z'),
+      },
+      select: { id: true },
+    });
+    await prisma.taskProject.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId: project.body.data.id,
+        taskId: scheduledTask.id,
+      },
+    });
+    await prisma.taskProject.create({
+      data: {
+        workspaceId: workspaceA1,
+        projectId: project.body.data.id,
+        taskId: unscheduledTask.id,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?projectId=${project.body.data.id}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(0);
+        expect(response.body.data.items).toHaveLength(0);
+      });
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/gantt?projectId=${project.body.data.id}&from=2026-01-01&to=2026-02-01`,
+      )
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(0);
+        expect(response.body.data.items).toHaveLength(0);
+        expect(response.body.data.unscheduledCount).toBe(0);
+        expect(response.body.data.unscheduledItems).toHaveLength(0);
+      });
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/gantt?projectId=${project.body.data.id}&from=2026-01-01&to=2026-02-01`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.items.map((item: { id: string }) => item.id)).toContain(
+          scheduledTask.id,
+        );
+        expect(
+          response.body.data.unscheduledItems.map((item: { id: string }) => item.id),
+        ).toContain(unscheduledTask.id);
+        expect(response.body.data.unscheduledCount).toBeGreaterThanOrEqual(1);
+      });
+
+    const projectOnlyPermissions = await prisma.permission.findMany({
+      where: { key: { in: ['workspace.read', 'projects.view', 'projects.view_all'] } },
+    });
+    const projectOnlyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:phase8-5-project-only`,
+        workspaceId: workspaceA1,
+        name: 'Phase 8.5 Project Only',
+        nameNormalized: 'phase 8.5 project only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: projectOnlyPermissions.map((permission) => ({
+        roleId: projectOnlyRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: memberMembership.id },
+      data: { roleId: projectOnlyRole.id },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${project.body.data.id}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tasks?projectId=${project.body.data.id}`)
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tasks/gantt?projectId=${project.body.data.id}&from=2026-01-01&to=2026-02-01`,
+      )
+      .set(auth(memberToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
   });
 
   function createStatus(
@@ -1964,6 +2378,11 @@ async function seedRoles() {
     'projects.manage_members',
     'projects.manage_owner',
     'projects.manage_progress',
+    'projects.files.view',
+    'projects.files.add',
+    'projects.files.remove',
+    'projects.files.download',
+    'projects.activity.view',
     'tags.view',
     'tags.create',
     'tags.update',
@@ -1972,6 +2391,7 @@ async function seedRoles() {
     'tasks.view',
     'tasks.create',
     'tasks.update',
+    'tasks.assign',
     'statuses.view',
     'statuses.create',
     'statuses.update',

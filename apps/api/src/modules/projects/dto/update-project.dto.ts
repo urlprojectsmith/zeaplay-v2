@@ -10,6 +10,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   Max,
   MaxLength,
@@ -87,6 +88,38 @@ export class ProjectTagIdsDto {
   tagIds!: string[];
 }
 
+export class ProjectTaskIdsDto {
+  @ApiPropertyOptional({ type: [String], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  taskIds!: string[];
+}
+
+export class ProjectAttachmentIdsDto {
+  @ApiPropertyOptional({ type: [String], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  attachmentIds!: string[];
+}
+
+export class CreateProjectUrlAttachmentDto {
+  @ApiPropertyOptional({ maxLength: 2048 })
+  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
+  @MaxLength(2048)
+  url!: string;
+
+  @ApiPropertyOptional({ maxLength: 255 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  displayName?: string;
+}
+
 export class UpdateProjectProgressDto {
   @ApiPropertyOptional({ minimum: 0, maximum: 100, nullable: true })
   @ValidateIf((_, value) => value !== null)
@@ -121,4 +154,83 @@ export class UpdateProjectOwnerDto {
   @ApiPropertyOptional()
   @IsUUID()
   workspaceMembershipId!: string;
+}
+
+export class ProjectActivityQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @Transform(({ value }) => Number(value ?? 1))
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @Transform(({ value }) => Number(value ?? 20))
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize = 20;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  action?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  userId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+}
+
+export class ProjectReportQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  statusDefinitionId?: string;
+
+  @ApiPropertyOptional({ enum: TaskPriority })
+  @IsOptional()
+  @IsEnum(TaskPriority)
+  priority?: TaskPriority;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  assigneeMembershipId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  departmentId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  tagId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  search?: string;
 }

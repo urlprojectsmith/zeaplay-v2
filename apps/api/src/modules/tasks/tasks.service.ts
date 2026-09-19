@@ -277,7 +277,7 @@ export class TasksService {
           });
         }
         if (projectIds.length > 0) {
-          await this.assertProjectsCanLinkTask(tx, tenant, projectIds, status.isTerminal);
+          await this.assertProjectsCanLinkTask(tx, tenant, projectIds);
           await tx.taskProject.createMany({
             data: projectIds.map((projectId) => ({
               taskId: created.id,
@@ -319,7 +319,7 @@ export class TasksService {
   }
 
   async list(tenant: WorkspaceTenantContext, query: TaskQueryDto) {
-    const where = this.taskWhere(tenant.workspaceId, query);
+    const where = this.taskWhere(tenant, query);
     const orderBy = taskOrderBy(query.sortBy, query.sortDirection);
     const [items, total] = await this.prisma.$transaction([
       this.prisma.task.findMany({
@@ -865,7 +865,7 @@ export class TasksService {
     const timezone = await this.workspaceTimezone(tenant.workspaceId);
     const window = calendarWindow(query.view, query.date, timezone);
     const where = {
-      ...this.taskViewWhere(tenant.workspaceId, query),
+      ...this.taskViewWhere(tenant, query),
       dueAt: { gte: window.start, lt: window.end },
     } satisfies Prisma.TaskWhereInput;
     const [summaryTasks, visibleTasks, total] = await this.prisma.$transaction([
@@ -959,13 +959,17 @@ export class TasksService {
     const from = parseRequiredDate(query.from, 'INVALID_GANTT_RANGE');
     const to = parseRequiredDate(query.to, 'INVALID_GANTT_RANGE');
     if (to <= from) throw new BadRequestException('INVALID_GANTT_RANGE');
-    const baseWhere = this.taskViewWhere(tenant.workspaceId, query);
+    const baseWhere = this.taskViewWhere(tenant, query);
     const scheduledWhere = {
       ...baseWhere,
       plannedStartAt: { not: null, lt: to },
       dueAt: { not: null, gte: from },
     } satisfies Prisma.TaskWhereInput;
-    const [items, total, unscheduledCount] = await this.prisma.$transaction([
+    const unscheduledWhere = {
+      ...baseWhere,
+      OR: [{ plannedStartAt: null }, { dueAt: null }],
+    } satisfies Prisma.TaskWhereInput;
+    const [items, total, unscheduledItems, unscheduledCount] = await this.prisma.$transaction([
       this.prisma.task.findMany({
         where: scheduledWhere,
         select: taskListSelect,
@@ -974,11 +978,14 @@ export class TasksService {
         take: query.pageSize,
       }),
       this.prisma.task.count({ where: scheduledWhere }),
+      this.prisma.task.findMany({
+        where: unscheduledWhere,
+        select: taskListSelect,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        take: 10,
+      }),
       this.prisma.task.count({
-        where: {
-          ...baseWhere,
-          OR: [{ plannedStartAt: null }, { dueAt: null }],
-        },
+        where: unscheduledWhere,
       }),
     ]);
     const taskIds = items.map((task) => task.id);
@@ -998,6 +1005,7 @@ export class TasksService {
       window: { from, to, timezone },
       items: items.map((task) => serializeTaskListItem(task, tenant)),
       dependencies,
+      unscheduledItems: unscheduledItems.map((task) => serializeTaskListItem(task, tenant)),
       unscheduledCount,
       page: query.page,
       pageSize: query.pageSize,
@@ -1042,7 +1050,7 @@ export class TasksService {
 
   async reportsSummary(tenant: WorkspaceTenantContext, query: TaskReportsQueryDto) {
     const timezone = await this.workspaceTimezone(tenant.workspaceId);
-    const where = this.reportWhere(tenant.workspaceId, query, timezone);
+    const where = this.reportWhere(tenant, query, timezone);
     const total = await this.prisma.task.count({ where });
     if (total > TASK_CSV_EXPORT_MAX_ROWS) {
       throw exportTooLarge();
@@ -1131,7 +1139,7 @@ export class TasksService {
   async reportsCsv(tenant: WorkspaceTenantContext, query: TaskReportsQueryDto) {
     const summary = await this.reportsSummary(tenant, query);
     const timezone = await this.workspaceTimezone(tenant.workspaceId);
-    const where = this.reportWhere(tenant.workspaceId, query, timezone);
+    const where = this.reportWhere(tenant, query, timezone);
     const tasks = await this.prisma.task.findMany({
       where,
       select: {
@@ -2439,7 +2447,7 @@ export class TasksService {
 
   async listSubtasks(tenant: WorkspaceTenantContext, taskId: string, query: TaskQueryDto) {
     await this.assertTask(tenant.workspaceId, taskId);
-    const where = { ...this.taskWhere(tenant.workspaceId, query), parentTaskId: taskId };
+    const where = { ...this.taskWhere(tenant, query), parentTaskId: taskId };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.task.findMany({
         where,
@@ -3590,15 +3598,10 @@ export class TasksService {
     const task = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.task.findFirst({
         where: { id: taskId, workspaceId: tenant.workspaceId, deletedAt: null },
-        select: { statusDefinition: { select: { isTerminal: true } } },
+        select: { id: true },
       });
       if (!existing) throw new NotFoundException('Task not found.');
-      await this.assertProjectsCanLinkTask(
-        tx,
-        tenant,
-        projectIds,
-        existing.statusDefinition.isTerminal,
-      );
+      await this.assertProjectsCanLinkTask(tx, tenant, projectIds);
       await tx.taskProject.deleteMany({ where: { taskId, workspaceId: tenant.workspaceId } });
       if (projectIds.length > 0) {
         await tx.taskProject.createMany({
@@ -4472,7 +4475,8 @@ export class TasksService {
     }
   }
 
-  private taskWhere(workspaceId: string, query: TaskQueryDto): Prisma.TaskWhereInput {
+  private taskWhere(tenant: WorkspaceTenantContext, query: TaskQueryDto): Prisma.TaskWhereInput {
+    const workspaceId = tenant.workspaceId;
     return {
       workspaceId,
       deletedAt: null,
@@ -4487,7 +4491,15 @@ export class TasksService {
         ? { assignees: { some: { membershipId: query.assigneeMembershipId, workspaceId } } }
         : {}),
       ...(query.projectId
-        ? { projects: { some: { projectId: query.projectId, workspaceId } } }
+        ? {
+            projects: {
+              some: {
+                projectId: query.projectId,
+                workspaceId,
+                project: this.visibleProjectLinkWhere(tenant),
+              },
+            },
+          }
         : {}),
       ...(query.tagId ? { tags: { some: { tagId: query.tagId, workspaceId } } } : {}),
       ...(query.dueFrom || query.dueTo
@@ -4502,9 +4514,10 @@ export class TasksService {
   }
 
   private taskViewWhere(
-    workspaceId: string,
+    tenant: WorkspaceTenantContext,
     query: TaskViewFilterQueryDtoLike,
   ): Prisma.TaskWhereInput {
+    const workspaceId = tenant.workspaceId;
     return {
       workspaceId,
       deletedAt: null,
@@ -4517,20 +4530,28 @@ export class TasksService {
         ? { assignees: { some: { membershipId: query.assigneeMembershipId, workspaceId } } }
         : {}),
       ...(query.projectId
-        ? { projects: { some: { projectId: query.projectId, workspaceId } } }
+        ? {
+            projects: {
+              some: {
+                projectId: query.projectId,
+                workspaceId,
+                project: this.visibleProjectLinkWhere(tenant),
+              },
+            },
+          }
         : {}),
       ...(query.tagId ? { tags: { some: { tagId: query.tagId, workspaceId } } } : {}),
     };
   }
 
   private reportWhere(
-    workspaceId: string,
+    tenant: WorkspaceTenantContext,
     query: TaskReportsQueryDto,
     timezone: string,
   ): Prisma.TaskWhereInput {
     const range = reportDateWindow(query, timezone);
     return {
-      ...this.taskViewWhere(workspaceId, query),
+      ...this.taskViewWhere(tenant, query),
       ...(range.from || range.to
         ? {
             dueAt: {
@@ -4539,6 +4560,34 @@ export class TasksService {
             },
           }
         : {}),
+    };
+  }
+
+  private visibleProjectLinkWhere(tenant: WorkspaceTenantContext): Prisma.ProjectWhereInput {
+    if (!this.hasPermission(tenant, PermissionKeys.projectsView))
+      return { id: '00000000-0000-4000-8000-000000000000' };
+    const base: Prisma.ProjectWhereInput = {
+      workspaceId: tenant.workspaceId,
+      status: { not: ProjectStatus.ARCHIVED },
+      archivedAt: null,
+    };
+    if (this.hasPermission(tenant, PermissionKeys.projectsViewAll)) return base;
+    const membershipId = tenant.workspaceMembershipId;
+    return {
+      ...base,
+      OR: [
+        { visibility: ProjectVisibility.WORKSPACE },
+        ...(membershipId
+          ? [
+              { ownerMembershipId: membershipId },
+              {
+                members: {
+                  some: { workspaceMembershipId: membershipId, workspaceId: tenant.workspaceId },
+                },
+              },
+            ]
+          : []),
+      ],
     };
   }
 
@@ -5035,14 +5084,13 @@ export class TasksService {
     tx: Prisma.TransactionClient,
     tenant: WorkspaceTenantContext,
     projectIds: string[],
-    taskIsTerminal: boolean,
   ) {
     if (projectIds.length === 0) return;
     await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
       SELECT "id"
       FROM "projects"
       WHERE "workspace_id" = ${tenant.workspaceId}::uuid
-        AND "id" IN (${Prisma.join(projectIds)})
+        AND "id" IN (${Prisma.join(uuidParams(projectIds))})
       FOR UPDATE
     `);
     const projects = await tx.project.findMany({
@@ -5054,7 +5102,6 @@ export class TasksService {
       select: {
         id: true,
         status: true,
-        statusDefinition: { select: { isTerminal: true } },
       },
     });
     if (projects.length !== projectIds.length) {
@@ -5062,9 +5109,6 @@ export class TasksService {
     }
     if (projects.some((project) => project.status === ProjectStatus.ARCHIVED)) {
       throw new BadRequestException('Archived projects cannot be linked to new task updates.');
-    }
-    if (!taskIsTerminal && projects.some((project) => project.statusDefinition?.isTerminal)) {
-      throw new BadRequestException('OPEN_TASK_CANNOT_LINK_TERMINAL_PROJECT');
     }
   }
 
@@ -7170,6 +7214,10 @@ function bulkResult(requestedCount: number, changedCount: number) {
     changedCount,
     unchangedCount: requestedCount - changedCount,
   };
+}
+
+function uuidParams(ids: string[]) {
+  return ids.map((id) => Prisma.sql`${id}::uuid`);
 }
 
 function bulkRelationResult(

@@ -1,6 +1,7 @@
 <div align="center">
 
-# ⚡ Zeaplay V2 ⚡  
+# ⚡ Zeaplay V2 ⚡
+
 ### The next-gen productivity platform with real-time power
 
 <p>
@@ -49,3 +50,4 @@ flowchart LR
   C --> E
   B --> F[Shared Packages]
   A --> F
+```

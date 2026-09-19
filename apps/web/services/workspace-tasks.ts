@@ -233,6 +233,7 @@ export interface TaskGanttResult {
   window: { from: string; to: string; timezone: string };
   items: WorkspaceTask[];
   dependencies: { blockerTaskId: string; blockedTaskId: string }[];
+  unscheduledItems: WorkspaceTask[];
   unscheduledCount: number;
   page: number;
   pageSize: number;

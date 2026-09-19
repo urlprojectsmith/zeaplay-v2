@@ -695,6 +695,90 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
             createdAt: now,
           },
           {
+            id: 'permission-tasks-view',
+            key: 'tasks.view',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-reports-view',
+            key: 'projects.reports.view',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-create',
+            key: 'projects.create',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-update',
+            key: 'projects.update',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-delete',
+            key: 'projects.delete',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-manage-status',
+            key: 'projects.manage_status',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-manage-members',
+            key: 'projects.manage_members',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-manage-owner',
+            key: 'projects.manage_owner',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-projects-manage-progress',
+            key: 'projects.manage_progress',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-project-files-view',
+            key: 'projects.files.view',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-project-files-add',
+            key: 'projects.files.add',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-project-files-remove',
+            key: 'projects.files.remove',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-project-files-download',
+            key: 'projects.files.download',
+            description: null,
+            createdAt: now,
+          },
+          {
+            id: 'permission-project-activity-view',
+            key: 'projects.activity.view',
+            description: null,
+            createdAt: now,
+          },
+          {
             id: 'permission-tags-view',
             key: 'tags.view',
             description: null,
@@ -1708,6 +1792,139 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
   });
 }
 
+async function mockProjectUiApi(page: Page) {
+  const now = new Date().toISOString();
+  const projectStatus = {
+    id: 'status-project-todo',
+    workspaceId: 'workspace-1',
+    entityType: 'PROJECT',
+    name: 'Planned',
+    description: null,
+    color: '#2563EB',
+    position: 1,
+    category: 'TODO',
+    isDefault: true,
+    isTerminal: false,
+    isActive: true,
+    isSystem: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const owner = {
+    id: 'membership-anya',
+    status: 'ACTIVE',
+    user: { id: 'user-anya', email: 'anya@zeaplay.test', name: 'Anya' },
+  };
+  const project = {
+    id: 'project-e2e',
+    workspaceId: 'workspace-1',
+    name: 'Project UI E2E',
+    description: 'Project UI integration journey',
+    statusDefinitionId: projectStatus.id,
+    status: { id: projectStatus.id, name: 'Planned', color: '#2563EB', terminal: false },
+    priority: 'MEDIUM',
+    visibility: 'WORKSPACE',
+    calculatedProgress: 0,
+    manualProgressPercent: null,
+    manualProgressUpdatedAt: null,
+    effectiveProgress: 0,
+    taskCounts: { totalTasks: 1, openTasks: 1, completedTasks: 0, overdueTasks: 0 },
+    plannedStartAt: null,
+    dueAt: now,
+    departmentId: null,
+    department: null,
+    ownerMembershipId: owner.id,
+    owner,
+    memberCount: 0,
+    createdById: 'user-1',
+    createdAt: now,
+    updatedAt: now,
+  };
+  const report = {
+    project: { id: project.id, name: project.name },
+    timezone: 'UTC',
+    filters: {},
+    kpis: {
+      totalTasks: 1,
+      openTasks: 1,
+      completedTasks: 0,
+      overdueTasks: 0,
+      pendingApprovalTasks: 0,
+      completionRate: 0,
+      estimatedMinutes: 30,
+      trackedSeconds: null,
+      trackedTimeAvailable: false,
+    },
+    progress: {
+      calculatedProgress: 0,
+      manualProgressPercent: null,
+      effectiveProgress: 0,
+    },
+    distributions: {
+      status: [
+        {
+          statusDefinitionId: 'status-task-todo',
+          name: 'To Do',
+          color: '#2563EB',
+          terminal: false,
+          count: 1,
+        },
+      ],
+      priority: [{ priority: 'HIGH', count: 1 }],
+      assignees: [],
+      departments: [],
+    },
+    completionTrend: [],
+    semantics: {
+      dateRange: 'Task due date',
+      assigneeBreakdown: 'Assignments are counted independently.',
+      completionTrend: 'AuditLog terminal events.',
+      multiProject: 'Tasks contribute to each linked Project.',
+    },
+  };
+
+  await page.route(/.*\/workspaces\/workspace-1\/statuses\/PROJECT(\?.*)?$/, async (route) => {
+    await fulfillApi(route, [projectStatus]);
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/projects(\?.*)?$/, async (route) => {
+    if (route.request().method() === 'POST') {
+      await fulfillApi(route, project, 201);
+      return;
+    }
+    await fulfillApi(route, { items: [project], page: 1, pageSize: 20, total: 1 });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/projects\/project-e2e$/, async (route) => {
+    await fulfillApi(route, project);
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/projects\/project-e2e\/tags$/, async (route) => {
+    await fulfillApi(route, []);
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/projects\/project-e2e\/members(\?.*)?$/,
+    async (route) => {
+      await fulfillApi(route, { items: [], page: 1, pageSize: 20, total: 0 });
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/projects\/project-e2e\/attachments(\?.*)?$/,
+    async (route) => {
+      await fulfillApi(route, { items: [], page: 1, pageSize: 20, total: 0 });
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/projects\/project-e2e\/activity(\?.*)?$/,
+    async (route) => {
+      await fulfillApi(route, { items: [], page: 1, pageSize: 20, total: 0 });
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/projects\/project-e2e\/reports(\?.*)?$/,
+    async (route) => {
+      await fulfillApi(route, report);
+    },
+  );
+}
+
 test('application boots and login route loads', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
@@ -1833,6 +2050,46 @@ test('authenticated status management supports workspace status lifecycle UI', a
   const doingBox = await page.getByText('Doing').first().boundingBox();
   const todoBox = await page.getByText('To Do').first().boundingBox();
   expect(doingBox?.y ?? 0).toBeLessThan(todoBox?.y ?? Number.MAX_SAFE_INTEGER);
+});
+
+test('authenticated Project UI journey creates a Project and opens each detail tab', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTaskCreationApi(page);
+  await page.unroute(/.*\/projects(\?.*)?$/);
+  await mockProjectUiApi(page);
+
+  await page.goto('/workspace/projects');
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Project UI E2E/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Create Project' }).click();
+  await page.getByLabel('Project Name').fill('Project UI E2E');
+  await page.getByRole('button', { name: 'Create Project' }).last().click();
+  await expect(page).toHaveURL(/\/workspace\/projects\/project-e2e$/);
+  await expect(page.getByRole('heading', { name: 'Project UI E2E' })).toBeVisible();
+  await expect(page.getByText('Effective Progress').first()).toBeVisible();
+
+  const tabs = [
+    ['Project Tasks', 'tasks'],
+    ['Project Kanban', 'kanban'],
+    ['Project Timeline', 'timeline'],
+    ['Files', 'files'],
+    ['Project Members', 'members'],
+    ['Activity', 'activity'],
+    ['Project Reports', 'reports'],
+  ] as const;
+
+  for (const [name, tab] of tabs) {
+    await page.getByRole('tab', { name }).click();
+    await expect(page).toHaveURL(new RegExp(`tab=${tab}`));
+  }
+
+  await expect(page.getByText('Total Tasks').first()).toBeVisible();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Project Reports' })).toBeVisible();
 });
 
 test('authenticated task creation supports the quick-create flow', async ({ page }) => {
