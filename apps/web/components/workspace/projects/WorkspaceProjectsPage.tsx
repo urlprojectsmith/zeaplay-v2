@@ -1339,6 +1339,17 @@ function projectStatusErrorMessage(
   error: unknown,
 ) {
   if (error instanceof ApiClientError && error.body.code === 'PROJECT_HAS_OPEN_TASKS') {
+    const details = error.body.details;
+    const count =
+      details && typeof details === 'object' && 'openTaskCount' in details
+        ? Number((details as { openTaskCount: unknown }).openTaskCount)
+        : null;
+    if (Number.isInteger(count)) {
+      return t(locale, 'workspaceProjects.projectHasOpenTasksCount').replace(
+        '{count}',
+        String(count),
+      );
+    }
     return t(locale, 'workspaceProjects.projectHasOpenTasks');
   }
   return t(locale, 'workspaceProjects.invalidProjectStatus');

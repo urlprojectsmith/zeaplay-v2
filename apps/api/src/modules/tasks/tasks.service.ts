@@ -277,6 +277,7 @@ export class TasksService {
           });
         }
         if (projectIds.length > 0) {
+          await this.assertProjectsCanLinkTask(tx, tenant, projectIds, status.isTerminal);
           await tx.taskProject.createMany({
             data: projectIds.map((projectId) => ({
               taskId: created.id,
@@ -3587,6 +3588,17 @@ export class TasksService {
     await this.assertTask(tenant.workspaceId, taskId);
     const projectIds = await this.activeProjectIds(tenant, dto.projectIds);
     const task = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.task.findFirst({
+        where: { id: taskId, workspaceId: tenant.workspaceId, deletedAt: null },
+        select: { statusDefinition: { select: { isTerminal: true } } },
+      });
+      if (!existing) throw new NotFoundException('Task not found.');
+      await this.assertProjectsCanLinkTask(
+        tx,
+        tenant,
+        projectIds,
+        existing.statusDefinition.isTerminal,
+      );
       await tx.taskProject.deleteMany({ where: { taskId, workspaceId: tenant.workspaceId } });
       if (projectIds.length > 0) {
         await tx.taskProject.createMany({
@@ -5017,6 +5029,43 @@ export class TasksService {
       throw new BadRequestException('Archived projects cannot be linked to new task updates.');
     }
     return projectIds;
+  }
+
+  private async assertProjectsCanLinkTask(
+    tx: Prisma.TransactionClient,
+    tenant: WorkspaceTenantContext,
+    projectIds: string[],
+    taskIsTerminal: boolean,
+  ) {
+    if (projectIds.length === 0) return;
+    await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id"
+      FROM "projects"
+      WHERE "workspace_id" = ${tenant.workspaceId}::uuid
+        AND "id" IN (${Prisma.join(projectIds)})
+      FOR UPDATE
+    `);
+    const projects = await tx.project.findMany({
+      where: {
+        id: { in: projectIds },
+        workspaceId: tenant.workspaceId,
+        ...this.visibleProjectRelationWhere(tenant),
+      },
+      select: {
+        id: true,
+        status: true,
+        statusDefinition: { select: { isTerminal: true } },
+      },
+    });
+    if (projects.length !== projectIds.length) {
+      throw new NotFoundException('One or more projects were not found.');
+    }
+    if (projects.some((project) => project.status === ProjectStatus.ARCHIVED)) {
+      throw new BadRequestException('Archived projects cannot be linked to new task updates.');
+    }
+    if (!taskIsTerminal && projects.some((project) => project.statusDefinition?.isTerminal)) {
+      throw new BadRequestException('OPEN_TASK_CANNOT_LINK_TERMINAL_PROJECT');
+    }
   }
 
   private visibleProjectRelationWhere(tenant: WorkspaceTenantContext): Prisma.ProjectWhereInput {
