@@ -643,6 +643,2007 @@ describe('Phase 6.3A shared statuses integration', () => {
     }
   });
 
+  it('serves Phase 9.1 Ticket core with tenant-safe numbering, TICKET statuses, permissions, audit, and soft delete', async () => {
+    const ticketStatuses = await prisma.statusDefinition.findMany({
+      where: { workspaceId: workspaceA1, entityType: 'TICKET' },
+      orderBy: { position: 'asc' },
+    });
+    expect(ticketStatuses.slice(0, 6).map((status) => status.name)).toEqual([
+      'New',
+      'Open',
+      'In Progress',
+      'Waiting on Requester',
+      'Resolved',
+      'Closed',
+    ]);
+    await expectExactlyOneActiveDefault(workspaceA1, 'TICKET');
+    await expectExactlyOneActiveDefault(workspaceA2, 'TICKET');
+    await expectExactlyOneActiveDefault(workspaceB1, 'TICKET');
+
+    const openStatus = ticketStatuses.find((status) => status.name === 'Open')!;
+    const inProgressStatus = ticketStatuses.find((status) => status.name === 'In Progress')!;
+    const waitingStatus = ticketStatuses.find((status) => status.name === 'Waiting on Requester')!;
+    const resolvedStatus = ticketStatuses.find((status) => status.name === 'Resolved')!;
+    const taskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', isActive: true },
+    });
+    const projectStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'PROJECT', isActive: true },
+    });
+    const foreignTicketStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA2, entityType: 'TICKET', isActive: true },
+    });
+    const betaTicketStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceB1, entityType: 'TICKET', isActive: true },
+    });
+    const [ownerUser, adminUser, memberUser, betaOwnerUser] = await Promise.all([
+      prisma.user.findUniqueOrThrow({ where: { email: 'owner-a@zeaplay.test' } }),
+      prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } }),
+      prisma.user.findUniqueOrThrow({ where: { email: 'member-a@zeaplay.test' } }),
+      prisma.user.findUniqueOrThrow({ where: { email: 'owner-b@zeaplay.test' } }),
+    ]);
+    const [
+      ownerMembershipA1,
+      adminMembershipA1,
+      adminMembershipA2,
+      memberMembershipA1,
+      betaOwnerMembership,
+    ] = await Promise.all([
+      prisma.workspaceMembership.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: ownerUser.id, workspaceId: workspaceA1 } },
+        select: { id: true },
+      }),
+      prisma.workspaceMembership.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: adminUser.id, workspaceId: workspaceA1 } },
+        select: { id: true },
+      }),
+      prisma.workspaceMembership.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: adminUser.id, workspaceId: workspaceA2 } },
+        select: { id: true },
+      }),
+      prisma.workspaceMembership.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: memberUser.id, workspaceId: workspaceA1 } },
+        select: { id: true },
+      }),
+      prisma.workspaceMembership.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: betaOwnerUser.id, workspaceId: workspaceB1 } },
+        select: { id: true },
+      }),
+    ]);
+    const requesterA1 = { type: 'INTERNAL', membershipId: adminMembershipA1.id };
+    const requesterA2 = { type: 'INTERNAL', membershipId: adminMembershipA2.id };
+    const requesterB1 = { type: 'INTERNAL', membershipId: betaOwnerMembership.id };
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'No permission ticket' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: '  Printer is offline  ',
+        description: 'Initial issue description',
+        priority: 'HIGH',
+        ticketNumber: 'TKT-999999',
+        createdByMembershipId: '00000000-0000-4000-8000-000000000001',
+      })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Client sequence injection',
+        sequenceNumber: 999999,
+      })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: '   ' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'A'.repeat(201) })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Valid subject', description: 'D'.repeat(4001) })
+      .expect(422);
+
+    const beforeInvalidCreateCount = await prisma.ticket.count({
+      where: { workspaceId: workspaceA1 },
+    });
+    const beforeInvalidCreateAuditCount = await prisma.auditLog.count({
+      where: { action: 'ticket.created' },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Bad priority', priority: 'CRITICAL' })
+      .expect(422);
+    await expect(prisma.ticket.count({ where: { workspaceId: workspaceA1 } })).resolves.toBe(
+      beforeInvalidCreateCount,
+    );
+    await expect(prisma.auditLog.count({ where: { action: 'ticket.created' } })).resolves.toBe(
+      beforeInvalidCreateAuditCount,
+    );
+
+    const first = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: '  Printer is offline  ',
+        description: 'Initial issue description',
+        priority: 'HIGH',
+        requester: requesterA1,
+      })
+      .expect(201);
+    expect(first.body.data).toMatchObject({
+      ticketNumber: 'TKT-000001',
+      sequenceNumber: 1,
+      subject: 'Printer is offline',
+      priority: 'HIGH',
+      status: { name: 'New' },
+    });
+    expect(first.body.data.createdBy.id).toEqual(expect.any(String));
+
+    const betaFirst = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceB1}/tickets`)
+      .set(auth(ownerBToken))
+      .set(ctx(agencyB, workspaceB1))
+      .send({ subject: 'Beta workspace first ticket', requester: requesterB1 })
+      .expect(201);
+    expect(betaFirst.body.data.ticketNumber).toBe('TKT-000001');
+
+    const explicit = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'VPN access',
+        priority: 'URGENT',
+        statusDefinitionId: openStatus.id,
+        requester: requesterA1,
+      })
+      .expect(201);
+    expect(explicit.body.data).toMatchObject({
+      ticketNumber: 'TKT-000002',
+      priority: 'URGENT',
+      statusDefinitionId: openStatus.id,
+    });
+
+    for (const invalidStatusDefinitionId of [
+      taskStatus.id,
+      projectStatus.id,
+      foreignTicketStatus.id,
+      betaTicketStatus.id,
+    ]) {
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ subject: 'Invalid status', statusDefinitionId: invalidStatusDefinitionId })
+        .expect(400);
+    }
+
+    const concurrent = await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        request(app.getHttpServer())
+          .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+          .set(auth(ownerToken))
+          .set(ctx(agencyA, workspaceA1))
+          .send({
+            subject: `Concurrent ticket ${index}`,
+            requester: { type: 'INTERNAL', membershipId: ownerMembershipA1.id },
+          })
+          .expect(201),
+      ),
+    );
+    const numbers = concurrent.map((response) => response.body.data.sequenceNumber as number);
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect(numbers.sort((a, b) => a - b)).toEqual([
+      3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+    ]);
+    const concurrentTicketNumbers = concurrent.map(
+      (response) => response.body.data.ticketNumber as string,
+    );
+    expect(new Set(concurrentTicketNumbers).size).toBe(concurrentTicketNumbers.length);
+
+    const multiWorkspaceConcurrent = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+        .set(auth(ownerToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          subject: 'A1 isolated counter',
+          requester: { type: 'INTERNAL', membershipId: ownerMembershipA1.id },
+        })
+        .expect(201),
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA2}/tickets`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA2))
+        .send({ subject: 'A2 isolated counter', requester: requesterA2 })
+        .expect(201),
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceB1}/tickets`)
+        .set(auth(ownerBToken))
+        .set(ctx(agencyB, workspaceB1))
+        .send({ subject: 'B1 isolated counter', requester: requesterB1 })
+        .expect(201),
+    ]);
+    expect(multiWorkspaceConcurrent[0].body.data.ticketNumber).toBe('TKT-000023');
+    expect(multiWorkspaceConcurrent[1].body.data.ticketNumber).toBe('TKT-000001');
+    expect(multiWorkspaceConcurrent[2].body.data.ticketNumber).toBe('TKT-000002');
+    await expect(
+      prisma.workspaceTicketCounter.findUniqueOrThrow({
+        where: { workspaceId: workspaceA1 },
+        select: { lastNumber: true },
+      }),
+    ).resolves.toEqual({ lastNumber: 23 });
+    await expect(
+      prisma.workspaceTicketCounter.findUniqueOrThrow({
+        where: { workspaceId: workspaceA2 },
+        select: { lastNumber: true },
+      }),
+    ).resolves.toEqual({ lastNumber: 1 });
+    await expect(
+      prisma.workspaceTicketCounter.findUniqueOrThrow({
+        where: { workspaceId: workspaceB1 },
+        select: { lastNumber: true },
+      }),
+    ).resolves.toEqual({ lastNumber: 2 });
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.configured).toBe(false);
+        expect(response.body.data.firstResponse.state).toBe('NOT_CONFIGURED');
+      });
+
+    const defaultSlaPayload = {
+      name: 'Default Support SLA',
+      isActive: true,
+      isDefault: true,
+      timezone: 'America/New_York',
+      businessMode: 'ALWAYS',
+      businessHours: {},
+      holidayDates: ['2026-12-25'],
+      rules: [
+        { priority: 'LOW', firstResponseMinutes: 480, resolutionMinutes: 2400 },
+        { priority: 'MEDIUM', firstResponseMinutes: 240, resolutionMinutes: 1440 },
+        { priority: 'HIGH', firstResponseMinutes: 120, resolutionMinutes: 480 },
+        { priority: 'URGENT', firstResponseMinutes: 30, resolutionMinutes: 240 },
+      ],
+      pauseStatuses: [
+        {
+          statusDefinitionId: waitingStatus.id,
+          pauseFirstResponse: true,
+          pauseResolution: true,
+        },
+      ],
+    };
+    const createdPolicy = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send(defaultSlaPayload)
+      .expect(201);
+    expect(createdPolicy.body.data).toMatchObject({ isDefault: true, isActive: true });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        ...defaultSlaPayload,
+        name: 'Empty business week',
+        isDefault: false,
+        businessMode: 'BUSINESS_HOURS',
+        businessHours: {},
+      })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        ...defaultSlaPayload,
+        name: 'Duplicate holidays',
+        isDefault: false,
+        holidayDates: ['2026-12-25', '2026-12-25', '2026-01-01'],
+      })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data.holidayDates).toEqual(['2026-01-01', '2026-12-25']),
+      );
+    const policyUpdateAuditCount = await prisma.auditLog.count({
+      where: {
+        workspaceId: workspaceA1,
+        action: 'ticket.sla_policy_updated',
+        entityId: createdPolicy.body.data.id,
+      },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies/${createdPolicy.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send(defaultSlaPayload)
+      .expect(200);
+    await expect(
+      prisma.auditLog.count({
+        where: {
+          workspaceId: workspaceA1,
+          action: 'ticket.sla_policy_updated',
+          entityId: createdPolicy.body.data.id,
+        },
+      }),
+    ).resolves.toBe(policyUpdateAuditCount);
+    for (const invalidPauseStatusId of [taskStatus.id, projectStatus.id, foreignTicketStatus.id]) {
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({
+          ...defaultSlaPayload,
+          name: `Invalid pause ${invalidPauseStatusId}`,
+          isDefault: false,
+          pauseStatuses: [{ statusDefinitionId: invalidPauseStatusId, pauseFirstResponse: true }],
+        })
+        .expect(400);
+    }
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        ...defaultSlaPayload,
+        name: 'Missing priority rule',
+        isDefault: false,
+        rules: defaultSlaPayload.rules.slice(0, 3),
+      })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        ...defaultSlaPayload,
+        name: 'Invalid target',
+        isDefault: false,
+        rules: defaultSlaPayload.rules.map((rule) =>
+          rule.priority === 'LOW' ? { ...rule, firstResponseMinutes: 0 } : rule,
+        ),
+      })
+      .expect(422);
+
+    const slaTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'SLA initialized ticket',
+        priority: 'HIGH',
+        statusDefinitionId: openStatus.id,
+        requester: requesterA1,
+      })
+      .expect(201);
+    const initialSla = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(initialSla.body.data).toMatchObject({
+      configured: true,
+      priority: 'HIGH',
+      firstResponse: { state: 'RUNNING', targetMinutes: 120 },
+      resolution: { state: 'RUNNING', targetMinutes: 480 },
+    });
+    const originalFirstDueAt = initialSla.body.data.firstResponse.dueAt;
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies/${createdPolicy.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        ...defaultSlaPayload,
+        name: 'Edited Default Support SLA',
+        rules: defaultSlaPayload.rules.map((rule) =>
+          rule.priority === 'HIGH'
+            ? { ...rule, firstResponseMinutes: 1, resolutionMinutes: 2 }
+            : rule,
+        ),
+      })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ priority: 'LOW' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.firstResponse.targetMinutes).toBe(120);
+        expect(response.body.data.firstResponse.dueAt).toBe(originalFirstDueAt);
+        expect(response.body.data.priority).toBe('HIGH');
+      });
+    const nextSnapshotTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'SLA latest policy ticket',
+        priority: 'HIGH',
+        statusDefinitionId: openStatus.id,
+        requester: requesterA1,
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${nextSnapshotTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.firstResponse.targetMinutes).toBe(1);
+        expect(response.body.data.resolution.targetMinutes).toBe(2);
+      });
+    const terminalCreate = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Direct terminal SLA ticket',
+        priority: 'HIGH',
+        statusDefinitionId: resolvedStatus.id,
+        requester: requesterA1,
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${terminalCreate.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.firstResponse.state).toBe('NOT_APPLICABLE');
+        expect(response.body.data.resolution.state).toBe('MET');
+      });
+    const lateReplyTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Late first response SLA ticket',
+        priority: 'HIGH',
+        statusDefinitionId: openStatus.id,
+        requester: requesterA1,
+      })
+      .expect(201);
+    const lateFirstDueAt = new Date(Date.now() - 60_000);
+    await prisma.ticketSlaState.update({
+      where: { ticketId: lateReplyTicket.body.data.id },
+      data: { firstResponseDueAt: lateFirstDueAt },
+    });
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tickets/${lateReplyTicket.body.data.id}/conversation`,
+      )
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Late agent response' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${lateReplyTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.firstResponse.state).toBe('BREACHED');
+        expect(response.body.data.firstResponse.breachedAt).toBe(lateFirstDueAt.toISOString());
+        expect(response.body.data.firstResponse.completedAt).toBeTruthy();
+      });
+    const overduePauseTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Overdue pause SLA ticket',
+        priority: 'HIGH',
+        statusDefinitionId: openStatus.id,
+        requester: requesterA1,
+      })
+      .expect(201);
+    const overduePauseDueAt = new Date(Date.now() - 60_000);
+    await prisma.ticketSlaState.update({
+      where: { ticketId: overduePauseTicket.body.data.id },
+      data: { firstResponseDueAt: overduePauseDueAt },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${overduePauseTicket.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: waitingStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${overduePauseTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.firstResponse.state).toBe('BREACHED');
+        expect(response.body.data.firstResponse.pausedAt).toBeNull();
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Requester self reply' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.firstResponse.state).toBe('RUNNING'));
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/conversation`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Agent response' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/conversation`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'INTERNAL_NOTE', body: 'Does not affect first response' })
+      .expect(201);
+    const firstResponseMet = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(firstResponseMet.body.data.firstResponse.state).toBe('MET');
+    const firstCompletedAt = firstResponseMet.body.data.firstResponse.completedAt;
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/conversation`)
+      .set(auth(ownerToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Second agent response' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.firstResponse.completedAt).toBe(firstCompletedAt),
+      );
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: resolvedStatus.id })
+      .expect(200);
+    const resolvedSla = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(resolvedSla.body.data.resolution.state).toBe('MET');
+    const resolutionCompletedAt = resolvedSla.body.data.resolution.completedAt;
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: openStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: resolvedStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.resolution.completedAt).toBe(resolutionCompletedAt),
+      );
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceB1}/tickets/${slaTicket.body.data.id}/sla`)
+      .set(auth(ownerBToken))
+      .set(ctx(agencyB, workspaceB1))
+      .expect(404);
+    const [defaultA, defaultB] = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ ...defaultSlaPayload, name: 'Concurrent default A', isDefault: true })
+        .expect(201),
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets/sla/policies`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ ...defaultSlaPayload, name: 'Concurrent default B', isDefault: true })
+        .expect(201),
+    ]);
+    const activeDefaults = await prisma.ticketSlaPolicy.findMany({
+      where: { workspaceId: workspaceA1, isActive: true, isDefault: true },
+      select: { id: true },
+    });
+    expect(activeDefaults).toHaveLength(1);
+    expect([defaultA.body.data.id, defaultB.body.data.id]).toContain(activeDefaults[0]?.id);
+
+    const externalEmailTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'External requester email',
+        requester: { type: 'EXTERNAL', name: '  External Alice  ', email: 'ALICE@EXAMPLE.COM' },
+      })
+      .expect(201);
+    expect(externalEmailTicket.body.data.requester).toMatchObject({
+      type: 'EXTERNAL',
+      displayName: 'External Alice',
+    });
+    expect(externalEmailTicket.body.data.requester.externalEmail).toBe('alice@example.com');
+
+    const externalPhoneTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'External requester phone',
+        requester: { type: 'EXTERNAL', name: 'External Phone', phone: '+91 98765 43210' },
+      })
+      .expect(201);
+    expect(externalPhoneTicket.body.data.requester.externalPhone).toBe('+91 98765 43210');
+
+    const externalFullTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'External requester email and phone',
+        requester: {
+          type: 'EXTERNAL',
+          name: 'External Full',
+          email: 'full@example.com',
+          phone: '+1 555 0100',
+        },
+      })
+      .expect(201);
+    expect(externalFullTicket.body.data.requester).toMatchObject({
+      externalEmail: 'full@example.com',
+      externalPhone: '+1 555 0100',
+    });
+
+    const legacyTicket = await prisma.ticket.create({
+      data: {
+        workspaceId: workspaceA1,
+        sequenceNumber: 900001,
+        ticketNumber: 'TKT-900001',
+        subject: 'Legacy requester null',
+        statusDefinitionId: openStatus.id,
+        priority: 'LOW',
+        createdByMembershipId: adminMembershipA1.id,
+      },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${legacyTicket.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.requester).toBeNull());
+
+    for (const payload of [
+      { subject: 'Missing requester' },
+      {
+        subject: 'External no name',
+        requester: { type: 'EXTERNAL', email: 'no-name@example.com' },
+      },
+      { subject: 'External no contact', requester: { type: 'EXTERNAL', name: 'No Contact' } },
+      { subject: 'Internal no membership', requester: { type: 'INTERNAL' } },
+      { subject: 'Foreign internal requester', requester: requesterA2 },
+      {
+        subject: 'Mixed invalid requester',
+        requester: { type: 'INTERNAL', membershipId: adminMembershipA1.id, name: 'Stale' },
+      },
+    ]) {
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send(payload)
+        .expect(400);
+    }
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?search=TKT-000001`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(1);
+        expect(response.body.data.items[0].description).toBeUndefined();
+      });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?search=printer`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(1));
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?priority=URGENT`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.items.map((ticket: { id: string }) => ticket.id)).toContain(
+          explicit.body.data.id,
+        ),
+      );
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?statusDefinitionId=${openStatus.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.data.items.map((ticket: { id: string }) => ticket.id)).toContain(
+          explicit.body.data.id,
+        ),
+      );
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?statusDefinitionId=${foreignTicketStatus.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(400);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA2}/tickets?search=Printer`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA2))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+
+    const auditCountBeforeNoop = await prisma.auditLog.count({
+      where: { action: { in: ['ticket.updated', 'ticket.status_changed'] } },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'VPN access', priority: 'URGENT', statusDefinitionId: openStatus.id })
+      .expect(200);
+    await expect(
+      prisma.auditLog.count({
+        where: { action: { in: ['ticket.updated', 'ticket.status_changed'] } },
+      }),
+    ).resolves.toBe(auditCountBeforeNoop);
+
+    const beforeImmutablePatch = await prisma.ticket.findUniqueOrThrow({
+      where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Should not persist',
+        ticketNumber: 'TKT-424242',
+        sequenceNumber: 424242,
+        workspaceId: workspaceA2,
+        createdByMembershipId: beforeImmutablePatch.createdByMembershipId,
+      })
+      .expect(422);
+    await expect(
+      prisma.ticket.findUniqueOrThrow({
+        where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+        select: {
+          subject: true,
+          ticketNumber: true,
+          sequenceNumber: true,
+          workspaceId: true,
+          createdByMembershipId: true,
+        },
+      }),
+    ).resolves.toMatchObject({
+      subject: beforeImmutablePatch.subject,
+      ticketNumber: beforeImmutablePatch.ticketNumber,
+      sequenceNumber: beforeImmutablePatch.sequenceNumber,
+      workspaceId: beforeImmutablePatch.workspaceId,
+      createdByMembershipId: beforeImmutablePatch.createdByMembershipId,
+    });
+
+    const beforeInvalidPatch = await prisma.ticket.findUniqueOrThrow({
+      where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+      select: { subject: true, priority: true },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Partial update must not persist', priority: 'CRITICAL' })
+      .expect(422);
+    await expect(
+      prisma.ticket.findUniqueOrThrow({
+        where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+        select: { subject: true, priority: true },
+      }),
+    ).resolves.toEqual(beforeInvalidPatch);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'VPN access for finance',
+        description: null,
+        priority: 'LOW',
+        statusDefinitionId: inProgressStatus.id,
+      })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.subject).toBe('VPN access for finance');
+        expect(response.body.data.description).toBeNull();
+        expect(response.body.data.priority).toBe('LOW');
+        expect(response.body.data.statusDefinitionId).toBe(inProgressStatus.id);
+      });
+    await expect(
+      prisma.auditLog.findMany({
+        where: {
+          entityId: explicit.body.data.id,
+          action: { in: ['ticket.updated', 'ticket.status_changed'] },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: 'ticket.updated' }),
+        expect.objectContaining({ action: 'ticket.status_changed' }),
+      ]),
+    );
+
+    await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: openStatus.id }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ statusDefinitionId: waitingStatus.id }),
+    ]);
+    const raced = await prisma.ticket.findUniqueOrThrow({
+      where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+      select: { statusDefinitionId: true },
+    });
+    expect([openStatus.id, waitingStatus.id]).toContain(raced.statusDefinitionId);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: openStatus.id })
+      .expect(200);
+    await prisma.statusDefinition.update({
+      where: { id: waitingStatus.id },
+      data: { isActive: false },
+    });
+    await prisma.ticket.update({
+      where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+      data: { statusDefinitionId: waitingStatus.id },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.statusDefinitionId).toBe(waitingStatus.id);
+        expect(response.body.data.status.active).toBe(false);
+      });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: openStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: waitingStatus.id })
+      .expect(400);
+    await prisma.statusDefinition.update({
+      where: { id: waitingStatus.id },
+      data: { isActive: true },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: resolvedStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: openStatus.id })
+      .expect(200);
+
+    for (const method of ['get', 'patch', 'delete'] as const) {
+      const attack = request(app.getHttpServer())
+        [method](`/api/v1/workspaces/${workspaceA2}/tickets/${first.body.data.id}`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA2));
+      if (method === 'patch') attack.send({ subject: 'Cross workspace attack' });
+      await attack.expect(404);
+    }
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA2}/tickets/${first.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ statusDefinitionId: foreignTicketStatus.id })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceB1}/tickets/${first.body.data.id}`)
+      .set(auth(ownerBToken))
+      .set(ctx(agencyB, workspaceB1))
+      .expect(404);
+
+    const supportDepartment = await prisma.department.create({
+      data: { workspaceId: workspaceA1, name: 'Ticket Support', status: DepartmentStatus.ACTIVE },
+    });
+    const salesDepartment = await prisma.department.create({
+      data: { workspaceId: workspaceA1, name: 'Ticket Sales', status: DepartmentStatus.ACTIVE },
+    });
+    const inactiveDepartment = await prisma.department.create({
+      data: {
+        workspaceId: workspaceA1,
+        name: 'Ticket Inactive',
+        status: DepartmentStatus.INACTIVE,
+      },
+    });
+    const foreignDepartment = await prisma.department.create({
+      data: {
+        workspaceId: workspaceA2,
+        name: 'Foreign Ticket Support',
+        status: DepartmentStatus.ACTIVE,
+      },
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: adminMembershipA1.id },
+      data: { departmentId: supportDepartment.id },
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: memberMembershipA1.id },
+      data: { departmentId: salesDepartment.id },
+    });
+
+    const requesterAuditBeforeNoop = await prisma.auditLog.count({
+      where: { action: 'ticket.requester_changed' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/requester`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ requester: requesterA1 })
+      .expect(200);
+    await expect(
+      prisma.auditLog.count({ where: { action: 'ticket.requester_changed' } }),
+    ).resolves.toBe(requesterAuditBeforeNoop);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/requester`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        requester: {
+          type: 'EXTERNAL',
+          name: 'Finance Contact',
+          email: 'FINANCE@EXAMPLE.COM',
+          phone: '+1 555 0123',
+        },
+      })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.requester).toMatchObject({
+          type: 'EXTERNAL',
+          externalEmail: 'finance@example.com',
+          externalPhone: '+1 555 0123',
+        });
+      });
+    const requesterAfterExternal = await prisma.ticketRequester.findUniqueOrThrow({
+      where: { ticketId: explicit.body.data.id },
+      select: { externalName: true, externalEmail: true, externalPhone: true },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/requester`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ requester: { type: 'EXTERNAL', name: 'Invalid Replacement' } })
+      .expect(400);
+    await expect(
+      prisma.ticketRequester.findUniqueOrThrow({
+        where: { ticketId: explicit.body.data.id },
+        select: { externalName: true, externalEmail: true, externalPhone: true },
+      }),
+    ).resolves.toEqual(requesterAfterExternal);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/requester`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ requester: requesterA1 })
+      .expect(200);
+    const requesterAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'ticket.requester_changed', entityId: explicit.body.data.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(JSON.stringify(requesterAudit.metadata)).not.toContain('finance@example.com');
+    expect(JSON.stringify(requesterAudit.metadata)).not.toContain('+1 555 0123');
+
+    const assignmentAuditBeforeNoop = await prisma.auditLog.count({
+      where: { action: 'ticket.assignment_changed' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: null, assignedToMembershipId: null })
+      .expect(200);
+    await expect(
+      prisma.auditLog.count({ where: { action: 'ticket.assignment_changed' } }),
+    ).resolves.toBe(assignmentAuditBeforeNoop);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: supportDepartment.id, assignedToMembershipId: null })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.department.id).toBe(supportDepartment.id);
+        expect(response.body.data.assignedTo).toBeNull();
+      });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: supportDepartment.id, assignedToMembershipId: adminMembershipA1.id })
+      .expect(200)
+      .expect((response) => expect(response.body.data.assignedTo.id).toBe(adminMembershipA1.id));
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ assignedToMembershipId: null })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.departmentId).toBe(supportDepartment.id);
+        expect(response.body.data.assignedTo).toBeNull();
+      });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: null, assignedToMembershipId: null })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.department).toBeNull();
+        expect(response.body.data.assignedTo).toBeNull();
+      });
+    const assignmentRaceResponses = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ departmentId: supportDepartment.id, assignedToMembershipId: adminMembershipA1.id }),
+      request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ departmentId: salesDepartment.id, assignedToMembershipId: memberMembershipA1.id }),
+    ]);
+    expect(assignmentRaceResponses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const assignmentAfterRace = await prisma.ticket.findUniqueOrThrow({
+      where: { id_workspaceId: { id: explicit.body.data.id, workspaceId: workspaceA1 } },
+      select: {
+        departmentId: true,
+        assignedToMembership: { select: { departmentId: true, status: true } },
+      },
+    });
+    expect(assignmentAfterRace.assignedToMembership?.status).toBe(MembershipStatus.ACTIVE);
+    expect(assignmentAfterRace.assignedToMembership?.departmentId).toBe(
+      assignmentAfterRace.departmentId,
+    );
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ departmentId: null, assignedToMembershipId: null })
+      .expect(200);
+    for (const payload of [
+      { departmentId: null, assignedToMembershipId: adminMembershipA1.id },
+      { departmentId: foreignDepartment.id, assignedToMembershipId: null },
+      { departmentId: inactiveDepartment.id, assignedToMembershipId: null },
+      { departmentId: supportDepartment.id, assignedToMembershipId: adminMembershipA2.id },
+      { departmentId: supportDepartment.id, assignedToMembershipId: memberMembershipA1.id },
+    ]) {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${explicit.body.data.id}/assignment`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send(payload)
+        .expect(400);
+    }
+
+    const limitedMembershipA1 = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: limitedUserId, workspaceId: workspaceA1 } },
+      select: { id: true, roleId: true, departmentId: true },
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { departmentId: supportDepartment.id },
+    });
+    const scopedTicketViewerRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-scoped-viewer`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Scoped Viewer',
+        nameNormalized: 'ticket scoped viewer',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    const scopedViewPermissions = await prisma.permission.findMany({
+      where: { key: { in: ['workspace.read', 'tickets.view'] } },
+    });
+    await prisma.rolePermission.createMany({
+      data: scopedViewPermissions.map((permission) => ({
+        roleId: scopedTicketViewerRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: scopedTicketViewerRole.id },
+    });
+    const [limitedRequesterTicket, limitedDepartmentTicket, limitedHiddenTicket] =
+      await Promise.all([
+        prisma.ticket.create({
+          data: {
+            workspaceId: workspaceA1,
+            sequenceNumber: 910001,
+            ticketNumber: 'TKT-910001',
+            subject: 'Limited requester visible',
+            statusDefinitionId: openStatus.id,
+            priority: 'LOW',
+            createdByMembershipId: adminMembershipA1.id,
+          },
+          select: { id: true },
+        }),
+        prisma.ticket.create({
+          data: {
+            workspaceId: workspaceA1,
+            sequenceNumber: 910002,
+            ticketNumber: 'TKT-910002',
+            subject: 'Limited department visible',
+            statusDefinitionId: openStatus.id,
+            priority: 'LOW',
+            departmentId: supportDepartment.id,
+            createdByMembershipId: adminMembershipA1.id,
+          },
+          select: { id: true },
+        }),
+        prisma.ticket.create({
+          data: {
+            workspaceId: workspaceA1,
+            sequenceNumber: 910003,
+            ticketNumber: 'TKT-910003',
+            subject: 'Limited creator hidden',
+            statusDefinitionId: openStatus.id,
+            priority: 'LOW',
+            departmentId: salesDepartment.id,
+            createdByMembershipId: limitedMembershipA1.id,
+          },
+          select: { id: true },
+        }),
+      ]);
+    await prisma.ticketRequester.createMany({
+      data: [
+        {
+          workspaceId: workspaceA1,
+          ticketId: limitedRequesterTicket.id,
+          type: 'INTERNAL',
+          internalMembershipId: limitedMembershipA1.id,
+        },
+        {
+          workspaceId: workspaceA1,
+          ticketId: limitedDepartmentTicket.id,
+          type: 'EXTERNAL',
+          externalName: 'Department Caller',
+          externalEmail: 'department@example.com',
+        },
+        {
+          workspaceId: workspaceA1,
+          ticketId: limitedHiddenTicket.id,
+          type: 'EXTERNAL',
+          externalName: 'Hidden Caller',
+          externalEmail: 'hidden@example.com',
+        },
+      ],
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?search=Limited&page=1&pageSize=20`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        const subjects = response.body.data.items.map(
+          (ticket: { subject: string }) => ticket.subject,
+        );
+        expect(subjects).toContain('Limited requester visible');
+        expect(subjects).toContain('Limited department visible');
+        expect(subjects).not.toContain('Limited creator hidden');
+        expect(response.body.data.total).toBe(2);
+      });
+    const hiddenTicket = await prisma.ticket.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, subject: 'Limited creator hidden' },
+      select: { id: true, ticketNumber: true },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${hiddenTicket.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?search=${hiddenTicket.ticketNumber}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tickets?search=${encodeURIComponent(
+          'Limited creator hidden',
+        )}`,
+      )
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tickets?search=${encodeURIComponent(
+          'Limited department visible',
+        )}`,
+      )
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(1);
+        expect(JSON.stringify(response.body.data.items)).not.toContain('department@example.com');
+      });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: ' Public reply one ' })
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          type: 'PUBLIC_REPLY',
+          body: 'Public reply one',
+          author: { displayName: 'Admin A', inactive: false },
+        });
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: '<script>alert("x")</script>' })
+      .expect(201);
+    await Promise.all(
+      Array.from({ length: 5 }, (_value, index) =>
+        request(app.getHttpServer())
+          .post(
+            `/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`,
+          )
+          .set(auth(adminToken))
+          .set(ctx(agencyA, workspaceA1))
+          .send({ type: 'INTERNAL_NOTE', body: `Internal note ${index}` })
+          .expect(201),
+      ),
+    );
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(7);
+        expect(response.body.data.items.map((entry: { type: string }) => entry.type)).toContain(
+          'INTERNAL_NOTE',
+        );
+      });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(2);
+        expect(
+          response.body.data.items.every(
+            (entry: { type: string }) => entry.type === 'PUBLIC_REPLY',
+          ),
+        ).toBe(true);
+        expect(JSON.stringify(response.body.data)).not.toContain('Internal note');
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'No reply permission' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'INTERNAL_NOTE', body: 'No note permission' })
+      .expect(403);
+
+    const [
+      conversationWorkspaceReadPermission,
+      conversationTicketViewPermission,
+      ticketReplyPermission,
+      ticketNotesViewPermission,
+      ticketNotesCreatePermission,
+    ] = await Promise.all([
+      prisma.permission.findUniqueOrThrow({ where: { key: 'workspace.read' } }),
+      prisma.permission.findUniqueOrThrow({ where: { key: 'tickets.view' } }),
+      prisma.permission.findUniqueOrThrow({ where: { key: 'tickets.reply' } }),
+      prisma.permission.findUniqueOrThrow({ where: { key: 'tickets.notes.view' } }),
+      prisma.permission.findUniqueOrThrow({ where: { key: 'tickets.notes.create' } }),
+    ]);
+    const replyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-reply-only`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Reply Only',
+        nameNormalized: 'ticket reply only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: replyRole.id, permissionId: conversationWorkspaceReadPermission.id },
+        { roleId: replyRole.id, permissionId: conversationTicketViewPermission.id },
+        { roleId: replyRole.id, permissionId: ticketReplyPermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: replyRole.id },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Scoped public reply' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'INTERNAL_NOTE', body: 'Still cannot note' })
+      .expect(403);
+
+    const notesCreateRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-notes-create-only`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Notes Create Only',
+        nameNormalized: 'ticket notes create only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: notesCreateRole.id, permissionId: conversationWorkspaceReadPermission.id },
+        { roleId: notesCreateRole.id, permissionId: conversationTicketViewPermission.id },
+        { roleId: notesCreateRole.id, permissionId: ticketNotesCreatePermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: notesCreateRole.id },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'INTERNAL_NOTE', body: 'Create but cannot view' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(3);
+        expect(JSON.stringify(response.body.data)).not.toContain('Create but cannot view');
+      });
+
+    const notesViewCreateRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-notes-view-create`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Notes View Create',
+        nameNormalized: 'ticket notes view create',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: notesViewCreateRole.id, permissionId: conversationWorkspaceReadPermission.id },
+        { roleId: notesViewCreateRole.id, permissionId: conversationTicketViewPermission.id },
+        { roleId: notesViewCreateRole.id, permissionId: ticketNotesViewPermission.id },
+        { roleId: notesViewCreateRole.id, permissionId: ticketNotesCreatePermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: notesViewCreateRole.id },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(9);
+        expect(JSON.stringify(response.body.data)).toContain('Create but cannot view');
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedHiddenTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'INTERNAL_NOTE', body: 'Hidden ticket note' })
+      .expect(404);
+    const latestConversationAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'ticket.internal_note_added', entityId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(JSON.stringify(latestConversationAudit.metadata)).not.toContain(
+      'Create but cannot view',
+    );
+    expect(latestConversationAudit.action).toBe('ticket.internal_note_added');
+
+    await request(app.getHttpServer())
+      .patch(
+        `/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation/${latestConversationAudit.entityId}`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ body: 'Edited history' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .delete(
+        `/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation/${latestConversationAudit.entityId}`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'BANANA', body: 'Unknown type' })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: '   ' })
+      .expect(400);
+    const maxConversationBody = 'அ'.repeat(12_000);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: maxConversationBody })
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data.body).toBe(maxConversationBody);
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'x'.repeat(12_001) })
+      .expect(422);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        id: '00000000-0000-4000-8000-00000000feed',
+        workspaceId: workspaceA2,
+        ticketId: limitedHiddenTicket.id,
+        authorMembershipId: limitedMembershipA1.id,
+        createdAt: '2000-01-01T00:00:00.000Z',
+        type: 'PUBLIC_REPLY',
+        body: 'Client field injection',
+      })
+      .expect(422);
+
+    const failedAuditCount = await prisma.auditLog.count({
+      where: {
+        action: { in: ['ticket.public_reply_added', 'ticket.internal_note_added'] },
+        metadata: { path: ['ticketId'], equals: limitedRequesterTicket.id },
+      },
+    });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Rejected post audit probe' })
+      .expect(403);
+    await expect(
+      prisma.auditLog.count({
+        where: {
+          action: { in: ['ticket.public_reply_added', 'ticket.internal_note_added'] },
+          metadata: { path: ['ticketId'], equals: limitedRequesterTicket.id },
+        },
+      }),
+    ).resolves.toBe(failedAuditCount);
+
+    const notesViewRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-notes-view-only`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Notes View Only',
+        nameNormalized: 'ticket notes view only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: notesViewRole.id, permissionId: conversationWorkspaceReadPermission.id },
+        { roleId: notesViewRole.id, permissionId: conversationTicketViewPermission.id },
+        { roleId: notesViewRole.id, permissionId: ticketNotesViewPermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: notesViewRole.id },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.items.map((entry: { type: string }) => entry.type)).toContain(
+          'INTERNAL_NOTE',
+        );
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'INTERNAL_NOTE', body: 'Cannot create with notes view only' })
+      .expect(403);
+
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: notesCreateRole.id },
+    });
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation?page=1&pageSize=2`,
+      )
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(4);
+        expect(response.body.data.items).toHaveLength(2);
+        expect(
+          response.body.data.items.every(
+            (entry: { type: string }) => entry.type === 'PUBLIC_REPLY',
+          ),
+        ).toBe(true);
+      });
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation?page=2&pageSize=2`,
+      )
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.total).toBe(4);
+        expect(response.body.data.items).toHaveLength(2);
+        expect(
+          response.body.data.items.every(
+            (entry: { type: string }) => entry.type === 'PUBLIC_REPLY',
+          ),
+        ).toBe(true);
+      });
+
+    const [parallelPublic, parallelInternal] = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ type: 'PUBLIC_REPLY', body: 'Concurrent public reply' })
+        .expect(201),
+      request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+        .set(auth(adminToken))
+        .set(ctx(agencyA, workspaceA1))
+        .send({ type: 'INTERNAL_NOTE', body: 'Concurrent internal note' })
+        .expect(201),
+    ]);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        const ids = response.body.data.items.map((entry: { id: string }) => entry.id);
+        expect(ids).toContain(parallelPublic.body.data.id);
+        expect(ids).toContain(parallelInternal.body.data.id);
+      });
+
+    const deletedConversationTicket = await prisma.ticket.create({
+      data: {
+        workspaceId: workspaceA1,
+        sequenceNumber: 910099,
+        ticketNumber: 'TKT-910099',
+        subject: 'Deleted conversation ticket',
+        statusDefinitionId: openStatus.id,
+        priority: 'LOW',
+        createdByMembershipId: adminMembershipA1.id,
+        deletedAt: new Date(),
+      },
+      select: { id: true },
+    });
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${workspaceA1}/tickets/${deletedConversationTicket.id}/conversation`,
+      )
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Should not post to deleted ticket' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA2}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA2))
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA2}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA2))
+      .send({ type: 'PUBLIC_REPLY', body: 'Cross workspace conversation attack' })
+      .expect(404);
+
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: notesViewCreateRole.id, status: MembershipStatus.SUSPENDED },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        const historicalNote = response.body.data.items.find(
+          (entry: { body: string }) => entry.body === 'Create but cannot view',
+        );
+        expect(historicalNote.author.inactive).toBe(true);
+      });
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets/${limitedRequesterTicket.id}/conversation`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ type: 'PUBLIC_REPLY', body: 'Suspended author post' })
+      .expect(403);
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: notesViewCreateRole.id, status: MembershipStatus.ACTIVE },
+    });
+
+    const assignedScopedTicket = await prisma.ticket.create({
+      data: {
+        workspaceId: workspaceA1,
+        sequenceNumber: 910004,
+        ticketNumber: 'TKT-910004',
+        subject: 'Limited assignee visible',
+        statusDefinitionId: openStatus.id,
+        priority: 'LOW',
+        departmentId: supportDepartment.id,
+        assignedToMembershipId: limitedMembershipA1.id,
+        createdByMembershipId: adminMembershipA1.id,
+      },
+      select: { id: true },
+    });
+    await prisma.ticketRequester.create({
+      data: {
+        workspaceId: workspaceA1,
+        ticketId: assignedScopedTicket.id,
+        type: 'EXTERNAL',
+        externalName: 'Assigned Caller',
+        externalEmail: 'assigned@example.com',
+      },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${assignedScopedTicket.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { departmentId: salesDepartment.id },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${assignedScopedTicket.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembershipA1.id },
+      data: { roleId: limitedMembershipA1.roleId, departmentId: limitedMembershipA1.departmentId },
+    });
+
+    const limitedMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: limitedUserId, workspaceId: workspaceA1 } },
+      select: { id: true, roleId: true },
+    });
+    const ticketViewerRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-viewer`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Viewer',
+        nameNormalized: 'ticket viewer',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    const ticketViewPermissions = await prisma.permission.findMany({
+      where: { key: { in: ['workspace.read', 'tickets.view'] } },
+    });
+    const workspaceReadPermission = ticketViewPermissions.find(
+      (permission) => permission.key === 'workspace.read',
+    )!;
+    const ticketViewPermission = ticketViewPermissions.find(
+      (permission) => permission.key === 'tickets.view',
+    )!;
+    await prisma.rolePermission.createMany({
+      data: ticketViewPermissions.map((permission) => ({
+        roleId: ticketViewerRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: ticketViewerRole.id },
+    });
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Viewer cannot create' })
+      .expect(403);
+
+    const ticketCreatePermission = await prisma.permission.findUniqueOrThrow({
+      where: { key: 'tickets.create' },
+    });
+    const ticketUpdatePermission = await prisma.permission.findUniqueOrThrow({
+      where: { key: 'tickets.update' },
+    });
+    const ticketDeletePermission = await prisma.permission.findUniqueOrThrow({
+      where: { key: 'tickets.delete' },
+    });
+    const createOnlyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-create-only`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Create Only',
+        nameNormalized: 'ticket create only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: createOnlyRole.id, permissionId: workspaceReadPermission.id },
+        { roleId: createOnlyRole.id, permissionId: ticketViewPermission.id },
+        { roleId: createOnlyRole.id, permissionId: ticketCreatePermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: createOnlyRole.id },
+    });
+    const createOnlyTicket = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Create only ticket',
+        requester: { type: 'INTERNAL', membershipId: limitedMembership.id },
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        subject: 'Create only cannot assign',
+        requester: { type: 'INTERNAL', membershipId: limitedMembership.id },
+        departmentId: supportDepartment.id,
+      })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${createOnlyTicket.body.data.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Creator cannot update without permission' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tickets/${createOnlyTicket.body.data.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+
+    const updateOnlyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-update-only`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Update Only',
+        nameNormalized: 'ticket update only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: updateOnlyRole.id, permissionId: workspaceReadPermission.id },
+        { roleId: updateOnlyRole.id, permissionId: ticketViewPermission.id },
+        { roleId: updateOnlyRole.id, permissionId: ticketUpdatePermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: updateOnlyRole.id },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${createOnlyTicket.body.data.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Updated by update-only role' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tickets`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Update-only cannot create' })
+      .expect(403);
+
+    const deleteOnlyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:ticket-delete-only`,
+        workspaceId: workspaceA1,
+        name: 'Ticket Delete Only',
+        nameNormalized: 'ticket delete only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: [
+        { roleId: deleteOnlyRole.id, permissionId: workspaceReadPermission.id },
+        { roleId: deleteOnlyRole.id, permissionId: ticketViewPermission.id },
+        { roleId: deleteOnlyRole.id, permissionId: ticketDeletePermission.id },
+      ],
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: deleteOnlyRole.id },
+    });
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tickets/${createOnlyTicket.body.data.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: limitedMembership.roleId },
+    });
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/workspaces/${workspaceA1}/tickets/${first.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets/${first.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(404);
+    await expect(
+      prisma.ticket.findUniqueOrThrow({
+        where: { id_workspaceId: { id: first.body.data.id, workspaceId: workspaceA1 } },
+        select: { deletedAt: true, deletedByMembershipId: true },
+      }),
+    ).resolves.toMatchObject({
+      deletedAt: expect.any(Date),
+      deletedByMembershipId: expect.any(String),
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tickets/${first.body.data.id}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ subject: 'Deleted ticket cannot update' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?search=${first.body.data.ticketNumber}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => expect(response.body.data.total).toBe(0));
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/tickets?priority=HIGH`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) =>
+        expect(
+          response.body.data.items.some(
+            (ticket: { id: string }) => ticket.id === first.body.data.id,
+          ),
+        ).toBe(false),
+      );
+  });
+
   it('keeps legacy project routes compatible while using PROJECT StatusDefinition authority', async () => {
     const created = await request(app.getHttpServer())
       .post('/api/v1/projects')
@@ -667,6 +2668,77 @@ describe('Phase 6.3A shared statuses integration', () => {
       .set(auth(adminToken))
       .set(ctx(agencyA, workspaceA1))
       .expect(200);
+
+    const limitedMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: limitedUserId, workspaceId: workspaceA1 } },
+      select: { id: true, roleId: true },
+    });
+    const legacyOnlyRole = await prisma.role.create({
+      data: {
+        key: `workspace:${workspaceA1}:legacy-project-permissions-only`,
+        workspaceId: workspaceA1,
+        name: 'Legacy Project Permissions Only',
+        nameNormalized: 'legacy project permissions only',
+        scope: RoleScope.WORKSPACE,
+        isSystem: false,
+      },
+    });
+    const legacyPermissions = await prisma.permission.findMany({
+      where: {
+        key: {
+          in: [
+            'workspace.read',
+            'project.read',
+            'project.create',
+            'project.update',
+            'project.delete',
+          ],
+        },
+      },
+    });
+    await prisma.rolePermission.createMany({
+      data: legacyPermissions.map((permission) => ({
+        roleId: legacyOnlyRole.id,
+        permissionId: permission.id,
+      })),
+    });
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: legacyOnlyRole.id },
+    });
+    await request(app.getHttpServer())
+      .get('/api/v1/projects')
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/api/v1/projects')
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Legacy Alias Create Bypass' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/projects/${created.body.data.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ name: 'Legacy Alias Update Bypass' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/projects/${created.body.data.id}/status`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: created.body.data.statusDefinitionId })
+      .expect(403);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/projects/${created.body.data.id}`)
+      .set(auth(limitedToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(403);
+    await prisma.workspaceMembership.update({
+      where: { id: limitedMembership.id },
+      data: { roleId: limitedMembership.roleId },
+    });
+
     await request(app.getHttpServer())
       .patch(`/api/v1/projects/${created.body.data.id}`)
       .set(auth(adminToken))
@@ -1990,6 +4062,237 @@ describe('Phase 6.3A shared statuses integration', () => {
     expect(terminalAfterLink.body.data.calculatedProgress).toBeLessThan(100);
   });
 
+  it('proves a coherent Phase 8 Project lifecycle across Project, Task, Files, Activity, and Reports APIs', async () => {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
+    const ownerMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: admin.id, workspaceId: workspaceA1 } },
+    });
+    const memberUser = await prisma.user.findUniqueOrThrow({
+      where: { email: 'member-a@zeaplay.test' },
+    });
+    const memberMembership = await prisma.workspaceMembership.findUniqueOrThrow({
+      where: { userId_workspaceId: { userId: memberUser.id, workspaceId: workspaceA1 } },
+    });
+    const projectDefaultStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'PROJECT', isDefault: true },
+    });
+    const completedProjectStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'PROJECT', name: 'Completed' },
+    });
+    const openTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', isDefault: true },
+    });
+    const reviewTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: {
+        workspaceId: workspaceA1,
+        entityType: 'TASK',
+        isDefault: false,
+        isTerminal: false,
+        isActive: true,
+      },
+    });
+    const completedTaskStatus = await prisma.statusDefinition.findFirstOrThrow({
+      where: { workspaceId: workspaceA1, entityType: 'TASK', name: 'Completed' },
+    });
+    const tag = await prisma.workspaceTag.create({
+      data: {
+        workspaceId: workspaceA1,
+        name: 'Lifecycle',
+        nameNormalized: `lifecycle-${Date.now()}`,
+        color: '#2563EB',
+        createdById: admin.id,
+      },
+    });
+
+    const project = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        name: 'Phase 8.9 Lifecycle Project',
+        visibility: 'RESTRICTED',
+        ownerMembershipId: ownerMembership.id,
+        statusDefinitionId: projectDefaultStatus.id,
+        memberMembershipIds: [memberMembership.id],
+      })
+      .expect(201);
+    const projectId = project.body.data.id as string;
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA2}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA2))
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceB1}/projects/${projectId}`)
+      .set(auth(ownerBToken))
+      .set(ctx(agencyB, workspaceB1))
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tags/add`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ tagIds: [tag.id] })
+      .expect(201);
+
+    const openTask = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        title: 'Lifecycle open task',
+        statusDefinitionId: openTaskStatus.id,
+        estimatedMinutes: 30,
+      })
+      .expect(201);
+    const completedTask = await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        title: 'Lifecycle completed task',
+        statusDefinitionId: completedTaskStatus.id,
+        estimatedMinutes: 60,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/tasks`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ taskIds: [openTask.body.data.id, completedTask.body.data.id] })
+      .expect(201)
+      .expect((response) =>
+        expect(response.body.data).toMatchObject({
+          requestedCount: 2,
+          changedCount: 2,
+          unchangedCount: 0,
+        }),
+      );
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.visibility).toBe('RESTRICTED');
+        expect(response.body.data.memberCount).toBeGreaterThanOrEqual(1);
+        expect(response.body.data.calculatedProgress).toBe(50);
+        expect(response.body.data.effectiveProgress).toBe(50);
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${openTask.body.data.id}/kanban-position`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: reviewTaskStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${openTask.body.data.id}/schedule`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({
+        plannedStartAt: '2026-10-01T00:00:00.000Z',
+        dueAt: '2026-10-05T00:00:00.000Z',
+      })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/attachments/url`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ url: 'https://example.com/lifecycle-brief', displayName: 'Lifecycle Brief' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/attachments`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.items).toHaveLength(1);
+        expect(response.body.data.items[0].type).toBe(AttachmentType.URL);
+      });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(400);
+    await expect(
+      prisma.task.findUniqueOrThrow({
+        where: { id: openTask.body.data.id },
+        select: { statusDefinitionId: true },
+      }),
+    ).resolves.toMatchObject({ statusDefinitionId: reviewTaskStatus.id });
+
+    const reportBeforeCompletion = await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/reports`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200);
+    expect(reportBeforeCompletion.body.data.kpis).toMatchObject({
+      totalTasks: 2,
+      openTasks: 1,
+      completedTasks: 1,
+      estimatedMinutes: 90,
+    });
+    expect(reportBeforeCompletion.body.data.progress).toMatchObject({
+      calculatedProgress: 50,
+      manualProgressPercent: null,
+      effectiveProgress: 50,
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/tasks/${openTask.body.data.id}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedTaskStatus.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/status`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .send({ statusDefinitionId: completedProjectStatus.id })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.status.terminal).toBe(true);
+        expect(response.body.data.calculatedProgress).toBe(100);
+      });
+
+    await expect(
+      prisma.task.findMany({
+        where: { id: { in: [openTask.body.data.id, completedTask.body.data.id] } },
+        select: { statusDefinitionId: true },
+      }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        { statusDefinitionId: completedTaskStatus.id },
+        { statusDefinitionId: completedTaskStatus.id },
+      ]),
+    );
+
+    await request(app.getHttpServer())
+      .get(`/api/v1/workspaces/${workspaceA1}/projects/${projectId}/activity`)
+      .set(auth(adminToken))
+      .set(ctx(agencyA, workspaceA1))
+      .expect(200)
+      .expect((response) => {
+        const actions = response.body.data.items.map((item: { action: string }) => item.action);
+        expect(actions).toEqual(
+          expect.arrayContaining([
+            'project.created',
+            'project.tag_added',
+            'project.task_linked',
+            'project.attachment_url_added',
+            'project.status_changed',
+          ]),
+        );
+      });
+  });
+
   it('keeps Project membership from becoming Task access or link authority', async () => {
     const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin-a@zeaplay.test' } });
     const member = await prisma.user.findUniqueOrThrow({
@@ -2383,6 +4686,19 @@ async function seedRoles() {
     'projects.files.remove',
     'projects.files.download',
     'projects.activity.view',
+    'projects.reports.view',
+    'tickets.view',
+    'tickets.view_all',
+    'tickets.create',
+    'tickets.update',
+    'tickets.delete',
+    'tickets.assign',
+    'tickets.manage_requester',
+    'tickets.reply',
+    'tickets.notes.view',
+    'tickets.notes.create',
+    'tickets.sla.view',
+    'tickets.sla.manage',
     'tags.view',
     'tags.create',
     'tags.update',
@@ -2461,6 +4777,13 @@ async function resetDatabase() {
     prisma.projectAttachment.deleteMany(),
     prisma.projectTag.deleteMany(),
     prisma.projectMember.deleteMany(),
+    prisma.ticketSlaState.deleteMany(),
+    prisma.ticketSlaPauseStatus.deleteMany(),
+    prisma.ticketSlaRule.deleteMany(),
+    prisma.ticketSlaPolicy.deleteMany(),
+    prisma.ticketConversationEntry.deleteMany(),
+    prisma.ticketRequester.deleteMany(),
+    prisma.ticket.deleteMany(),
     prisma.attachment.deleteMany(),
     prisma.task.deleteMany(),
     prisma.taskTemplate.deleteMany(),
@@ -2473,6 +4796,7 @@ async function resetDatabase() {
     prisma.processingJob.deleteMany(),
     prisma.asset.deleteMany(),
     prisma.project.deleteMany(),
+    prisma.workspaceTicketCounter.deleteMany(),
     prisma.workspaceMemberCapacity.deleteMany(),
     prisma.workspaceMembership.deleteMany(),
     prisma.department.deleteMany(),

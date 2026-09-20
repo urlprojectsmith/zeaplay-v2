@@ -2,6 +2,8 @@ export const ASSET_PROCESSING_QUEUE = 'asset-processing';
 export const ASSET_PROCESSING_JOB_TYPE = 'asset.metadata';
 export const TASK_RECURRENCE_QUEUE = 'task-recurrence';
 export const TASK_RECURRENCE_DISPATCH_JOB_TYPE = 'task.recurrence.dispatch';
+export const TICKET_SLA_QUEUE = 'ticket-sla';
+export const TICKET_SLA_SCAN_JOB_TYPE = 'ticket.sla.scan';
 
 export const FOUNDATION_QUEUES = [
   'email',
@@ -15,6 +17,7 @@ export const FOUNDATION_QUEUES = [
   'files',
   ASSET_PROCESSING_QUEUE,
   TASK_RECURRENCE_QUEUE,
+  TICKET_SLA_QUEUE,
 ] as const;
 
 export type FoundationQueueName = (typeof FOUNDATION_QUEUES)[number];

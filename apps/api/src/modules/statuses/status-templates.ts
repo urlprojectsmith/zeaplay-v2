@@ -35,9 +35,9 @@ export const defaultStatusTemplates: Record<StatusEntityType, StatusTemplate[]> 
   ],
   TICKET: [
     { name: 'New', color: '#64748B', category: StatusCategory.TODO, isDefault: true },
-    { name: 'Assigned', color: '#0891B2', category: StatusCategory.TODO },
+    { name: 'Open', color: '#0891B2', category: StatusCategory.TODO },
     { name: 'In Progress', color: '#2563EB', category: StatusCategory.IN_PROGRESS },
-    { name: 'Waiting', color: '#D97706', category: StatusCategory.REVIEW },
+    { name: 'Waiting on Requester', color: '#D97706', category: StatusCategory.REVIEW },
     { name: 'Resolved', color: '#16A34A', category: StatusCategory.COMPLETED, isTerminal: true },
     { name: 'Closed', color: '#475569', category: StatusCategory.COMPLETED, isTerminal: true },
   ],

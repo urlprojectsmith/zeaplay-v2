@@ -3,14 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LayoutDashboard } from 'lucide-react';
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogTrigger,
-  TooltipProvider,
-} from '@zea-play/ui';
+import { Button, Dialog, DialogContent, DialogTitle, DialogTrigger } from '@zea-play/ui';
 import { LanguageProvider, useLanguage } from '../contexts/language-provider';
 import { Providers } from '../contexts/providers';
 import { ThemeProvider, useTheme } from '../contexts/theme-provider';
@@ -22,11 +15,19 @@ import { canShowFeature, dashboardConfigs } from '../components/navigation/navig
 import { useSessionStore, type SessionAgency } from '../stores/session';
 
 const replace = vi.fn();
+const listWorkspaceRoles = vi.fn();
 let mockedPathname = '/workspace/dashboard';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace }),
   usePathname: () => mockedPathname,
+}));
+
+vi.mock('../services/workspace-roles', () => ({
+  rolesKeys: {
+    all: (workspaceId: string | null) => ['workspace', workspaceId, 'roles'],
+  },
+  listWorkspaceRoles: (...args: unknown[]) => listWorkspaceRoles(...args),
 }));
 
 function ThemeProbe() {
@@ -123,6 +124,22 @@ describe('phase 5 foundations', () => {
     document.documentElement.style.removeProperty('--accent');
     mockedPathname = '/workspace/dashboard';
     replace.mockClear();
+    listWorkspaceRoles.mockReset();
+    listWorkspaceRoles.mockResolvedValue([
+      {
+        id: 'admin',
+        key: 'admin',
+        name: 'Admin',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [{ id: 'permission-gamification-view', key: 'gamification.view' }],
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
     vi.unstubAllGlobals();
     useSessionStore.setState({
       accessToken: null,
@@ -327,17 +344,11 @@ describe('phase 5 foundations', () => {
       selectedWorkspaceId: 'workspace-1',
     });
     render(
-      <ThemeProvider>
-        <LanguageProvider>
-          <BrandProvider>
-            <TooltipProvider>
-              <DashboardRouteChrome scope="workspace">
-                <p>workspace content</p>
-              </DashboardRouteChrome>
-            </TooltipProvider>
-          </BrandProvider>
-        </LanguageProvider>
-      </ThemeProvider>,
+      <Providers>
+        <DashboardRouteChrome scope="workspace">
+          <p>workspace content</p>
+        </DashboardRouteChrome>
+      </Providers>,
     );
     fireEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
     await waitFor(() => expect(localStorage.getItem('zea-play-sidebar-collapsed')).toBe('true'));
@@ -353,22 +364,78 @@ describe('phase 5 foundations', () => {
       selectedWorkspaceId: 'workspace-1',
     });
     render(
-      <ThemeProvider>
-        <LanguageProvider>
-          <BrandProvider>
-            <TooltipProvider>
-              <DashboardRouteChrome scope="workspace">
-                <p>workspace content</p>
-              </DashboardRouteChrome>
-            </TooltipProvider>
-          </BrandProvider>
-        </LanguageProvider>
-      </ThemeProvider>,
+      <Providers>
+        <DashboardRouteChrome scope="workspace">
+          <p>workspace content</p>
+        </DashboardRouteChrome>
+      </Providers>,
     );
     fireEvent.click(screen.getByRole('button', { name: /open navigation/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /close navigation/i }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('requires gamification.view before showing Gamification navigation', async () => {
+    useSessionStore.setState({
+      hydrated: true,
+      accessToken: 'token',
+      user: { id: 'user-1', email: 'owner@zeaplay.test' },
+      agencies,
+      selectedAgencyId: 'agency-1',
+      selectedWorkspaceId: 'workspace-1',
+    });
+    listWorkspaceRoles.mockResolvedValueOnce([
+      {
+        id: 'admin',
+        key: 'admin',
+        name: 'Admin',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [],
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    const { unmount } = render(
+      <Providers>
+        <DashboardRouteChrome scope="workspace">
+          <p>workspace content</p>
+        </DashboardRouteChrome>
+      </Providers>,
+    );
+
+    await waitFor(() => expect(listWorkspaceRoles).toHaveBeenCalledWith('workspace-1'));
+    expect(screen.queryByRole('link', { name: /gamification/i })).not.toBeInTheDocument();
+    unmount();
+
+    listWorkspaceRoles.mockResolvedValueOnce([
+      {
+        id: 'admin',
+        key: 'admin',
+        name: 'Admin',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [{ id: 'permission-gamification-view', key: 'gamification.view' }],
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    render(
+      <Providers>
+        <DashboardRouteChrome scope="workspace">
+          <p>workspace content</p>
+        </DashboardRouteChrome>
+      </Providers>,
+    );
+
+    expect(await screen.findByRole('link', { name: /gamification/i })).toBeInTheDocument();
   });
 
   it('renders button variants and dialog keyboard close behavior', async () => {

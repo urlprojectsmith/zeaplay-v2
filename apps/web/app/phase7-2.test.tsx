@@ -9,6 +9,10 @@ import {
   WorkspaceProjectDetailPage,
   WorkspaceProjectsPage,
 } from '../components/workspace/projects/WorkspaceProjectsPage';
+import {
+  WorkspaceTicketDetailPage,
+  WorkspaceTicketsPage,
+} from '../components/workspace/tickets/WorkspaceTicketsPage';
 import { toggleRelationshipSelection } from '../components/workspace/tasks/AllTasksBrowser';
 import { apiClient } from '../services/api';
 import type { StatusEntityType, WorkspaceStatusDefinition } from '../services/workspace-statuses';
@@ -82,6 +86,19 @@ const removeWorkspaceProjectTags = vi.fn();
 const addWorkspaceProjectMembers = vi.fn();
 const removeWorkspaceProjectMember = vi.fn();
 const deleteWorkspaceProject = vi.fn();
+const listWorkspaceTickets = vi.fn();
+const getWorkspaceTicket = vi.fn();
+const createWorkspaceTicket = vi.fn();
+const updateWorkspaceTicket = vi.fn();
+const updateWorkspaceTicketStatus = vi.fn();
+const updateWorkspaceTicketRequester = vi.fn();
+const updateWorkspaceTicketAssignment = vi.fn();
+const deleteWorkspaceTicket = vi.fn();
+const listWorkspaceTicketConversation = vi.fn();
+const createWorkspaceTicketConversationEntry = vi.fn();
+const listWorkspaceTicketAttachments = vi.fn();
+const getWorkspaceTicketActivity = vi.fn();
+const getWorkspaceTicketSla = vi.fn();
 const listWorkspaceUsers = vi.fn();
 const listDepartments = vi.fn();
 const listWorkspaceStatuses = vi.fn();
@@ -225,6 +242,31 @@ vi.mock('../services/workspace-projects', async () => {
     addWorkspaceProjectMembers: (...args: unknown[]) => addWorkspaceProjectMembers(...args),
     removeWorkspaceProjectMember: (...args: unknown[]) => removeWorkspaceProjectMember(...args),
     deleteWorkspaceProject: (...args: unknown[]) => deleteWorkspaceProject(...args),
+  };
+});
+
+vi.mock('../services/workspace-tickets', async () => {
+  const actual = await vi.importActual<typeof import('../services/workspace-tickets')>(
+    '../services/workspace-tickets',
+  );
+  return {
+    ...actual,
+    listWorkspaceTickets: (...args: unknown[]) => listWorkspaceTickets(...args),
+    getWorkspaceTicket: (...args: unknown[]) => getWorkspaceTicket(...args),
+    createWorkspaceTicket: (...args: unknown[]) => createWorkspaceTicket(...args),
+    updateWorkspaceTicket: (...args: unknown[]) => updateWorkspaceTicket(...args),
+    updateWorkspaceTicketStatus: (...args: unknown[]) => updateWorkspaceTicketStatus(...args),
+    updateWorkspaceTicketRequester: (...args: unknown[]) => updateWorkspaceTicketRequester(...args),
+    updateWorkspaceTicketAssignment: (...args: unknown[]) =>
+      updateWorkspaceTicketAssignment(...args),
+    deleteWorkspaceTicket: (...args: unknown[]) => deleteWorkspaceTicket(...args),
+    listWorkspaceTicketConversation: (...args: unknown[]) =>
+      listWorkspaceTicketConversation(...args),
+    createWorkspaceTicketConversationEntry: (...args: unknown[]) =>
+      createWorkspaceTicketConversationEntry(...args),
+    listWorkspaceTicketAttachments: (...args: unknown[]) => listWorkspaceTicketAttachments(...args),
+    getWorkspaceTicketActivity: (...args: unknown[]) => getWorkspaceTicketActivity(...args),
+    getWorkspaceTicketSla: (...args: unknown[]) => getWorkspaceTicketSla(...args),
   };
 });
 
@@ -467,6 +509,18 @@ describe('Phase 7.2 task creation experience', () => {
     addWorkspaceProjectMembers.mockResolvedValue({ requestedCount: 1, changedCount: 1 });
     removeWorkspaceProjectMember.mockResolvedValue({ changedCount: 1 });
     deleteWorkspaceProject.mockResolvedValue(projectFixture());
+    listWorkspaceTicketAttachments.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    });
+    getWorkspaceTicketActivity.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    getWorkspaceTicketSla.mockResolvedValue({
+      ticketId: 'ticket-1',
+      firstResponse: { state: 'NOT_CONFIGURED', dueAt: null, breachedAt: null, completedAt: null },
+      resolution: { state: 'NOT_CONFIGURED', dueAt: null, breachedAt: null, completedAt: null },
+    });
     createTaskMock.mockResolvedValue({ id: 'task-1', title: 'Draft brief' });
     createSubtaskMock.mockResolvedValue(taskFixture({ id: 'task-child', title: 'Child task' }));
     addWorkspaceTaskBlockedBy.mockResolvedValue({
@@ -848,6 +902,308 @@ describe('Phase 7.2 task creation experience', () => {
 
     await waitFor(() => expect(createWorkspaceProject).toHaveBeenCalled());
     expect(routerPush).toHaveBeenCalledWith('/workspace/projects/project-1');
+  });
+
+  it('serves the minimal Ticket list/detail UI with workspace-scoped queries and permission actions', async () => {
+    const ticket = ticketFixture();
+    listWorkspaceTickets.mockResolvedValue({ items: [ticket], page: 1, pageSize: 20, total: 1 });
+    getWorkspaceTicket.mockResolvedValue(ticket);
+    createWorkspaceTicket.mockResolvedValue(ticket);
+    updateWorkspaceTicket.mockResolvedValue(ticketFixture({ subject: 'Login fixed' }));
+    updateWorkspaceTicketStatus.mockResolvedValue(
+      ticketFixture({ statusDefinitionId: 'status-review' }),
+    );
+    updateWorkspaceTicketRequester.mockResolvedValue(
+      ticketFixture({ requester: { id: 'requester-2', type: 'EXTERNAL', displayName: 'Uma' } }),
+    );
+    updateWorkspaceTicketAssignment.mockResolvedValue(
+      ticketFixture({
+        departmentId: 'department-1',
+        department: { id: 'department-1', name: 'Design', status: 'ACTIVE' },
+        assignedToMembershipId: 'membership-a',
+        assignedTo: {
+          id: 'membership-a',
+          status: 'ACTIVE',
+          departmentId: 'department-1',
+          user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' },
+        },
+      }),
+    );
+    deleteWorkspaceTicket.mockResolvedValue({ id: ticket.id, deleted: true });
+    listWorkspaceTicketConversation.mockResolvedValue({
+      items: [
+        {
+          id: 'conversation-public-1',
+          workspaceId: 'workspace-1',
+          ticketId: ticket.id,
+          type: 'PUBLIC_REPLY',
+          body: '<script>alert("x")</script>\nPlain update',
+          author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+          createdAt: isoDate,
+        },
+        {
+          id: 'conversation-note-1',
+          workspaceId: 'workspace-1',
+          ticketId: ticket.id,
+          type: 'INTERNAL_NOTE',
+          body: 'Internal note body',
+          author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+          createdAt: isoDate,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    });
+    createWorkspaceTicketConversationEntry.mockResolvedValue({
+      id: 'conversation-public-2',
+      workspaceId: 'workspace-1',
+      ticketId: ticket.id,
+      type: 'PUBLIC_REPLY',
+      body: 'Follow up',
+      author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+      createdAt: isoDate,
+    });
+
+    currentPathname = '/workspace/tickets';
+    const listRender = renderWithProviders(<WorkspaceTicketsPage />);
+
+    await screen.findByText('TKT-000001');
+    fireEvent.change(screen.getByLabelText('Search Tickets'), { target: { value: 'TKT-000001' } });
+    await waitFor(() =>
+      expect(listWorkspaceTickets).toHaveBeenLastCalledWith(
+        'workspace-1',
+        expect.objectContaining({ search: 'TKT-000001', page: 1, pageSize: 20 }),
+      ),
+    );
+    await selectSelectOption('Status', 'Review');
+    await selectSelectOption('Priority', 'High');
+    await waitFor(() =>
+      expect(listWorkspaceTickets).toHaveBeenLastCalledWith(
+        'workspace-1',
+        expect.objectContaining({
+          search: 'TKT-000001',
+          statusDefinitionId: 'status-review',
+          priority: 'HIGH',
+          page: 1,
+          pageSize: 20,
+        }),
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /My Assigned/i }));
+    await waitFor(() =>
+      expect(listWorkspaceTickets).toHaveBeenLastCalledWith(
+        'workspace-1',
+        expect.objectContaining({
+          queue: 'MY_ASSIGNED',
+          search: 'TKT-000001',
+          statusDefinitionId: 'status-review',
+          priority: 'HIGH',
+          page: 1,
+          pageSize: 20,
+        }),
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear Filters' }));
+    await waitFor(() =>
+      expect(listWorkspaceTickets).toHaveBeenLastCalledWith(
+        'workspace-1',
+        expect.objectContaining({ queue: 'MY_ASSIGNED', page: 1, pageSize: 20 }),
+      ),
+    );
+    const clearedParams = listWorkspaceTickets.mock.calls.at(-1)?.[1] ?? {};
+    expect(clearedParams).not.toHaveProperty('search');
+    expect(clearedParams).not.toHaveProperty('statusDefinitionId');
+    expect(clearedParams).not.toHaveProperty('priority');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Ticket' }));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Login is failing' } });
+    await waitFor(() => expect(listWorkspaceUsers).toHaveBeenCalled());
+    await selectSelectOption('Requester', 'Anya');
+    await selectSelectOption('Department', 'Design');
+    await waitFor(() =>
+      expect(listWorkspaceUsers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: 'workspace-1',
+          status: 'ACTIVE',
+          departmentId: 'department-1',
+          page: 1,
+          pageSize: 20,
+        }),
+      ),
+    );
+    await selectSelectOption('Assigned To', 'Anya');
+    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+    await waitFor(() => expect(createWorkspaceTicket).toHaveBeenCalled());
+    expect(createWorkspaceTicket).toHaveBeenCalledWith(
+      'workspace-1',
+      expect.objectContaining({
+        requester: { type: 'INTERNAL', membershipId: 'membership-a' },
+        departmentId: 'department-1',
+        assignedToMembershipId: 'membership-a',
+      }),
+    );
+    expect(routerPush).toHaveBeenCalledWith('/workspace/tickets/ticket-1');
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+    await waitFor(() =>
+      expect(listWorkspaceTickets).toHaveBeenLastCalledWith(
+        'workspace-2',
+        expect.objectContaining({
+          page: 1,
+          pageSize: 20,
+          sortBy: 'createdAt',
+          sortDirection: 'desc',
+        }),
+      ),
+    );
+    expect(screen.getByLabelText('Search Tickets')).toHaveValue('');
+    listRender.unmount();
+
+    currentPathname = '/workspace/tickets/ticket-1';
+    currentSearchParams = new URLSearchParams('tab=conversation');
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-1' });
+    });
+    const detailRender = renderWithProviders(<WorkspaceTicketDetailPage ticketId="ticket-1" />);
+    await screen.findByRole('heading', { name: 'Login is failing' });
+    await screen.findByText(/Plain update/);
+    await waitFor(() => expect(listWorkspaceTicketConversation).toHaveBeenCalled());
+    expect(getWorkspaceTicketSla).not.toHaveBeenCalled();
+    expect(getWorkspaceTicketActivity).not.toHaveBeenCalled();
+    expect(screen.getAllByText(/Anya/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/<script>alert\("x"\)<\/script>/)).toBeInTheDocument();
+    expect(screen.getAllByText('Internal Note').length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText('Public Reply'), { target: { value: 'Follow up' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Post Reply' }));
+    await waitFor(() => expect(createWorkspaceTicketConversationEntry).toHaveBeenCalled());
+    expect(createWorkspaceTicketConversationEntry).toHaveBeenCalledWith('workspace-1', 'ticket-1', {
+      type: 'PUBLIC_REPLY',
+      body: 'Follow up',
+    });
+    detailRender.unmount();
+    currentSearchParams = new URLSearchParams();
+    listWorkspaceTicketConversation.mockClear();
+    listWorkspaceTicketAttachments.mockClear();
+    getWorkspaceTicketActivity.mockClear();
+    getWorkspaceTicketSla.mockClear();
+    renderWithProviders(<WorkspaceTicketDetailPage ticketId="ticket-1" />);
+    await screen.findByRole('heading', { name: 'Login is failing' });
+    expect(screen.getByRole('tabpanel')).toHaveAttribute(
+      'aria-labelledby',
+      'ticket-detail-tab-overview',
+    );
+    await waitFor(() =>
+      expect(getWorkspaceTicketSla).toHaveBeenCalledWith('workspace-1', 'ticket-1'),
+    );
+    expect(listWorkspaceTicketConversation).not.toHaveBeenCalled();
+    expect(listWorkspaceTicketAttachments).not.toHaveBeenCalled();
+    expect(getWorkspaceTicketActivity).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Ticket' }));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Login fixed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateWorkspaceTicket).toHaveBeenCalled());
+    await selectSelectOption('Status', 'Review');
+    await waitFor(() => expect(updateWorkspaceTicketStatus).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Change Requester' }));
+    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+    await waitFor(() => expect(updateWorkspaceTicketRequester).toHaveBeenCalled());
+    await screen.findByRole('heading', { name: 'Login is failing' });
+    fireEvent.click(screen.getByRole('button', { name: 'Assignment' }));
+    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+    await waitFor(() => expect(updateWorkspaceTicketAssignment).toHaveBeenCalled());
+    await screen.findByRole('heading', { name: 'Login is failing' });
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Ticket' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete Ticket' }).at(-1)!);
+    await waitFor(() => expect(deleteWorkspaceTicket).toHaveBeenCalled());
+    expect(routerReplace).toHaveBeenCalledWith('/workspace/tickets');
+  });
+
+  it('keeps Ticket internal notes hidden in the conversation UI without notes.view', async () => {
+    const ticket = ticketFixture();
+    getWorkspaceTicket.mockResolvedValue(ticket);
+    listWorkspaceRoles.mockResolvedValue([
+      {
+        id: 'role-owner',
+        key: 'OWNER',
+        name: 'Owner',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [
+          {
+            id: 'permission-tickets-view',
+            key: 'tickets.view',
+            description: null,
+            createdAt: isoDate,
+          },
+          {
+            id: 'permission-tickets-notes-create',
+            key: 'tickets.notes.create',
+            description: null,
+            createdAt: isoDate,
+          },
+        ],
+        createdAt: isoDate,
+        updatedAt: isoDate,
+      },
+    ]);
+    listWorkspaceTicketConversation.mockResolvedValue({
+      items: [
+        {
+          id: 'conversation-public-1',
+          workspaceId: 'workspace-1',
+          ticketId: ticket.id,
+          type: 'PUBLIC_REPLY',
+          body: 'Visible public reply',
+          author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+          createdAt: isoDate,
+        },
+        {
+          id: 'conversation-note-1',
+          workspaceId: 'workspace-1',
+          ticketId: ticket.id,
+          type: 'INTERNAL_NOTE',
+          body: 'Hidden internal note from bad mock',
+          author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+          createdAt: isoDate,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    });
+    createWorkspaceTicketConversationEntry.mockResolvedValue({
+      id: 'conversation-note-2',
+      workspaceId: 'workspace-1',
+      ticketId: ticket.id,
+      type: 'INTERNAL_NOTE',
+      body: 'Created but still hidden',
+      author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+      createdAt: isoDate,
+    });
+
+    currentPathname = '/workspace/tickets/ticket-1';
+    currentSearchParams = new URLSearchParams('tab=conversation');
+    renderWithProviders(<WorkspaceTicketDetailPage ticketId="ticket-1" />);
+
+    await screen.findByRole('heading', { name: 'Login is failing' });
+    expect(await screen.findByText('Visible public reply')).toBeInTheDocument();
+    expect(screen.queryByText('Hidden internal note from bad mock')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Public Reply')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Internal Note'), {
+      target: { value: 'Created but still hidden' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Post Note' }));
+    await waitFor(() => expect(createWorkspaceTicketConversationEntry).toHaveBeenCalled());
+    expect(createWorkspaceTicketConversationEntry).toHaveBeenCalledWith('workspace-1', 'ticket-1', {
+      type: 'INTERNAL_NOTE',
+      body: 'Created but still hidden',
+    });
+    expect(screen.queryByText('Created but still hidden')).not.toBeInTheDocument();
+    expect(localStorage.length).toBe(0);
   });
 
   it('pushes Project tab URLs and keeps Reports gated by Project reports plus Task view permissions', async () => {
@@ -4196,6 +4552,108 @@ function mockDefaultTags() {
           description: null,
           createdAt: isoDate,
         },
+        {
+          id: 'permission-tickets-view',
+          key: 'tickets.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-create',
+          key: 'tickets.create',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-update',
+          key: 'tickets.update',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-delete',
+          key: 'tickets.delete',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-assign',
+          key: 'tickets.assign',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-manage-requester',
+          key: 'tickets.manage_requester',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-reply',
+          key: 'tickets.reply',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-notes-view',
+          key: 'tickets.notes.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-notes-create',
+          key: 'tickets.notes.create',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-claim',
+          key: 'tickets.claim',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-escalate',
+          key: 'tickets.escalate',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-sla-view',
+          key: 'tickets.sla.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-attachments-view',
+          key: 'tickets.attachments.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-attachments-add',
+          key: 'tickets.attachments.add',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-attachments-remove',
+          key: 'tickets.attachments.remove',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-activity-view',
+          key: 'tickets.activity.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-tickets-reports-view',
+          key: 'tickets.reports.view',
+          description: null,
+          createdAt: isoDate,
+        },
       ],
       createdAt: isoDate,
       updatedAt: isoDate,
@@ -4264,6 +4722,47 @@ function projectFixture(overrides: Record<string, unknown> = {}) {
     },
     memberCount: 0,
     createdById: 'admin-1',
+    createdAt: isoDate,
+    updatedAt: isoDate,
+    ...overrides,
+  };
+}
+
+function ticketFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ticket-1',
+    workspaceId: 'workspace-1',
+    sequenceNumber: 1,
+    ticketNumber: 'TKT-000001',
+    subject: 'Login is failing',
+    description: 'Cannot sign in',
+    statusDefinitionId: 'status-task',
+    status: { id: 'status-task', name: 'To Do', color: '#64748B', terminal: false, active: true },
+    priority: 'MEDIUM',
+    requester: {
+      id: 'requester-1',
+      type: 'INTERNAL',
+      internalMembershipId: 'membership-a',
+      displayName: 'Anya',
+      internalMembership: {
+        id: 'membership-a',
+        status: 'ACTIVE',
+        departmentId: null,
+        user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya', status: 'ACTIVE' },
+      },
+    },
+    departmentId: null,
+    department: null,
+    assignedToMembershipId: null,
+    assignedTo: null,
+    escalationLevel: 'NONE',
+    escalationChangedAt: null,
+    escalationChangedBy: null,
+    createdBy: {
+      id: 'membership-a',
+      status: 'ACTIVE',
+      user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' },
+    },
     createdAt: isoDate,
     updatedAt: isoDate,
     ...overrides,

@@ -195,6 +195,50 @@ enum TaskCompletionDecision {
   REJECTED
 }
 
+enum TicketRequesterType {
+  INTERNAL
+  EXTERNAL
+}
+
+enum TicketConversationEntryType {
+  PUBLIC_REPLY
+  INTERNAL_NOTE
+}
+
+enum TicketSlaBusinessMode {
+  ALWAYS
+  BUSINESS_HOURS
+}
+
+enum TicketSavedViewScope {
+  PERSONAL
+  WORKSPACE
+}
+
+enum TicketEscalationLevel {
+  NONE
+  LEVEL_1
+  LEVEL_2
+  LEVEL_3
+}
+
+enum GamificationXpEntryType {
+  EARN
+  DEDUCT
+  REVERSAL
+  ADJUSTMENT
+}
+
+enum GamificationXpSourceType {
+  TASK
+  PROJECT
+  TICKET
+  STREAK
+  ACHIEVEMENT
+  MANUAL
+  SYSTEM
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -219,29 +263,31 @@ model User {
   agencyMemberships             AgencyMembership[]
   workspaceMemberships          WorkspaceMembership[]
   refreshTokens                 RefreshToken[]
-  projects                      Project[]              @relation("ProjectCreator")
-  tasksCreated                  Task[]                 @relation("TaskCreator")
-  tasksUpdated                  Task[]                 @relation("TaskUpdater")
-  taskRecurrenceSeriesCreated   TaskRecurrenceSeries[] @relation("TaskRecurrenceSeriesCreator")
-  taskRecurrenceSeriesUpdated   TaskRecurrenceSeries[] @relation("TaskRecurrenceSeriesUpdater")
-  taskTemplatesCreated          TaskTemplate[]         @relation("TaskTemplateCreator")
-  taskTemplatesUpdated          TaskTemplate[]         @relation("TaskTemplateUpdater")
-  taskCompletionPoliciesCreated TaskCompletionPolicy[] @relation("TaskCompletionPolicyCreator")
-  taskCompletionPoliciesUpdated TaskCompletionPolicy[] @relation("TaskCompletionPolicyUpdater")
+  projects                      Project[]                 @relation("ProjectCreator")
+  tasksCreated                  Task[]                    @relation("TaskCreator")
+  tasksUpdated                  Task[]                    @relation("TaskUpdater")
+  taskRecurrenceSeriesCreated   TaskRecurrenceSeries[]    @relation("TaskRecurrenceSeriesCreator")
+  taskRecurrenceSeriesUpdated   TaskRecurrenceSeries[]    @relation("TaskRecurrenceSeriesUpdater")
+  taskTemplatesCreated          TaskTemplate[]            @relation("TaskTemplateCreator")
+  taskTemplatesUpdated          TaskTemplate[]            @relation("TaskTemplateUpdater")
+  taskCompletionPoliciesCreated TaskCompletionPolicy[]    @relation("TaskCompletionPolicyCreator")
+  taskCompletionPoliciesUpdated TaskCompletionPolicy[]    @relation("TaskCompletionPolicyUpdater")
   taskTimeEntries               TaskTimeEntry[]
-  taskDependenciesCreated       TaskDependency[]       @relation("TaskDependencyCreator")
-  taskRelatedLinksCreated       TaskRelatedTask[]      @relation("TaskRelatedTaskCreator")
-  workspaceTagsCreated          WorkspaceTag[]         @relation("WorkspaceTagCreator")
-  taskTagsCreated               TaskTag[]              @relation("TaskTagCreator")
-  projectTagsCreated            ProjectTag[]           @relation("ProjectTagCreator")
-  taskCommentsAuthored          TaskComment[]          @relation("TaskCommentAuthorUser")
+  taskDependenciesCreated       TaskDependency[]          @relation("TaskDependencyCreator")
+  taskRelatedLinksCreated       TaskRelatedTask[]         @relation("TaskRelatedTaskCreator")
+  workspaceTagsCreated          WorkspaceTag[]            @relation("WorkspaceTagCreator")
+  taskTagsCreated               TaskTag[]                 @relation("TaskTagCreator")
+  projectTagsCreated            ProjectTag[]              @relation("ProjectTagCreator")
+  taskCommentsAuthored          TaskComment[]             @relation("TaskCommentAuthorUser")
+  ticketConversationAuthored    TicketConversationEntry[] @relation("TicketConversationEntryAuthorUser")
   attachmentsCreated            Attachment[]
   taskAttachmentsAttached       TaskAttachment[]
   projectAttachmentsAttached    ProjectAttachment[]
+  ticketAttachmentsAttached     TicketAttachment[]
   assets                        Asset[]
   auditLogs                     AuditLog[]
-  agenciesCreated               Agency[]               @relation("AgencyCreator")
-  workspacesCreated             Workspace[]            @relation("WorkspaceCreator")
+  agenciesCreated               Agency[]                  @relation("AgencyCreator")
+  workspacesCreated             Workspace[]               @relation("WorkspaceCreator")
 
   @@map("users")
 }
@@ -303,6 +349,18 @@ model Workspace {
   projects                          Project[]
   projectMembers                    ProjectMember[]
   projectTags                       ProjectTag[]
+  tickets                           Ticket[]
+  ticketRequesters                  TicketRequester[]
+  ticketConversationEntries         TicketConversationEntry[]
+  ticketSlaPolicies                 TicketSlaPolicy[]
+  ticketSlaRules                    TicketSlaRule[]
+  ticketSlaPauseStatuses            TicketSlaPauseStatus[]
+  ticketSlaStates                   TicketSlaState[]
+  ticketSavedViews                  TicketSavedView[]
+  ticketAttachments                 TicketAttachment[]
+  ticketConversationAttachments     TicketConversationAttachment[]
+  ticketCounter                     WorkspaceTicketCounter?
+  gamificationXpEntries             GamificationXpEntry[]              @relation("GamificationXpEntryWorkspace")
   tasks                             Task[]
   taskRecurrenceSeries              TaskRecurrenceSeries[]
   taskTemplates                     TaskTemplate[]
@@ -365,6 +423,7 @@ model Department {
   managerMembership    WorkspaceMembership?   @relation("DepartmentManager", fields: [managerMembershipId], references: [id], onDelete: SetNull)
   members              WorkspaceMembership[]  @relation("DepartmentMembers")
   projects             Project[]
+  tickets              Ticket[]
   tasks                Task[]
   taskRecurrenceSeries TaskRecurrenceSeries[]
   taskTemplates        TaskTemplate[]
@@ -432,6 +491,7 @@ model WorkspaceMembership {
   assignedTasks                  TaskAssignee[]
   followedTasks                  TaskFollower[]
   taskComments                   TaskComment[]                      @relation("TaskCommentAuthor")
+  ticketConversationEntries      TicketConversationEntry[]          @relation("TicketConversationEntryAuthor")
   commentMentions                TaskCommentMention[]
   commentReactions               TaskCommentReaction[]
   recurrenceAssignees            TaskRecurrenceAssignee[]
@@ -453,6 +513,16 @@ model WorkspaceMembership {
   projectMemberships             ProjectMember[]                    @relation("ProjectMemberMembership")
   projectMembersAdded            ProjectMember[]                    @relation("ProjectMemberAddedBy")
   projectProgressUpdates         Project[]                          @relation("ProjectProgressUpdatedBy")
+  ticketsCreated                 Ticket[]                           @relation("TicketCreatorMembership")
+  ticketsDeleted                 Ticket[]                           @relation("TicketDeletedByMembership")
+  ticketRequesterMemberships     TicketRequester[]                  @relation("TicketRequesterMembership")
+  ticketsAssigned                Ticket[]                           @relation("TicketAssignedMembership")
+  ticketSavedViewsOwned          TicketSavedView[]                  @relation("TicketSavedViewOwner")
+  ticketSavedViewsCreated        TicketSavedView[]                  @relation("TicketSavedViewCreator")
+  ticketSavedViewsUpdated        TicketSavedView[]                  @relation("TicketSavedViewUpdater")
+  ticketEscalationsChanged       Ticket[]                           @relation("TicketEscalationChangedBy")
+  gamificationXpEntries          GamificationXpEntry[]              @relation("GamificationXpEntryTarget")
+  gamificationXpActorEntries     GamificationXpEntry[]              @relation("GamificationXpEntryActor")
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -462,6 +532,35 @@ model WorkspaceMembership {
   @@index([workspaceId, departmentId])
   @@index([userId])
   @@map("workspace_memberships")
+}
+
+model GamificationXpEntry {
+  id                String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                   @map("workspace_id") @db.Uuid
+  membershipId      String                   @map("membership_id") @db.Uuid
+  amount            Int
+  entryType         GamificationXpEntryType  @map("entry_type")
+  sourceType        GamificationXpSourceType @map("source_type")
+  sourceEvent       String                   @map("source_event") @db.VarChar(80)
+  sourceEntityId    String?                  @map("source_entity_id") @db.Uuid
+  idempotencyKey    String?                  @map("idempotency_key") @db.VarChar(160)
+  reversalOfEntryId String?                  @map("reversal_of_entry_id") @db.Uuid
+  actorMembershipId String?                  @map("actor_membership_id") @db.Uuid
+  reason            String?                  @db.VarChar(500)
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace       Workspace             @relation("GamificationXpEntryWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership      WorkspaceMembership   @relation("GamificationXpEntryTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  actorMembership WorkspaceMembership?  @relation("GamificationXpEntryActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  reversalOfEntry GamificationXpEntry?  @relation("GamificationXpEntryReversal", fields: [reversalOfEntryId], references: [id], onDelete: Restrict)
+  reversalEntries GamificationXpEntry[] @relation("GamificationXpEntryReversal")
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, membershipId, createdAt, id])
+  @@index([workspaceId, membershipId])
+  @@index([workspaceId, sourceType, sourceEvent])
+  @@index([actorMembershipId, workspaceId])
+  @@map("gamification_xp_entries")
 }
 
 model Role {
@@ -530,6 +629,8 @@ model StatusDefinition {
 
   workspace                      Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   projects                       Project[]
+  tickets                        Ticket[]
+  ticketSlaPauseStatuses         TicketSlaPauseStatus[]
   tasks                          Task[]
   taskKanbanColumnSettings       TaskKanbanColumnSetting[]
   taskRecurrenceSeries           TaskRecurrenceSeries[]
@@ -647,6 +748,231 @@ model ProjectMember {
   @@index([workspaceId, projectId])
   @@index([workspaceId, workspaceMembershipId])
   @@map("project_members")
+}
+
+model WorkspaceTicketCounter {
+  workspaceId String   @id @map("workspace_id") @db.Uuid
+  lastNumber  Int      @default(0) @map("last_number")
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@map("workspace_ticket_counters")
+}
+
+model Ticket {
+  id                              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                     String                @map("workspace_id") @db.Uuid
+  sequenceNumber                  Int                   @map("sequence_number")
+  ticketNumber                    String                @map("ticket_number") @db.VarChar(16)
+  subject                         String                @db.VarChar(200)
+  description                     String?               @db.VarChar(4000)
+  statusDefinitionId              String                @map("status_definition_id") @db.Uuid
+  priority                        TaskPriority          @default(MEDIUM)
+  departmentId                    String?               @map("department_id") @db.Uuid
+  assignedToMembershipId          String?               @map("assigned_to_membership_id") @db.Uuid
+  createdByMembershipId           String?               @map("created_by_membership_id") @db.Uuid
+  escalationLevel                 TicketEscalationLevel @default(NONE) @map("escalation_level")
+  escalationChangedAt             DateTime?             @map("escalation_changed_at") @db.Timestamptz(6)
+  escalationChangedByMembershipId String?               @map("escalation_changed_by_membership_id") @db.Uuid
+  escalationLastReason            String?               @map("escalation_last_reason") @db.VarChar(500)
+  deletedAt                       DateTime?             @map("deleted_at") @db.Timestamptz(6)
+  deletedByMembershipId           String?               @map("deleted_by_membership_id") @db.Uuid
+  createdAt                       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                       DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace                     Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  statusDefinition              StatusDefinition          @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  department                    Department?               @relation(fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  assignedToMembership          WorkspaceMembership?      @relation("TicketAssignedMembership", fields: [assignedToMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership           WorkspaceMembership?      @relation("TicketCreatorMembership", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  escalationChangedByMembership WorkspaceMembership?      @relation("TicketEscalationChangedBy", fields: [escalationChangedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  deletedByMembership           WorkspaceMembership?      @relation("TicketDeletedByMembership", fields: [deletedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  requester                     TicketRequester?
+  conversationEntries           TicketConversationEntry[]
+  attachments                   TicketAttachment[]
+  slaState                      TicketSlaState?
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, sequenceNumber])
+  @@unique([workspaceId, ticketNumber])
+  @@index([workspaceId, deletedAt])
+  @@index([workspaceId, statusDefinitionId])
+  @@index([workspaceId, priority])
+  @@index([workspaceId, departmentId, deletedAt])
+  @@index([workspaceId, assignedToMembershipId, deletedAt])
+  @@index([workspaceId, escalationLevel, deletedAt])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, updatedAt])
+  @@index([workspaceId, createdByMembershipId])
+  @@map("tickets")
+}
+
+model TicketSlaPolicy {
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String                @map("workspace_id") @db.Uuid
+  name          String                @db.VarChar(160)
+  description   String?               @db.VarChar(500)
+  isActive      Boolean               @default(true) @map("is_active")
+  isDefault     Boolean               @default(false) @map("is_default")
+  timezone      String                @db.VarChar(80)
+  businessMode  TicketSlaBusinessMode @default(BUSINESS_HOURS) @map("business_mode")
+  businessHours Json                  @map("business_hours")
+  holidayDates  String[]              @default([]) @map("holiday_dates")
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace     Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  rules         TicketSlaRule[]
+  pauseStatuses TicketSlaPauseStatus[]
+  states        TicketSlaState[]       @relation("TicketSlaStateSourcePolicy")
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, isActive, isDefault])
+  @@map("ticket_sla_policies")
+}
+
+model TicketSlaRule {
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String       @map("workspace_id") @db.Uuid
+  policyId             String       @map("policy_id") @db.Uuid
+  priority             TaskPriority
+  firstResponseMinutes Int          @map("first_response_minutes")
+  resolutionMinutes    Int          @map("resolution_minutes")
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  policy    TicketSlaPolicy @relation(fields: [policyId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+
+  @@unique([policyId, priority])
+  @@index([workspaceId, policyId])
+  @@map("ticket_sla_rules")
+}
+
+model TicketSlaPauseStatus {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String   @map("workspace_id") @db.Uuid
+  policyId           String   @map("policy_id") @db.Uuid
+  statusDefinitionId String   @map("status_definition_id") @db.Uuid
+  pauseFirstResponse Boolean  @default(false) @map("pause_first_response")
+  pauseResolution    Boolean  @default(false) @map("pause_resolution")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  policy           TicketSlaPolicy  @relation(fields: [policyId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  statusDefinition StatusDefinition @relation(fields: [statusDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([policyId, statusDefinitionId])
+  @@index([workspaceId, statusDefinitionId])
+  @@map("ticket_sla_pause_statuses")
+}
+
+model TicketSlaState {
+  id                            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                   String       @map("workspace_id") @db.Uuid
+  ticketId                      String       @unique @map("ticket_id") @db.Uuid
+  sourcePolicyId                String?      @map("source_policy_id") @db.Uuid
+  policySnapshot                Json         @map("policy_snapshot")
+  prioritySnapshot              TaskPriority @map("priority_snapshot")
+  firstResponseTargetMinutes    Int          @map("first_response_target_minutes")
+  firstResponseRemainingMinutes Int          @map("first_response_remaining_minutes")
+  firstResponseRunStartedAt     DateTime?    @map("first_response_run_started_at") @db.Timestamptz(6)
+  firstResponseDueAt            DateTime?    @map("first_response_due_at") @db.Timestamptz(6)
+  firstResponsePausedAt         DateTime?    @map("first_response_paused_at") @db.Timestamptz(6)
+  firstResponseCompletedAt      DateTime?    @map("first_response_completed_at") @db.Timestamptz(6)
+  firstResponseBreachedAt       DateTime?    @map("first_response_breached_at") @db.Timestamptz(6)
+  firstResponseNotApplicableAt  DateTime?    @map("first_response_not_applicable_at") @db.Timestamptz(6)
+  resolutionTargetMinutes       Int          @map("resolution_target_minutes")
+  resolutionRemainingMinutes    Int          @map("resolution_remaining_minutes")
+  resolutionRunStartedAt        DateTime?    @map("resolution_run_started_at") @db.Timestamptz(6)
+  resolutionDueAt               DateTime?    @map("resolution_due_at") @db.Timestamptz(6)
+  resolutionPausedAt            DateTime?    @map("resolution_paused_at") @db.Timestamptz(6)
+  resolutionCompletedAt         DateTime?    @map("resolution_completed_at") @db.Timestamptz(6)
+  resolutionBreachedAt          DateTime?    @map("resolution_breached_at") @db.Timestamptz(6)
+  createdAt                     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ticket       Ticket           @relation(fields: [ticketId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  sourcePolicy TicketSlaPolicy? @relation("TicketSlaStateSourcePolicy", fields: [sourcePolicyId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([ticketId, workspaceId])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, firstResponseDueAt])
+  @@index([workspaceId, resolutionDueAt])
+  @@index([workspaceId, sourcePolicyId])
+  @@map("ticket_sla_states")
+}
+
+model TicketRequester {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String              @map("workspace_id") @db.Uuid
+  ticketId             String              @unique @map("ticket_id") @db.Uuid
+  type                 TicketRequesterType
+  internalMembershipId String?             @map("internal_membership_id") @db.Uuid
+  externalName         String?             @map("external_name") @db.VarChar(160)
+  externalEmail        String?             @map("external_email") @db.VarChar(320)
+  externalPhone        String?             @map("external_phone") @db.VarChar(40)
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace          Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ticket             Ticket               @relation(fields: [ticketId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  internalMembership WorkspaceMembership? @relation("TicketRequesterMembership", fields: [internalMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([ticketId, workspaceId])
+  @@index([workspaceId, internalMembershipId])
+  @@index([workspaceId, type])
+  @@map("ticket_requesters")
+}
+
+model TicketConversationEntry {
+  id                 String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String                      @map("workspace_id") @db.Uuid
+  ticketId           String                      @map("ticket_id") @db.Uuid
+  type               TicketConversationEntryType
+  body               String                      @db.VarChar(12000)
+  authorMembershipId String                      @map("author_membership_id") @db.Uuid
+  authorUserId       String                      @map("author_user_id") @db.Uuid
+  createdAt          DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace        Workspace                      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ticket           Ticket                         @relation(fields: [ticketId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  authorMembership WorkspaceMembership            @relation("TicketConversationEntryAuthor", fields: [authorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  authorUser       User                           @relation("TicketConversationEntryAuthorUser", fields: [authorUserId], references: [id], onDelete: Restrict)
+  attachments      TicketConversationAttachment[]
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, ticketId, createdAt, id])
+  @@index([workspaceId, authorMembershipId, createdAt])
+  @@map("ticket_conversation_entries")
+}
+
+model TicketSavedView {
+  id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId           String               @map("workspace_id") @db.Uuid
+  name                  String               @db.VarChar(120)
+  nameNormalized        String               @map("name_normalized") @db.VarChar(120)
+  scope                 TicketSavedViewScope
+  ownerMembershipId     String?              @map("owner_membership_id") @db.Uuid
+  filterSchemaVersion   Int                  @default(1) @map("filter_schema_version")
+  filters               Json
+  sort                  Json
+  createdByMembershipId String?              @map("created_by_membership_id") @db.Uuid
+  updatedByMembershipId String?              @map("updated_by_membership_id") @db.Uuid
+  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ownerMembership     WorkspaceMembership? @relation("TicketSavedViewOwner", fields: [ownerMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership WorkspaceMembership? @relation("TicketSavedViewCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  updatedByMembership WorkspaceMembership? @relation("TicketSavedViewUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, scope])
+  @@index([workspaceId, ownerMembershipId])
+  @@map("ticket_saved_views")
 }
 
 model Task {
@@ -1410,12 +1736,14 @@ model Attachment {
   createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace            Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  asset                Asset?                          @relation(fields: [assetId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdBy            User                            @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  taskLinks            TaskAttachment[]
-  projectLinks         ProjectAttachment[]
-  completionProofLinks TaskCompletionProofAttachment[]
+  workspace               Workspace                       @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  asset                   Asset?                          @relation(fields: [assetId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdBy               User                            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  taskLinks               TaskAttachment[]
+  projectLinks            ProjectAttachment[]
+  ticketLinks             TicketAttachment[]
+  ticketConversationLinks TicketConversationAttachment[]
+  completionProofLinks    TaskCompletionProofAttachment[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId, type, createdAt])
@@ -1459,6 +1787,41 @@ model ProjectAttachment {
   @@index([workspaceId, projectId, removedAt, createdAt])
   @@index([workspaceId, attachmentId, removedAt])
   @@map("project_attachments")
+}
+
+model TicketAttachment {
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  ticketId     String    @map("ticket_id") @db.Uuid
+  attachmentId String    @map("attachment_id") @db.Uuid
+  attachedById String    @map("attached_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  removedAt    DateTime? @map("removed_at") @db.Timestamptz(6)
+
+  workspace  Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ticket     Ticket     @relation(fields: [ticketId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachment Attachment @relation(fields: [attachmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachedBy User       @relation(fields: [attachedById], references: [id], onDelete: Restrict)
+
+  @@id([ticketId, attachmentId])
+  @@index([workspaceId, ticketId, removedAt, createdAt])
+  @@index([workspaceId, attachmentId, removedAt])
+  @@map("ticket_attachments")
+}
+
+model TicketConversationAttachment {
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  conversationEntryId String   @map("conversation_entry_id") @db.Uuid
+  attachmentId        String   @map("attachment_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace         Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  conversationEntry TicketConversationEntry @relation(fields: [conversationEntryId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  attachment        Attachment              @relation(fields: [attachmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@id([conversationEntryId, attachmentId])
+  @@index([workspaceId, conversationEntryId, createdAt])
+  @@index([workspaceId, attachmentId])
+  @@map("ticket_conversation_attachments")
 }
 
 model ProcessingJob {

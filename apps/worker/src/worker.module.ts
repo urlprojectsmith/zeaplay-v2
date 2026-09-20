@@ -8,6 +8,7 @@ import { DatabaseModule } from './infrastructure/database/database.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { AssetProcessingProcessor } from './processors/asset-processing.processor';
 import { TaskRecurrenceProcessor } from './processors/task-recurrence.processor';
+import { TicketSlaProcessor } from './processors/ticket-sla.processor';
 
 @Module({
   imports: [
@@ -32,6 +33,6 @@ import { TaskRecurrenceProcessor } from './processors/task-recurrence.processor'
     QueueModule,
     HealthModule,
   ],
-  providers: [AssetProcessingProcessor, TaskRecurrenceProcessor],
+  providers: [AssetProcessingProcessor, TaskRecurrenceProcessor, TicketSlaProcessor],
 })
 export class WorkerModule {}

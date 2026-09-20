@@ -23,6 +23,8 @@ import { AssetsModule } from './modules/assets/assets.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { TagsModule } from './modules/tags/tags.module';
+import { TicketsModule } from './modules/tickets/tickets.module';
+import { GamificationModule } from './modules/gamification/gamification.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { TagsModule } from './modules/tags/tags.module';
     ProjectsModule,
     AssetsModule,
     TasksModule,
+    TicketsModule,
+    GamificationModule,
     TagsModule,
     AgenciesModule,
     WorkspacesModule,

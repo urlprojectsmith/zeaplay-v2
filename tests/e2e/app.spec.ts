@@ -5,7 +5,7 @@ const apiHeaders = {
   'access-control-allow-headers':
     'authorization,content-type,x-correlation-id,x-csrf-token,x-agency-id,x-workspace-id',
   'access-control-allow-methods': 'GET,POST,PATCH,PUT,OPTIONS',
-  'access-control-allow-origin': 'http://127.0.0.1:3000',
+  'access-control-allow-origin': 'http://localhost:3000',
 };
 
 async function fulfillApi(
@@ -27,7 +27,7 @@ async function mockAuthenticatedSession(page: Page) {
     {
       name: 'zea_csrf',
       value: 'csrf-token',
-      url: 'http://127.0.0.1:3000',
+      url: 'http://localhost:3000',
       httpOnly: false,
       sameSite: 'Lax',
     },
@@ -1925,6 +1925,372 @@ async function mockProjectUiApi(page: Page) {
   );
 }
 
+async function mockTicketUiApi(page: Page) {
+  const now = new Date().toISOString();
+  const statuses = [
+    {
+      id: 'status-ticket-new',
+      workspaceId: 'workspace-1',
+      entityType: 'TICKET',
+      name: 'New',
+      description: null,
+      color: '#64748B',
+      position: 1,
+      category: 'TODO',
+      isDefault: true,
+      isTerminal: false,
+      isActive: true,
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'status-ticket-open',
+      workspaceId: 'workspace-1',
+      entityType: 'TICKET',
+      name: 'Open',
+      description: null,
+      color: '#0891B2',
+      position: 2,
+      category: 'TODO',
+      isDefault: false,
+      isTerminal: false,
+      isActive: true,
+      isSystem: false,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  const permissions = [
+    'tickets.view',
+    'tickets.create',
+    'tickets.update',
+    'tickets.delete',
+    'tickets.assign',
+    'tickets.claim',
+    'tickets.escalate',
+    'tickets.manage_requester',
+    'tickets.reply',
+    'tickets.notes.view',
+    'tickets.notes.create',
+  ].map((key) => ({ id: `permission-${key}`, key, description: null, createdAt: now }));
+  const department = { id: 'department-support', name: 'Support', status: 'ACTIVE' };
+  const workspaceUser = {
+    id: 'user-1',
+    membershipId: 'workspace-membership-1',
+    workspaceId: 'workspace-1',
+    email: 'owner@zeaplay.test',
+    name: 'Owner',
+    userStatus: 'ACTIVE',
+    membershipStatus: 'ACTIVE',
+    role: { id: 'admin', key: 'ADMIN', name: 'Admin' },
+    department,
+    joinedAt: now,
+    createdAt: now,
+  };
+  let deleted = false;
+  let conversationEntries: Array<{
+    id: string;
+    workspaceId: string;
+    ticketId: string;
+    type: string;
+    body: string;
+    author: { membershipId: string; displayName: string; inactive: boolean };
+    createdAt: string;
+  }> = [
+    {
+      id: 'conversation-public-1',
+      workspaceId: 'workspace-1',
+      ticketId: 'ticket-e2e',
+      type: 'PUBLIC_REPLY',
+      body: 'Initial customer-facing reply',
+      author: { membershipId: workspaceUser.membershipId, displayName: 'Owner', inactive: false },
+      createdAt: now,
+    },
+    {
+      id: 'conversation-note-1',
+      workspaceId: 'workspace-1',
+      ticketId: 'ticket-e2e',
+      type: 'INTERNAL_NOTE',
+      body: 'Internal triage note',
+      author: { membershipId: workspaceUser.membershipId, displayName: 'Owner', inactive: false },
+      createdAt: now,
+    },
+  ];
+  let ticket = {
+    id: 'ticket-e2e',
+    workspaceId: 'workspace-1',
+    sequenceNumber: 1,
+    ticketNumber: 'TKT-000001',
+    subject: 'Login is failing',
+    description: 'Cannot sign in from the browser',
+    statusDefinitionId: statuses[0].id,
+    status: {
+      id: statuses[0].id,
+      name: statuses[0].name,
+      color: statuses[0].color,
+      terminal: false,
+      active: true,
+    },
+    priority: 'MEDIUM',
+    requester: {
+      id: 'requester-e2e',
+      type: 'INTERNAL',
+      internalMembershipId: workspaceUser.membershipId,
+      displayName: 'Owner',
+      internalMembership: {
+        id: workspaceUser.membershipId,
+        status: 'ACTIVE',
+        departmentId: department.id,
+        user: { id: 'user-1', email: 'owner@zeaplay.test', name: 'Owner', status: 'ACTIVE' },
+      },
+    },
+    departmentId: null,
+    department: null,
+    assignedToMembershipId: null,
+    assignedTo: null,
+    escalationLevel: 'NONE',
+    escalationChangedAt: null,
+    escalationChangedBy: null,
+    createdBy: {
+      id: 'workspace-membership-1',
+      status: 'ACTIVE',
+      user: { id: 'user-1', email: 'owner@zeaplay.test', name: 'Owner' },
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await page.route(/.*\/workspaces\/workspace-1\/roles$/, async (route) => {
+    await fulfillApi(route, [
+      {
+        id: 'admin',
+        key: 'ADMIN',
+        name: 'Admin',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/statuses\/TICKET(\?.*)?$/, async (route) => {
+    await fulfillApi(route, statuses);
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/users(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [workspaceUser], page: 1, pageSize: 20, total: 1 });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/departments(\?.*)?$/, async (route) => {
+    await fulfillApi(route, { items: [department], page: 1, pageSize: 50, total: 1 });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tickets(\?.*)?$/, async (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      const body = route.request().postDataJSON() as {
+        subject: string;
+        description?: string;
+        priority?: string;
+      };
+      ticket = {
+        ...ticket,
+        subject: body.subject,
+        description: body.description ?? null,
+        priority: body.priority ?? 'MEDIUM',
+        requester:
+          body.requester?.type === 'EXTERNAL'
+            ? {
+                id: 'requester-e2e',
+                type: 'EXTERNAL',
+                displayName: body.requester.name,
+                externalName: body.requester.name,
+                externalEmail: body.requester.email ?? null,
+                externalPhone: body.requester.phone ?? null,
+              }
+            : ticket.requester,
+      };
+      deleted = false;
+      await fulfillApi(route, ticket, 201);
+      return;
+    }
+    const params = new URL(route.request().url()).searchParams;
+    const search = params.get('search')?.toLowerCase() ?? '';
+    const statusDefinitionId = params.get('statusDefinitionId');
+    const priority = params.get('priority');
+    const items =
+      !deleted &&
+      (!statusDefinitionId || ticket.statusDefinitionId === statusDefinitionId) &&
+      (!priority || ticket.priority === priority) &&
+      (!search ||
+        ticket.ticketNumber.toLowerCase().includes(search) ||
+        ticket.subject.toLowerCase().includes(search))
+        ? [ticket]
+        : [];
+    await fulfillApi(route, { items, page: 1, pageSize: 20, total: items.length });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tickets\/ticket-e2e$/, async (route) => {
+    const method = route.request().method();
+    if (method === 'PATCH') {
+      const body = route.request().postDataJSON() as { subject?: string; priority?: string };
+      ticket = { ...ticket, ...body, updatedAt: new Date().toISOString() };
+      await fulfillApi(route, ticket);
+      return;
+    }
+    if (method === 'DELETE') {
+      deleted = true;
+      await fulfillApi(route, { id: ticket.id, deleted: true });
+      return;
+    }
+    await fulfillApi(route, ticket, deleted ? 404 : 200);
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/tickets\/ticket-e2e\/status$/, async (route) => {
+    const body = route.request().postDataJSON() as { statusDefinitionId: string };
+    const status = statuses.find((item) => item.id === body.statusDefinitionId) ?? statuses[0];
+    ticket = {
+      ...ticket,
+      statusDefinitionId: status.id,
+      status: {
+        id: status.id,
+        name: status.name,
+        color: status.color,
+        terminal: false,
+        active: true,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    await fulfillApi(route, ticket);
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tickets\/ticket-e2e\/conversation(\?.*)?$/,
+    async (route) => {
+      const method = route.request().method();
+      if (method === 'POST') {
+        const body = route.request().postDataJSON() as { type: string; body: string };
+        const entry = {
+          id: `conversation-${conversationEntries.length + 1}`,
+          workspaceId: 'workspace-1',
+          ticketId: 'ticket-e2e',
+          type: body.type,
+          body: body.body,
+          author: {
+            membershipId: workspaceUser.membershipId,
+            displayName: 'Owner',
+            inactive: false,
+          },
+          createdAt: new Date().toISOString(),
+        };
+        conversationEntries = [...conversationEntries, entry];
+        await fulfillApi(route, entry, 201);
+        return;
+      }
+      const params = new URL(route.request().url()).searchParams;
+      const pageSize = Number(params.get('pageSize') ?? 20);
+      const items = conversationEntries.slice(-pageSize);
+      await fulfillApi(route, { items, page: 1, pageSize, total: conversationEntries.length });
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tickets\/ticket-e2e\/requester$/,
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        requester: { type: string; name?: string; email?: string; phone?: string };
+      };
+      ticket = {
+        ...ticket,
+        requester:
+          body.requester.type === 'EXTERNAL'
+            ? {
+                id: 'requester-e2e',
+                type: 'EXTERNAL',
+                displayName: body.requester.name ?? null,
+                externalName: body.requester.name ?? null,
+                externalEmail: body.requester.email ?? null,
+                externalPhone: body.requester.phone ?? null,
+              }
+            : ticket.requester,
+        updatedAt: new Date().toISOString(),
+      };
+      await fulfillApi(route, ticket);
+    },
+  );
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tickets\/ticket-e2e\/assignment$/,
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        departmentId?: string | null;
+        assignedToMembershipId?: string | null;
+      };
+      ticket = {
+        ...ticket,
+        departmentId: body.departmentId ?? null,
+        department: body.departmentId ? department : null,
+        assignedToMembershipId: body.assignedToMembershipId ?? null,
+        assignedTo: body.assignedToMembershipId
+          ? {
+              id: workspaceUser.membershipId,
+              status: 'ACTIVE',
+              departmentId: department.id,
+              user: { id: 'user-1', email: 'owner@zeaplay.test', name: 'Owner' },
+            }
+          : null,
+        updatedAt: new Date().toISOString(),
+      };
+      await fulfillApi(route, ticket);
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/tickets\/ticket-e2e\/claim$/, async (route) => {
+    ticket = {
+      ...ticket,
+      departmentId: department.id,
+      department,
+      assignedToMembershipId: workspaceUser.membershipId,
+      assignedTo: {
+        id: workspaceUser.membershipId,
+        status: 'ACTIVE',
+        departmentId: department.id,
+        user: { id: 'user-1', email: 'owner@zeaplay.test', name: 'Owner' },
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    await fulfillApi(route, ticket);
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/tickets\/ticket-e2e\/escalation$/,
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        action: 'ESCALATE' | 'DEESCALATE' | 'CLEAR';
+        expectedLevel: 'NONE' | 'LEVEL_1' | 'LEVEL_2' | 'LEVEL_3';
+        reason: string;
+      };
+      const nextLevel =
+        body.action === 'CLEAR'
+          ? 'NONE'
+          : body.action === 'ESCALATE' && body.expectedLevel === 'NONE'
+            ? 'LEVEL_1'
+            : body.action === 'ESCALATE' && body.expectedLevel === 'LEVEL_1'
+              ? 'LEVEL_2'
+              : body.action === 'DEESCALATE' && body.expectedLevel === 'LEVEL_2'
+                ? 'LEVEL_1'
+                : body.expectedLevel;
+      ticket = {
+        ...ticket,
+        escalationLevel: nextLevel,
+        escalationChangedAt: new Date().toISOString(),
+        escalationChangedBy: {
+          id: workspaceUser.membershipId,
+          status: 'ACTIVE',
+          user: { id: 'user-1', email: 'owner@zeaplay.test', name: 'Owner' },
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      await fulfillApi(route, ticket);
+    },
+  );
+}
+
 test('application boots and login route loads', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
@@ -2090,6 +2456,137 @@ test('authenticated Project UI journey creates a Project and opens each detail t
   await page.setViewportSize({ width: 375, height: 812 });
   await expect(page.getByRole('tab', { name: 'Overview' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Project Reports' })).toBeVisible();
+});
+
+test('authenticated Ticket core journey creates, edits, searches, and soft deletes a Ticket', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  await mockTicketUiApi(page);
+
+  await page.goto('/workspace/tickets');
+  await expect(page.getByRole('heading', { name: 'Tickets' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /TKT-000001/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Create Ticket' }).click();
+  await page.getByLabel('Subject').fill('Login is failing');
+  await page.getByLabel('Description').fill('Cannot sign in from the browser');
+  await expect(page.getByRole('combobox', { name: 'Requester', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Create Ticket' }).last().click();
+  await expect(page).toHaveURL(/\/workspace\/tickets\/ticket-e2e$/);
+  await expect(page.getByText('TKT-000001')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Login is failing' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Conversation' }).click();
+  await expect(page).toHaveURL(/tab=conversation/);
+  await expect(page.getByText('Initial customer-facing reply')).toBeVisible();
+  await expect(page.getByText('Internal triage note')).toBeVisible();
+
+  await page.getByLabel('Public Reply').fill('Follow up from service desk');
+  await page.getByRole('button', { name: 'Post Reply' }).click();
+  await expect(page.getByText('Follow up from service desk')).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Entry Type' }).click();
+  await page
+    .getByRole('option', { name: 'Internal Note' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByLabel('Internal Note').fill('Private handoff note');
+  await page.getByRole('button', { name: 'Post Note' }).click();
+  await expect(page.getByText('Private handoff note')).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText('Follow up from service desk')).toBeVisible();
+  await expect(page.getByText('Private handoff note')).toBeVisible();
+  await page.getByRole('tab', { name: 'Overview' }).click();
+  await expect(page).not.toHaveURL(/tab=conversation/);
+
+  await page.getByRole('button', { name: 'Assignment' }).click();
+  await page.getByRole('combobox', { name: 'Department' }).click();
+  await page
+    .getByRole('option', { name: 'Support' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('combobox', { name: 'Assigned To' }).click();
+  await page
+    .getByRole('option', { name: 'Owner' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Support').first()).toBeVisible();
+  await expect(page.getByText('Owner').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Change Requester' }).click();
+  await page.getByRole('combobox', { name: 'Requester Type' }).click();
+  await page
+    .getByRole('option', { name: 'External' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByLabel('External Name').fill('Uma');
+  await page.getByLabel('External Email').fill('uma@example.com');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Uma').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Assignment' }).click();
+  await page.getByRole('combobox', { name: 'Assigned To' }).click();
+  await page
+    .getByRole('option', { name: 'Unassigned' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Unassigned').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Claim Ticket' }).click();
+  await expect(page.getByText('Ticket Claimed')).toBeVisible();
+  await expect(page.getByText('Owner').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Escalate', exact: true }).click();
+  await page.getByLabel('Escalation Reason').fill('Needs manager attention');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Level 1')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Escalate', exact: true }).click();
+  await page.getByLabel('Escalation Reason').fill('Customer impact expanded');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Level 2')).toBeVisible();
+
+  await page.getByRole('button', { name: 'De-escalate' }).click();
+  await page.getByLabel('Escalation Reason').fill('Impact reduced');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Level 1')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Clear Escalation' }).click();
+  await page.getByLabel('Escalation Reason').fill('Handled by support');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Not Escalated').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit Ticket' }).click();
+  await page.getByLabel('Subject').fill('Login fails on mobile');
+  await page.getByRole('combobox', { name: 'Priority' }).click();
+  await page
+    .getByRole('option', { name: 'High' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('heading', { name: 'Login fails on mobile' })).toBeVisible();
+  await expect(page.getByText('High')).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Status' }).click();
+  await page
+    .getByRole('option', { name: 'Open' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await expect(page.getByText('Open').first()).toBeVisible();
+
+  await page.goto('/workspace/tickets');
+  await page.getByLabel('Search Tickets').fill('TKT-000001');
+  await page.getByRole('combobox', { name: 'Status' }).click();
+  await page
+    .getByRole('option', { name: 'Open' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await page.getByRole('combobox', { name: 'Priority' }).click();
+  await page
+    .getByRole('option', { name: 'High' })
+    .evaluate((element) => (element as HTMLElement).click());
+  await expect(page.getByRole('link', { name: /TKT-000001/ })).toBeVisible();
+
+  await page.goto('/workspace/tickets/ticket-e2e');
+  await page.getByRole('button', { name: 'Delete Ticket' }).click();
+  await page.getByRole('button', { name: 'Delete Ticket' }).last().click();
+  await expect(page).toHaveURL(/\/workspace\/tickets$/);
+  await expect(page.getByText('No Tickets')).toBeVisible();
 });
 
 test('authenticated task creation supports the quick-create flow', async ({ page }) => {
@@ -2769,6 +3266,71 @@ test('authenticated task browser handles stale, terminal, detail, pagination, an
   await page.getByRole('button', { name: 'Delete 1 tasks' }).click();
   await expect(page.getByText('Seed alpha task')).toHaveCount(0);
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('authenticated gamification page shows server XP summary and lazy history', async ({
+  page,
+}) => {
+  await mockAuthenticatedSession(page);
+  let historyRequests = 0;
+  await page.route(/.*\/workspaces\/workspace-1\/roles$/, async (route) => {
+    await fulfillApi(route, [
+      {
+        id: 'role-admin',
+        key: 'admin',
+        name: 'Admin',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: true,
+        isActive: true,
+        workspaceId: null,
+        permissions: [{ id: 'permission-gamification-view', key: 'gamification.view' }],
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/gamification\/me\/xp$/, async (route) => {
+    await fulfillApi(route, {
+      currentXp: 125,
+      lifetimeEarnedXp: 150,
+      lifetimeDeductedXp: 25,
+      entryCount: 3,
+      lastXpChangeAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/gamification\/me\/xp\/history.*/,
+    async (route) => {
+      historyRequests += 1;
+      await fulfillApi(route, {
+        items: [
+          {
+            id: 'xp-1',
+            amount: 25,
+            entryType: 'EARN',
+            sourceType: 'TASK',
+            sourceEvent: 'TASK_COMPLETED',
+            sourceEntityId: 'task-1',
+            reason: null,
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        page: 1,
+        pageSize: 10,
+        total: 1,
+      });
+    },
+  );
+
+  await page.goto('/workspace/gamification');
+  await expect(page.getByRole('heading', { name: 'Gamification' })).toBeVisible();
+  await expect(page.getByText('125 XP')).toBeVisible();
+  expect(historyRequests).toBe(0);
+
+  await page.getByRole('tab', { name: 'History' }).click();
+  await expect(page.getByText('+25 XP')).toBeVisible();
+  expect(historyRequests).toBe(1);
 });
 
 test('workspace roles page remains responsive across supported widths', async ({ page }) => {

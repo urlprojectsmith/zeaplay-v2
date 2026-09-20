@@ -42,6 +42,7 @@ export interface NavigationItemConfig {
   disabled?: boolean;
   badge?: string;
   featureKey?: string;
+  requiredPermissions?: string[];
 }
 
 export interface NavigationGroupConfig {
@@ -204,8 +205,18 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
             icon: ScrollText,
           },
           { labelKey: 'navigation.projects', href: '/workspace/projects', icon: ClipboardList },
-          disabled('navigation.tickets', SearchCode, 'tickets'),
-          disabled('navigation.gamification', Sparkles, 'gamification'),
+          { labelKey: 'navigation.tickets', href: '/workspace/tickets', icon: SearchCode },
+          {
+            labelKey: 'navigation.ticketReports',
+            href: '/workspace/tickets/reports',
+            icon: ClipboardList,
+          },
+          {
+            labelKey: 'navigation.gamification',
+            href: '/workspace/gamification',
+            icon: Sparkles,
+            requiredPermissions: ['gamification.view'],
+          },
         ],
       },
       {

@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 8.8 - Project UI Integration - COMPLETE / PASS
-Next: Phase 8.9 - Final Project Security + Performance Audit; do not start automatically
+Current: Phase 10.1 — GAMIFICATION CORE + XP LEDGER — COMPLETE / PASS
+Next: Phase 10.2 — Levels + Progression
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -1801,6 +1801,979 @@ Final invariants:
 
 Phase 8.8 is complete/pass after focused refinement. Do not start Phase 8.9 automatically.
 
+### Phase 8.9 - Final Project Security + Performance + Integration Audit - COMPLETE / PASS
+
+Verified:
+
+- Phase 8.1 through Phase 8.8 Project surfaces were audited together across backend tenant isolation, RBAC, visibility, owner/member access, tags, progress, completion, Task links, Kanban, Timeline, Files, Activity, Reports, CSV, routing, query keys, and UI integration.
+- Project uses one Workspace-scoped `Project` model; no duplicate Project/ProjectTask/ProjectFile/ProjectActivity/ProjectV2 model was introduced.
+- Project lifecycle uses Workspace-scoped `StatusDefinition(PROJECT)` records; legacy `Project.status` has no runtime authority.
+- Owner and member relations use same-Workspace `WorkspaceMembership` records.
+- `WORKSPACE` and `RESTRICTED` visibility are backend enforced for list/search/count/detail/direct routes and related Project tab APIs.
+- Custom-role RBAC remains permission-key based; role names do not grant Project authorization.
+- Legacy singular `project.*` permission aliases cannot authorize Phase 8 Project runtime routes that require plural `projects.*` permissions.
+- Hidden Restricted Projects cannot leak through lists, search, Task DTO Project names, selectors, filters, reports, or CSV.
+- `WorkspaceTag` is shared by Task and Project through explicit join relations; archived tags remain visible/removable/filterable while new archived assignments are rejected.
+- Project progress is server-derived from active linked Task terminal state; manual progress override remains separate and bounded.
+- Project completion validates open linked Tasks and never mutates Task status; Project reopen also never mutates Task status.
+- `TaskProject` remains the many-to-many Project/Task authority; Project Tasks reuse the existing Task engine.
+- Project Kanban reuses Task Kanban, Project Timeline reuses Task Gantt and `TaskDependency`, and both use server-side `projectId` filtering.
+- Project Files reuse `ProjectAttachment` / `Attachment` / `Asset`; downloads are authorization-gated and generated on demand.
+- Project Activity uses immutable `AuditLog` only with allowlisted safe metadata.
+- Project Reports are server aggregated from consistently filtered Project-linked Tasks.
+- Project CSV export uses active filters, is not current-page-only, is tenant safe, preserves UTF-8/Tamil, and protects against spreadsheet formula injection.
+- Tracked-time reporting respects Time permissions.
+- One Project Detail shell integrates all eight Project tabs; heavy tabs lazy-load independently.
+- Query/cache keys are Workspace/Project scoped and mutation invalidation is targeted.
+- Project runtime has no demonstrated N+1 or request fan-out regression.
+- Phase 7 regressions remain green.
+- Clean migrations pass.
+- No Phase 9+ scope was introduced.
+
+Issues found and fixed:
+
+- Added regression coverage proving legacy singular `project.*` permissions cannot bypass modern plural Phase 8 `projects.*` Project permissions.
+- Added a coherent Phase 8 lifecycle integration scenario across Project, Task, Files, Activity, and Reports APIs.
+- Aligned the Phase 4 security integration fixture with modern plural Project permissions so tenant isolation reaches service-level 404 checks instead of stale permission 403 checks.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- Clean migration deploy passes with 29 migrations and no pending migrations.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes 102/102 API integration tests and 11/11 worker integration tests.
+- `pnpm --filter @zea-play/worker test` passes 11/11 worker tests.
+- `pnpm test:e2e` passes 19/19 Playwright tests, including the Project UI journey.
+- `pnpm build` passes.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+
+Phase 8 is complete/pass. Do not start Phase 9 automatically.
+
+### Phase 9.1 - Ticket Core + Status Engine - COMPLETE / PASS
+
+Implemented:
+
+- One Workspace-scoped `Ticket` model for Ticket core records; no duplicate Ticket model or future Ticket tables were introduced.
+- Ticket primary identity remains UUID, while human-readable `ticketNumber` is Workspace scoped and generated as `TKT-000001` style.
+- Ticket numbering uses an atomic PostgreSQL-backed per-Workspace `WorkspaceTicketCounter`.
+- Ticket numbers are unique per Workspace and sequence numbers restart independently per Workspace.
+- `StatusDefinition(TICKET)` is the only Ticket lifecycle authority.
+- Default Ticket statuses are `New`, `Open`, `In Progress`, `Waiting on Requester`, `Resolved`, and `Closed`.
+- Default TICKET statuses are provisioned for existing Workspaces by migration and for future Workspaces through the shared default-status templates.
+- Ticket status assignment rejects inactive, foreign-Workspace, foreign-Agency, and non-TICKET status definitions.
+- Ticket priority uses the existing `LOW`, `MEDIUM`, `HIGH`, and `URGENT` priority enum.
+- `createdByMembershipId` records creator membership only and is not requester, assignee, owner, watcher, or participant logic.
+- Requester, assignment, SLA, conversations, attachments, reports, and automation are intentionally deferred.
+- Workspace-scoped Ticket CRUD APIs were added under `/api/v1/workspaces/:workspaceId/tickets`.
+- Ticket list is server-side paginated, searchable by Ticket number and subject, and filterable by status and priority.
+- Ticket deletion is soft delete only; deleted Tickets are excluded from list and detail reads.
+- Ticket runtime authorization uses `tickets.view`, `tickets.create`, `tickets.update`, and `tickets.delete` permission keys.
+- Ticket create/update/delete/status events use `AuditLog` with bounded safe metadata.
+- Workspace Ticket query keys include Workspace identity and avoid cross-Workspace cache reuse.
+- Minimal Workspace Ticket list/detail/create/edit/delete UI was added at `/workspace/tickets` and `/workspace/tickets/[ticketId]`.
+- Ticket UI supports English/Tamil labels and Light/Dark/Colorful theme inheritance.
+
+Verified:
+
+- Ticket creation rejects client-supplied `ticketNumber` and `createdByMembershipId`.
+- Ticket creation rejects client-supplied `sequenceNumber`.
+- Ticket update rejects immutable fields including `workspaceId`, `ticketNumber`, `sequenceNumber`, and `createdByMembershipId`.
+- Concurrent Ticket creation produces unique committed Ticket numbers per Workspace for the tested batch.
+- Multi-Workspace concurrent Ticket creation keeps counters isolated.
+- Cross-Workspace and cross-Agency Ticket detail, update, status update, and delete route attacks are rejected.
+- Custom-role authorization uses permission keys only; role names do not grant Ticket authorization.
+- View-only, create-only, update-only, and delete-only custom role combinations were verified.
+- No-op and failed Ticket mutations do not create success audit records.
+- Historical Tickets referencing inactive TICKET statuses remain readable, while inactive destination statuses cannot be newly assigned.
+- Terminal-to-active Ticket status changes are allowed without hardcoded status-name restrictions.
+- Deleted Tickets are excluded from detail, search, status filter, and priority filter surfaces.
+- Ticket list/detail do not preload requester, department, assignee, SLA, conversation, attachment, escalation, or report data.
+- No `MAX + 1`, count-derived, frontend-derived, Redis-derived, or time-derived Ticket numbering path exists.
+- No requester, assignee, SLA, conversation, attachment, report, escalation, queue, or notification scope was added.
+- Phase 7 and Phase 8 regressions remain green.
+- Clean migration deploy passes against an isolated empty PostgreSQL schema with all 30 migrations applied.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes 103/103 API integration tests and includes 11/11 worker integration tests.
+- `pnpm --filter @zea-play/worker test:integration` passes 11/11 worker tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests, including the Ticket core journey with search, status filter, priority filter, update, status change, and soft delete.
+- `pnpm build` passes on solo rerun after the initial parallel run collided with the active E2E `next dev` server.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+
+Final invariants:
+
+- One Workspace-scoped `Ticket` model exists.
+- UUID is the Ticket primary identity.
+- Ticket number is an immutable Workspace-scoped human identity.
+- Ticket numbering uses a PostgreSQL-backed atomic per-Workspace counter.
+- No `MAX + 1` or `COUNT + 1` numbering exists.
+- Ticket counter behavior is concurrency safe.
+- `StatusDefinition(TICKET)` is the sole Ticket lifecycle authority.
+- Runtime business logic never depends on Ticket status names.
+- Default Ticket statuses exist for existing and future Workspaces.
+- TASK and PROJECT statuses cannot be assigned to Ticket.
+- Foreign and inactive TICKET statuses cannot be newly assigned.
+- Priority is `LOW`, `MEDIUM`, `HIGH`, and `URGENT`.
+- `createdByMembershipId` identifies creator only.
+- Requester, Department, and assignee remain deferred to Phase 9.2.
+- Ticket CRUD is Workspace scoped.
+- Ticket deletion is soft delete.
+- Ticket list/search/filter/pagination are server-side and bounded.
+- `tickets.view`, `tickets.create`, `tickets.update`, and `tickets.delete` use the permission engine.
+- Custom Roles remain authoritative.
+- No role-name authorization exists.
+- `AuditLog` remains the Ticket mutation history source.
+- Ticket query keys are Workspace scoped.
+- Minimal Ticket UI contains only actual Phase 9.1 fields.
+- No SLA, conversation, assignment, report, attachment, queue, escalation, portal, email, or WhatsApp scope was introduced.
+- Phase 7 remains green.
+- Phase 8 remains green.
+
+Phase 9.1 is complete/pass. Do not start Phase 9.2 automatically.
+
+### Phase 9.2 - Requester + Department + Assignment - COMPLETE / PASS
+
+Implemented:
+
+- `TicketRequester` is a Ticket-scoped requester relation, not a CRM Contact system.
+- Existing Phase 9.1 Tickets are not backfilled from creator and may remain requester-null.
+- New user-created Tickets require an explicit requester.
+- Ticket creator remains separate from requester, assignee, owner, watcher, and access-control logic.
+- Requester can be `INTERNAL` or `EXTERNAL`.
+- INTERNAL requester references an active same-Workspace `WorkspaceMembership`.
+- EXTERNAL requester requires name plus email or phone; email is trimmed/lowercased and phone is conservatively validated.
+- Requester changes use a dedicated endpoint and require `tickets.manage_requester` plus Ticket access.
+- Ticket Department reuses the existing Phase 6 `Department` model and `WorkspaceMembership.departmentId` membership authority.
+- Ticket may sit in a Department with no assigned agent.
+- Assigned agent requires a Department and must be an active same-Workspace member of that Department.
+- Assignment changes use a dedicated endpoint and require `tickets.assign` plus Ticket access.
+- `tickets.view` remains the base permission.
+- `tickets.view_all` expands visibility to all non-deleted Workspace Tickets.
+- Without `tickets.view_all`, Ticket visibility is based on active internal requester, valid assigned agent, or active Department membership.
+- `createdByMembershipId` does not grant Ticket visibility.
+- Visibility filtering occurs before pagination, counts, search, and direct detail access.
+- Hidden Tickets do not leak through exact search.
+- `tickets.view_all` does not imply update, delete, assign, or requester-management permissions.
+- Requester/assignment audit metadata avoids external email and phone PII.
+- Requester, Department, and assignee selectors reuse bounded server-side Workspace user/Department APIs.
+- Minimal Ticket UI shows requester, Department, and assigned agent and supports requester/assignment mutations.
+- No queue, SLA, conversation, escalation, attachment, reporting, CSV, portal, email, WhatsApp, or notification functionality was introduced.
+
+Focused refinement:
+
+- Creator and requester remain independent concepts; `createdByMembershipId` is creator metadata only and never grants Ticket visibility.
+- Legacy requester-null Tickets remain valid and render safely as requester not set.
+- `TicketRequester` remains the only Ticket requester relation.
+- INTERNAL requester assignment requires an active same-Workspace `WorkspaceMembership`.
+- EXTERNAL requester remains lightweight Ticket-scoped contact data and requires name plus email or phone.
+- External requester PII is excluded from Audit metadata, list DTO contact fields, logs, URLs, and query keys.
+- Ticket Department reuses the existing `Department` architecture.
+- `WorkspaceMembership.departmentId` remains the Department membership authority.
+- Ticket may have a Department without an assigned agent.
+- Assigned agent requires a Department and must be an active same-Workspace current Department member when assigned.
+- Department/assignee final pair is transactionally revalidated and audit metadata records the committed final pair.
+- Historical inactive requester, assignee, and Department relations remain readable but do not create effective access.
+- `tickets.view` remains mandatory for Ticket visibility.
+- `tickets.view_all` expands visibility only inside the current Workspace.
+- Scoped visibility is internal requester, active Department membership, or valid assignment.
+- Visibility is applied before pagination, counts, and search.
+- Hidden Ticket exact number and exact subject search do not leak existence.
+- `tickets.view_all` does not imply update, delete, requester-management, or assignment mutation permission.
+- Requester changes require `tickets.manage_requester`.
+- Assignment changes require `tickets.assign`.
+- Ticket creation requires an explicit requester.
+- Create-time assignment requires `tickets.assign`.
+- Ticket, requester, and optional assignment creation remains atomic.
+- Requester and assignment mutations are atomic and suppress no-op audit noise.
+- List DTOs avoid unnecessary external requester contact PII.
+- Requester, Department, and assignee selectors are server-side bounded; assignee selector keys include Workspace and Department.
+- No queues, SLA, conversation, reply, notes, escalation, attachment UI, reporting, CSV, portal, email, WhatsApp, or notification behavior was introduced.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes 103/103 API integration tests and 11/11 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests, including the Ticket requester/assignment journey.
+- `pnpm build` passes.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration reset/deploy passes against isolated schema `phase_9_2_refinement_clean` with all 31 migrations applied.
+
+Phase 9.2 is complete/pass. Do not start Phase 9.3 automatically.
+
+### Phase 9.3 - Ticket Conversation + Internal Notes - COMPLETE / PASS
+
+Implemented:
+
+- One Ticket-scoped `TicketConversationEntry` model stores both `PUBLIC_REPLY` and `INTERNAL_NOTE` entries.
+- Public replies and internal notes share one chronological stream ordered deterministically by `createdAt` plus `id`.
+- Conversation history is immutable in Phase 9.3; no edit/delete conversation routes were introduced.
+- Conversation entries are Workspace/Ticket fenced through same-Workspace relations and service validation.
+- Authors are authenticated active same-Workspace `WorkspaceMembership` records at posting time.
+- Historical inactive authors remain readable through safe author summaries.
+- Public replies require `tickets.reply` in addition to current Ticket visibility.
+- Internal note creation requires `tickets.notes.create`.
+- Internal note visibility requires `tickets.notes.view`.
+- Internal notes are filtered server-side before pagination and count metadata.
+- Internal-note existence does not leak through pagination totals for actors without note-view permission.
+- Ticket visibility remains the Phase 9.2 authority for conversation list and post operations.
+- `tickets.view_all` expands Ticket visibility only and does not grant reply or note permissions.
+- Creator, requester, Department, and assignee state do not bypass conversation RBAC.
+- Message body is trimmed, bounded to 12,000 characters, stored as text, and rendered as plain text with preserved line breaks.
+- Raw HTML is not executed; HTML-like strings remain text in the UI.
+- Conversation text is excluded from `AuditLog` metadata.
+- Posting conversation emits dedicated `ticket.public_reply_added` or `ticket.internal_note_added` audit events.
+- Posting conversation does not auto-change Ticket status, auto-assign Ticket, change requester, or create SLA side effects.
+- No email, SMS, WhatsApp, portal, notification, attachment, report, CSV, queue, escalation, or SLA behavior was introduced.
+- Conversation retrieval is bounded and paginated.
+- Author summaries are loaded with the entry query; no per-entry request fan-out was introduced.
+- Ticket conversation query keys are Workspace + Ticket scoped.
+- Conversation drafts are component-local and are not persisted to localStorage.
+- Minimal Ticket detail conversation UI supports load-older behavior, public reply posting, internal note posting, permission-gated composer options, English/Tamil labels, and Light/Dark/Colorful theme inheritance.
+
+Focused refinement:
+
+- `TicketConversationEntry` remains the only Ticket conversation model.
+- `PUBLIC_REPLY` and `INTERNAL_NOTE` share one immutable stream.
+- Conversation entries cannot be edited or deleted through Phase 9.3 APIs.
+- Workspace/Ticket/author tenant fencing remains enforced by DB relations plus service checks.
+- Author must be an active same-Workspace membership at posting time.
+- Historical inactive authors remain readable and show safe inactive state.
+- `tickets.reply` controls Public Reply creation.
+- `tickets.notes.create` controls Internal Note creation.
+- `tickets.notes.view` controls Internal Note visibility.
+- `tickets.view` and current Ticket visibility remain mandatory.
+- `tickets.view_all` expands Ticket visibility only and does not grant conversation-action permissions.
+- Requester, Department, and assignee visibility do not bypass conversation RBAC.
+- Internal Notes are removed server-side before pagination and count.
+- Hidden Internal Notes do not leak through totals or visible pagination metadata.
+- Conversation ordering is deterministic by `createdAt` plus `id`.
+- Conversation history retrieval is bounded and paginated.
+- No per-entry author N+1 exists.
+- Body is required, trimmed for validation, bounded, Unicode-preserving, and rendered safely as non-executable text.
+- Body, requester PII, and raw DTOs are excluded from Audit metadata, logs, and query keys.
+- Posting conversation does not change status, requester, Department, or assignee.
+- Conversation posting has no SLA side effects.
+- `PUBLIC_REPLY` does not imply external delivery.
+- No attachment support was added.
+- Query/cache keys remain Workspace + Ticket scoped.
+- Draft content is not persisted in localStorage or sessionStorage.
+- Defense-in-depth UI filtering prevents Internal Note rendering when `tickets.notes.view` is absent even if a bad mock/response includes a note row.
+- Phase 7, Phase 8, Phase 9.1, and Phase 9.2 remain green.
+- No Phase 9.4+ functionality was introduced.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes 103/103 API integration tests and 11/11 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests, including the Ticket conversation journey.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration deploy passes on isolated scratch database `zea_play_phase93_refine_clean_*` with all 32 migrations applied.
+
+Phase 9.3 is complete/pass. Do not start Phase 9.4 automatically.
+
+### Phase 9.4 - SLA Policies + Timers - COMPLETE / PASS
+
+Implemented:
+
+- First Response and Resolution are separate SLA metrics on one Ticket SLA state record.
+- Workspace-scoped SLA policies use `TicketSlaPolicy`, `TicketSlaRule`, `TicketSlaPauseStatus`, and `TicketSlaState`.
+- At most one active default SLA policy can exist per Workspace.
+- LOW, MEDIUM, HIGH, and URGENT priorities require explicit target minutes for both SLA metrics.
+- SLA target values are validated and bounded.
+- SLA calendars use validated IANA timezone identifiers.
+- Business-hour calendars validate weekly open intervals and skip closed periods and configured holidays.
+- DST behavior is covered for spring-forward and fall-back transitions.
+- Pause statuses reference same-Workspace `StatusDefinition(TICKET)` IDs only; TASK, PROJECT, foreign, inactive, or terminal statuses are rejected.
+- New Tickets snapshot the effective SLA policy immutably at creation when an active default policy exists.
+- Editing a policy does not change existing Ticket SLA deadlines or target snapshots.
+- Ticket priority changes do not silently rewrite the active SLA state.
+- Historical Tickets without a default policy remain unconfigured rather than receiving synthetic deadlines.
+- Ticket creation and SLA initialization are atomic inside the Ticket create transaction.
+- Ticket creation still works when no default SLA policy exists.
+- First Response starts from Ticket creation and completes on the first qualifying internal `PUBLIC_REPLY`.
+- `INTERNAL_NOTE` never completes First Response.
+- An INTERNAL requester self-reply does not complete First Response.
+- First Response completion is one-shot.
+- Resolution completes on the first transition into a terminal same-Workspace `StatusDefinition(TICKET)`.
+- Resolution completion is one-shot and does not restart on reopen.
+- Pause stores remaining business minutes and prevents breach while paused.
+- Resume recalculates due dates from the stored remaining business minutes.
+- Completion after due date records breach against the logical due time.
+- Worker outage does not lose breach detection because breach scans compare persisted due dates.
+- Breach timestamps represent the logical SLA due time, not worker runtime.
+- The worker uses one bounded, idempotent recurring scanner and no one-delayed-job-per-Ticket design.
+- SLA behavior does not create per-second backend writes.
+- `tickets.sla.view` and `tickets.sla.manage` permissions are migration-backed and enforced by permission keys.
+- SLA state due/breach/completion fields are server-owned; clients cannot set them directly.
+- No SLA-triggered notification, escalation, status change, assignment change, queue feature, report, or CSV scope was introduced.
+- Minimal Ticket UI shows SLA state and a bounded policy creation surface with English/Tamil labels and theme inheritance.
+
+Focused refinement:
+
+- One Workspace-scoped Ticket SLA policy architecture exists; no duplicate SLA policy model was introduced.
+- Maximum one active default policy per Workspace is enforced by database uniqueness and serialized default flips.
+- Inactive policies cannot remain effective defaults for new Ticket initialization.
+- LOW/MEDIUM/HIGH/URGENT each have explicit First Response and Resolution targets.
+- First Response and Resolution targets are positive bounded integers and remain independent service commitments.
+- BUSINESS_HOURS with an empty work week is rejected; ALWAYS remains the explicit 24/7 mode.
+- Weekly schedules validate start/end order, overlap, split shifts, adjacent windows, and unsupported overnight windows.
+- Holidays are policy/snapshot scoped, timezone-local date strings, normalized unique, and harmless on non-working days.
+- Business-time arithmetic uses policy IANA timezone and is interval-based rather than minute-loop based.
+- Opening, closing, before-opening, after-closing, split-shift, holiday, and DST behavior is covered by unit tests.
+- Mutable policy configuration never controls existing Ticket SLA commitments.
+- Each Ticket SLA preserves immutable effective targets, calendar, holiday, timezone, and pause-status snapshots.
+- Ticket priority changes do not rewrite current SLA targets or snapshot priority.
+- Historical Tickets without SLA remain valid and unconfigured.
+- New Ticket SLA initialization remains atomic when a default policy exists.
+- Direct terminal Ticket creation marks First Response not applicable and completes Resolution without faking a reply.
+- First Response starts at Ticket creation.
+- First qualifying internal `PUBLIC_REPLY` completes First Response.
+- `INTERNAL_NOTE` never completes First Response.
+- Current INTERNAL requester self-reply does not complete First Response.
+- First Response is one-shot and late completion records breach without waiting for the worker.
+- First terminal Ticket status completes Resolution using `StatusDefinition.isTerminal`; status names/renames are irrelevant.
+- Resolution remains completed after reopen and later terminal transitions do not overwrite the first completion.
+- Pause/resume preserves remaining business time, paused metrics cannot breach, and breached metrics cannot be paused into mixed state.
+- Pausing at or after the due boundary records breach against the logical due time.
+- `breachedAt` records logical dueAt, not worker execution time.
+- The SLA scanner is bounded, idempotent, outage-safe, and uses safe claim/update semantics.
+- No per-Ticket delayed job architecture or per-second backend writes exist.
+- SLA state is server-authoritative and cannot be directly client-mutated.
+- `tickets.sla.view` and `tickets.sla.manage` use the permission engine with no role-name authorization.
+- Policy listing is Workspace-scoped and bounded.
+- Ticket list has no per-row SLA request fan-out.
+- Minimal UI creates policies without silently destroying richer backend SLA calendars.
+- No notifications, escalations, queues, saved views, reports, CSV, portal, email, WhatsApp, SMS, or automation were introduced.
+- Phase 7, Phase 8, Phase 9.1, Phase 9.2, and Phase 9.3 remain green.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration deploy passes on isolated scratch database `zea_play_phase94_refine_clean_*` with all 33 migrations applied.
+
+Phase 9.4 is complete/pass. Do not start Phase 9.5 automatically.
+
+### Phase 9.5 - Queues + Ticket Views + Filters - COMPLETE / PASS
+
+Implemented:
+
+- Extended the existing Ticket list engine rather than creating a second Ticket search path.
+- Built-in immutable queue IDs: `ALL_VISIBLE`, `MY_ASSIGNED`, `MY_REQUESTED`, `MY_DEPARTMENT`, `UNASSIGNED_MY_DEPARTMENT`, and `SLA_BREACHED`.
+- Server-side queue summary endpoint returns all built-in queue counts in one bounded response.
+- Extended Ticket filters for search, TICKET status, priority, requester type, internal requester, Department, assignee, assignment state, created/updated date ranges, SLA metric/state, and SLA due range.
+- Ticket sorting remains whitelisted and deterministic.
+- Pagination remains server-side and bounded.
+- `TicketSavedView` stores Workspace-scoped validated filter/sort configuration only.
+- PERSONAL saved views are owner-scoped to one `WorkspaceMembership`; WORKSPACE saved views are shared definitions.
+- Saved-view JSON is versioned with `filterSchemaVersion = 1` and parsed through a strict allowlist before persistence.
+- Saved-view create/update/delete permissions use `tickets.views.manage` and `tickets.views.manage_shared`.
+- Ticket list state is URL-backed for queue/filter/sort/page/view deep links, with React Query keys including Workspace and normalized query state.
+- Minimal queue/filter/saved-view UI was added to `/workspace/tickets` with English/Tamil labels, active filter chips, and accessible textual SLA/queue states.
+- Workspace switching clears tenant-bound URL view/filter IDs while preserving safe built-in queue context.
+- Shared saved-view edit/delete controls are hidden from users without `tickets.views.manage_shared`.
+
+Final invariants:
+
+- Queues are derived Ticket views, not Ticket copies.
+- Built-in queues do not persist Ticket membership.
+- Every queue/view applies current Ticket visibility before filtering/count/pagination.
+- `tickets.view` remains mandatory.
+- `tickets.view_all` remains Workspace bounded.
+- Creator does not become queue/visibility authority.
+- Built-in queues include All Visible, My Assigned, My Requested, My Department, Unassigned My Department, and SLA Breached.
+- Queue counts are server aggregated and hidden Tickets never affect counts.
+- Extended filters are server-side and composable.
+- Foreign filter IDs cannot leak data.
+- SLA filters use authoritative persisted `TicketSlaState`.
+- Ticket sorting is whitelisted and deterministic.
+- Pagination remains bounded/server-side.
+- `TicketSavedView` stores validated filter/sort configuration only.
+- Saved views never store authoritative Ticket IDs.
+- Saved-view JSON is versioned/strictly validated.
+- PERSONAL views are owner scoped.
+- WORKSPACE views are shared without broadening Ticket visibility.
+- Shared views created by privileged users remain safely filtered for scoped users.
+- `tickets.views.manage` / `tickets.views.manage_shared` use the permission engine.
+- No role-name authorization was introduced.
+- Built-in queues are immutable.
+- Saved-view mutations never silently happen from temporary filter edits.
+- Queue/view/filter state is URL/deep-link compatible.
+- Workspace switching clears tenant-bound filter/view IDs.
+- Temporary filter clearing and filter chips do not silently mutate saved views and do not drop the selected built-in queue.
+- Query keys include Workspace and normalized queue/view/filter state.
+- No list/queue N+1 or frontend request fan-out exists for queue counts.
+- No queue materialization worker or Redis dependency exists.
+- No escalation, auto-assignment, notifications, reports, or CSV were introduced.
+- Phase 7, Phase 8, and Phase 9.1-9.4 remain green.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration deploy passes on isolated scratch database `zea_play_phase95_refine_clean_*` with all 34 migrations applied and no pending migrations.
+
+Phase 9.5 is complete/pass. Do not start Phase 9.6 automatically.
+
+### Phase 9.6 — ESCALATION + ASSIGNMENT WORKFLOW — COMPLETE / PASS
+
+Implemented:
+
+- Added structural current Ticket escalation state with `TicketEscalationLevel` enum values `NONE`, `LEVEL_1`, `LEVEL_2`, and `LEVEL_3`.
+- Added current escalation metadata on Ticket: changed timestamp, changed-by Workspace membership, and bounded latest reason.
+- Added migration-backed `tickets.claim` and `tickets.escalate` permissions.
+- Added self-claim endpoint for visible, unassigned Tickets with a Department.
+- Hardened assignment updates with stale-write protection while preserving the Phase 9.2 assignment validator as the assignment authority.
+- Added manual escalation endpoint using action + expectedLevel + bounded reason; server derives the next level.
+- Added AuditLog events for successful claim and escalation changes.
+- Added Ticket detail/list escalation display without per-row escalation requests.
+- Added frontend claim action, assignment workflow continuity, and escalation/de-escalation/clear reason dialog.
+- Extended the deterministic Ticket Playwright journey to cover claim and manual escalation actions.
+- Hardened focused checklist coverage for claim stale writes, assigned-ticket takeover rejection, active Department membership requirement, and duplicate escalation stale rejection.
+
+Final invariants:
+
+- Phase 9.2 assignment model remains the single Ticket assignment authority.
+- `tickets.assign` continues to control manual assignment/reassignment/unassignment/Department transfer.
+- `tickets.claim` controls self-claim only.
+- Claim requires visible unassigned Ticket with Department.
+- Claimant must be active current member of Ticket Department.
+- Claim never permits takeover of already-assigned Ticket.
+- Claim is concurrency-safe and exactly one concurrent claimant wins; stale Department/assignment changes reject with conflict.
+- Claim does not require `tickets.assign`.
+- `tickets.claim` cannot assign another user.
+- Assignment final Department/assignee pair remains transactionally validated.
+- No automatic assignment algorithm exists.
+- Escalation state is independent from Ticket status/priority/SLA/assignment.
+- Escalation levels are `NONE`/`LEVEL_1`/`LEVEL_2`/`LEVEL_3`.
+- `ESCALATE`/`DEESCALATE` move one level only.
+- `CLEAR` may return any escalated Ticket directly to `NONE`.
+- Every actual escalation change requires bounded reason.
+- `tickets.escalate` controls escalation mutation.
+- Client cannot directly set escalation target level.
+- Escalation mutations require `expectedLevel` to prevent stale/double transitions.
+- Concurrent duplicate escalation cannot accidentally advance two levels.
+- Escalation history uses AuditLog, not a duplicate history table.
+- Escalation Audit history retains bounded reasons.
+- SLA breach does not automatically escalate.
+- Status changes do not automatically escalate/clear escalation.
+- Assignment changes do not automatically change escalation.
+- Conversation changes do not automatically change escalation.
+- No notification side effects exist.
+- Derived Phase 9.5 queues remain derived; claim merely changes authoritative assignment.
+- No queue membership storage is introduced.
+- Current escalation level is available without per-row request fan-out.
+- No role-name authorization exists.
+- All claim/assignment/escalation operations remain Workspace fenced.
+- No Phase 9.7+ functionality was introduced.
+- Phase 7, Phase 8, and Phase 9.1-9.5 remain green.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 50 API unit tests, 117 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration deploy passes on isolated scratch database `zea_play_phase96_final_clean_*` with all 35 migrations applied, including `0035_phase9_6_escalation_assignment_workflow`, and no pending migrations.
+
+Phase 9.6 is complete/pass. The next step is Phase 9.7 — Attachments + Activity, and it must not start automatically.
+
+### Phase 9.7 — TICKET ATTACHMENTS + ACTIVITY — COMPLETE / PASS
+
+Implemented:
+
+- Added Ticket attachment link storage through `TicketAttachment` and conversation attachment link storage through `TicketConversationAttachment`.
+- Reused the existing `Attachment`/`Asset`/MinIO/upload/presign/processing-job architecture; no duplicate Ticket file storage model was introduced.
+- Added migration-backed `tickets.attachments.view`, `tickets.attachments.add`, `tickets.attachments.remove`, and `tickets.activity.view` permissions.
+- Added Ticket attachment list, upload-init, upload-complete, URL attach, reuse/link, download, and unlink endpoints.
+- Added conversation `attachmentIds` support with max-10 validated same-Workspace attachments and atomic entry/link creation.
+- Added conversation attachment download authorization through the containing visible Ticket and visible conversation entry.
+- Added Ticket activity API backed by `AuditLog`, with note/attachment activity filtered by capability before count and pagination.
+- Added safe activity metadata serialization; storage keys, external requester PII, internal note body, and escalation reasons are not surfaced.
+- Added Ticket detail UI for attachments, conversation attachment selection/rendering, and lazy activity loading.
+- Added focused service tests for attachment listing without presign fan-out, activity privacy filtering before pagination, workspace-scoped actor membership filters, activity action allowlisting, and safe URL attachment audit metadata.
+- Focused refinement changed Ticket Activity actor filtering to `actorMembershipId` with same-Workspace validation.
+- Focused refinement keeps default URL attachment display labels free of remote query/hash data while preserving the actual URL attachment target.
+- Focused refinement added accessible labels to attachment open/download/remove controls and uses `noopener,noreferrer` for URL opens.
+- Stabilized a date-sensitive Project reports integration fixture by moving report due dates out of the current date window.
+
+Final invariants:
+
+- Existing `Attachment`/`Asset`/MinIO remains the Ticket physical-storage authority.
+- No `TicketFile`, `TicketAsset`, `TicketDocument`, `TicketUpload`, `TicketActivity`, `TicketHistory`, `TicketActivityLog`, or `TicketEvent` model exists.
+- Ticket attachments are relation links to existing attachments, not a second storage model.
+- `TicketAttachment` is the Ticket-level relation; `TicketConversationAttachment` is the immutable conversation relation.
+- Workspace fencing applies to Ticket and conversation attachment relations through composite workspace foreign keys.
+- FILE/URL Attachment invariants remain unchanged.
+- Ticket-level removal unlinks only; it does not physically delete assets or decrement quota.
+- Physical storage quota changes only for new Asset creation; link/reuse/unlink do not alter physical quota.
+- Conversation attachments are immutable after post.
+- Conversation entry, attachment links, and success audit commit atomically.
+- File downloads produce presigned URLs only from explicit download endpoints.
+- Presigned URLs are never returned in list DTOs, audit metadata, logs, or persisted frontend state.
+- Ticket and conversation attachment download authorization is scoped by current Ticket visibility and attachment permissions.
+- Attachment ID alone never authorizes download.
+- URL attachments accept only `http`/`https`.
+- File attachment reuse requires same Workspace and ready file assets.
+- Internal note activity is hidden without `tickets.notes.view`.
+- Internal Note attachments require `tickets.notes.view` through conversation visibility to read or download.
+- Attachment activity is hidden without `tickets.attachments.view`.
+- Hidden note/attachment events are removed before Activity count, pagination, and `hasMore` semantics.
+- Activity is `AuditLog`-backed; no `TicketActivity` table exists.
+- `tickets.activity.view` independently gates Activity and Ticket visibility remains mandatory.
+- Activity DTO metadata is per-event allowlisted and excludes conversation bodies, requester PII, secrets, storage keys, presigned URLs, and raw audit metadata.
+- Attachments and Activity remain bounded/lazy with Workspace/Ticket-scoped query keys and no Asset/actor/conversation-attachment request fan-out.
+- Permission checks remain permission-key based; no role-name authorization exists.
+- No notification side effects were added.
+- No reports, CSV, notifications, automation, cloud-drive, malware-scanner, or Phase 9.8 functionality was introduced.
+- Phase 7, Phase 8, and Phase 9.1-9.6 remain green.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 54 API unit tests, 117 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration deploy passes on isolated scratch database `zea_play_phase97_refine_clean_*` with all 36 migrations applied, including `0036_phase9_7_ticket_attachments_activity`, and no pending migrations.
+
+Phase 9.7 is complete/pass. The next step is Phase 9.8 — SERVICE DESK REPORTS + CSV, and it must not start automatically.
+
+### Phase 9.8 — SERVICE DESK REPORTS + CSV — COMPLETE / PASS
+
+Implemented:
+
+- Added migration-backed `tickets.reports.view` and `tickets.reports.export` permissions with intended Workspace system-role grants only.
+- Added Workspace Ticket report summary API and CSV export API under `/workspaces/:workspaceId/tickets/reports`.
+- Reused the Phase 9.5 `ticketWhere()` path for report and CSV population, including current visibility, queue predicates, server filters, search, date filters, SLA filters, and foreign-ID validation.
+- Added current-state KPIs for total, open, terminal, unassigned, escalated, SLA breached, and SLA not configured Tickets.
+- Added server-derived status, priority, requester-type, escalation, Department, and assignee breakdowns.
+- Added Ticket creation trend from `Ticket.createdAt` and first terminal-resolution trend from reliable `ticket.status_changed` AuditLog evidence.
+- Added First Response and Resolution SLA summaries using `TicketSlaState`, with compliance based only on MET and BREACHED outcomes.
+- Added CSV export for authorized filtered Ticket rows with formula-injection protection, UTF-8 BOM, safe quoting, explicit 10,000-row cap, and conservative field selection.
+- Added minimal `/workspace/tickets/reports` UI with KPI cards, textual breakdowns, trend lists, SLA summaries, filters, and Export CSV.
+- Added English/Tamil report labels and Workspace navigation entry.
+- Added focused API tests for report authorization and CSV safety.
+
+Final invariants:
+
+- Service Desk Reports are server-derived and do not duplicate Ticket data.
+- No report snapshot/cache/materialization table or report worker was introduced.
+- One authorized filtered Ticket population drives report metrics and CSV export.
+- Phase 9.2 Ticket visibility remains mandatory before aggregation.
+- `tickets.view` remains required.
+- `tickets.reports.view` independently gates reports.
+- `tickets.reports.export` independently gates CSV export.
+- `tickets.view_all` remains Workspace bounded.
+- Queues never broaden report visibility.
+- Current Ticket KPIs use current Ticket state.
+- Terminal semantics use `StatusDefinition(TICKET).isTerminal`, never status names.
+- Status, priority, Department, assignee, requester-type, and escalation breakdowns are server aggregated.
+- Creation trend uses `Ticket.createdAt`.
+- Resolution trend is truthfully labelled as first terminal resolution and uses reliable terminal AuditLog evidence.
+- Resolution trend determines the first terminal transition per Ticket before applying the report date window, so reopen/re-resolve activity cannot double-count first resolution.
+- Ticket SLA reporting uses authoritative `TicketSlaState`, not mutable current SLA policy.
+- First Response and Resolution SLA summaries remain independent.
+- SLA compliance excludes running, paused, not applicable, and not configured metrics from the completed denominator.
+- A metric completed after breach remains BREACHED.
+- Report filters remain server-side and tenant-safe.
+- Foreign filter IDs cannot leak data.
+- Reports UI uses bounded server aggregates, not browser full-data calculations.
+- CSV uses exact active Report filters and current authorization.
+- CSV is not current-page-only.
+- CSV protects against spreadsheet formula injection.
+- CSV preserves UTF-8/Tamil and correct quoting.
+- CSV excludes requester contact PII, conversations, attachments, presigned URLs, raw Audit metadata, and escalation reason.
+- Export caps/errors are explicit and never silently truncate.
+- Report query keys are Workspace/filter scoped.
+- Ticket list/detail do not preload Reports.
+- No per-Ticket SLA/Audit/assignee frontend request fan-out exists.
+- No scheduled, PDF, email, notification, AI, or Phase 9.9+ report scope was introduced.
+- No role-name authorization exists.
+- Phase 7, Phase 8, and Phase 9.1-9.7 remain green.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 57 API unit tests, 117 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean migration deploy passes on isolated scratch database `zea_play_phase98_final_clean_*` with all 37 migrations applied, including `0037_phase9_8_ticket_reports_csv_permissions`, and no pending migrations.
+
+Phase 9.8 is complete/pass. The next step is Phase 9.9 — Ticket UI Integration, and it must not start automatically.
+
+### Phase 9.9 — TICKET UI INTEGRATION — COMPLETE / PASS
+
+Implemented:
+
+- Kept `/workspace/tickets` as the canonical Workspace Ticket list route.
+- Kept `/workspace/tickets/:ticketId` as the canonical Ticket detail route.
+- Kept `/workspace/tickets/reports` as the canonical Workspace Service Desk Reports route.
+- Preserved one Workspace Ticket list implementation and one Ticket detail shell.
+- Integrated Ticket list navigation with built-in queues, queue summary counts, Saved Views, server filters, active filter chips, sort, pagination, and URL state.
+- Added a permission-gated Ticket Reports action from the Ticket list without preloading reports.
+- Expanded the desktop Ticket list to show implemented Ticket fields: Ticket Number, Subject, Requester, Department, Assigned To, Status, Priority, Escalation, and Updated.
+- Converted Ticket detail into a single URL-backed tab shell with Overview, Conversation, Attachments, and Activity.
+- Kept SLA in Overview and removed the individual Ticket detail SLA policy editor surface.
+- Made Conversation, Attachments, and Activity independently lazy by active detail tab.
+- Updated Ticket tests and e2e flow to use the modern tabbed detail contract.
+- Added English/Tamil labels for Ticket detail tab navigation.
+
+Focused refinement:
+
+- Verified canonical Ticket routes and found no legacy competing Ticket route hits for `/dashboard/tickets`, `/support/tickets`, `/service-desk`, `/service-desk-v2`, or `/ticket-v2`.
+- Kept one Workspace Ticket list implementation and one modern Ticket detail shell.
+- Tightened detail tabs with explicit `tab`/`tabpanel` relationships while preserving URL-backed deep links and invalid-tab fallback.
+- Kept inactive detail panels unmounted and gated the SLA card request to the active Overview tab.
+- Preserved Conversation, Attachments, and Activity lazy loading by active tab.
+- Clarified built-in queue and escalation display labels without changing machine IDs or backend enums.
+- Replaced unknown activity action display fallback with safe localized Ticket activity text instead of exposing raw AuditLog action keys.
+- Updated focused React/Vitest and Playwright assertions for tab lazy loading and the Not Escalated label.
+
+Final invariants:
+
+- `/workspace/tickets` is the canonical Workspace Ticket route.
+- `/workspace/tickets/:ticketId` is the canonical Ticket detail route.
+- `/workspace/tickets/reports` is the canonical Service Desk Reports route.
+- One Ticket list implementation exists.
+- One Ticket detail shell exists.
+- Ticket list integrates queues, Saved Views, filters, sort, pagination, active chips, and URL state.
+- Built-in queues remain server-derived and immutable.
+- Saved Views remain explicit configuration and never broaden Ticket visibility.
+- Ticket create integrates explicit requester and optional permission-gated assignment.
+- Creator does not receive implicit visibility.
+- Overview integrates requester, Department, assignment, claim, escalation, and SLA using existing services.
+- Claim, assign, requester, escalation, SLA, notes, attachments, activity, reports, and CSV permissions remain independent frontend gates while backend remains authoritative.
+- Escalation submits action, reason, and current `expectedLevel`; no target-level mutation was introduced.
+- SLA remains server-authoritative and policy management is not embedded into Ticket detail.
+- Conversation reuses the Phase 9.3 chronological stream.
+- Internal Notes remain capability-protected.
+- Attachments reuse the Phase 9.7 Attachment architecture.
+- Conversation attachments remain immutable after post.
+- Activity remains AuditLog-backed and privacy-filtered.
+- Reports remain Workspace-level and server-aggregated.
+- CSV remains server-authorized/export-safe.
+- Detail tab state is deep-link/refresh compatible through `tab` URL state.
+- Conversation, Attachments, and Activity remain independently lazy.
+- Overview does not preload Conversation, Attachments, Activity, or Reports.
+- SLA data is requested only for the active Overview tab and only when `tickets.sla.view` is present.
+- Reports are not preloaded from Ticket list/detail.
+- Clear Filters preserves the active built-in queue.
+- Saved View temporary edits never silently persist.
+- No sensitive Ticket PII/body/presigned URL is persisted in URL/query keys/localStorage.
+- Workspace/Ticket switching clears tenant-bound transient dialogs/forms.
+- Ticket access loss clears sensitive detail state and navigates safely.
+- Permission loss removes capability-specific sensitive UI.
+- Query keys remain Workspace/Ticket/filter scoped.
+- Mutation invalidation remains targeted to Ticket detail/list/queue/activity surfaces.
+- No role-name authorization exists.
+- No client-side business authority was introduced.
+- Ticket list/detail have no demonstrated per-row/heavy-tab request fan-out.
+- Responsive/accessibility/English-Tamil/Light-Dark-Colorful coverage remains in the existing Ticket and shell tests.
+- No Phase 9.10/future features were introduced.
+- Phase 7, Phase 8, and Phase 9.1-9.8 remain green.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 57 API unit tests, 117 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- No migration was introduced for Phase 9.9, so no clean migration deploy was required.
+
+Phase 9.9 is complete/pass. The next step is Phase 9.10 — Final Ticket Security + Performance Audit, and it must not start automatically.
+
+### Phase 9.10 — FINAL TICKET SECURITY + PERFORMANCE AUDIT — COMPLETE / PASS
+
+Final audit:
+
+- Audited the Phase 9 Ticket / Service Desk module across tenant isolation, Ticket numbering, StatusDefinition(TICKET), requester, Department, assignment, claim, visibility, conversation, Internal Notes, SLA, queues, Saved Views, escalation, attachments, Activity, Reports, CSV, frontend routing/state, query/cache isolation, AuditLog, concurrency, database constraints, migrations, worker safety, performance, responsive/accessibility, English/Tamil, Light/Dark/Colorful, and Phase 7/8 regression.
+- Static audit found no duplicate Ticket business model, Ticket V2 route, Ticket queue membership storage, client-side Ticket numbering authority, status-name lifecycle authority, or Phase 10 scope.
+- Clean migration deploy passed on isolated scratch database `zea_play_phase910_final_clean_20260921021222` with all 37 migrations applied, including Phase 9 migrations `0030` through `0037`, and `prisma migrate status` reported the schema up to date.
+- No product functionality change was required for Phase 9.10.
+
+Final Phase 9 invariants:
+
+- One Workspace-scoped Ticket model exists; Ticket UUID remains primary identity.
+- Workspace-scoped `TKT-000001` numbering is PostgreSQL-backed through `WorkspaceTicketCounter` and remains concurrency safe.
+- `StatusDefinition(TICKET)` remains the sole lifecycle engine; terminal behavior never depends on status names.
+- Ticket deletion remains soft delete.
+- Creator remains provenance only and never grants visibility.
+- Requester is INTERNAL or EXTERNAL and remains independent from creator.
+- Ticket Department reuses shared Department.
+- Assignment uses `WorkspaceMembership` and current Department validity.
+- `tickets.view` remains mandatory; `tickets.view_all` remains Workspace bounded.
+- Scoped Ticket visibility is current requester, Department, or valid assignment.
+- Visibility is enforced before search, count, filter, pagination, queues, reports, and CSV.
+- Hidden Tickets cannot leak through exact search, counts, queue totals, reports, or CSV.
+- Custom-role RBAC remains authoritative and no role-name authorization exists.
+- Claim remains self-claim only and concurrency safe.
+- Manual assignment remains Phase 9.2 authority.
+- Ticket conversation remains one immutable `PUBLIC_REPLY` / `INTERNAL_NOTE` stream.
+- Internal Note visibility is filtered before pagination and count.
+- Conversation body never leaks into Audit metadata.
+- SLA uses immutable policy snapshots and business-time/IANA timezone arithmetic.
+- SLA First Response and Resolution remain independent one-shot metrics.
+- SLA pause behavior references `StatusDefinition(TICKET)` IDs.
+- SLA worker is bounded, idempotent, and outage safe.
+- SLA breach never auto-escalates, auto-assigns, or notifies.
+- Queues remain derived Ticket views with no queue membership storage.
+- Saved Views store validated filter/sort configuration only and never transfer creator privileges.
+- Escalation remains structurally independent from status, priority, SLA, and assignment.
+- `expectedLevel` prevents stale/double escalation; escalation history uses `AuditLog`.
+- Attachment/Asset remains physical storage authority.
+- `TicketAttachment` and `TicketConversationAttachment` are relation models only; unlink never physically deletes shared Asset.
+- Internal Note attachments inherit note privacy.
+- Presigned download URLs are on-demand and never persisted/logged.
+- Ticket Activity uses `AuditLog` only; privacy filters hidden note/file events before count/pagination and returns allowlisted safe metadata only.
+- Reports are server aggregated from one authorized filtered Ticket population.
+- Resolution trend uses first reliable terminal Audit event before date-window filtering.
+- SLA reporting uses `TicketSlaState` authority.
+- CSV uses exact active filters/current authorization, is not page-only, protects against formula injection, and omits requester contact PII, conversation, attachment secrets, and raw Audit data.
+- `/workspace/tickets`, `/workspace/tickets/:ticketId`, and `/workspace/tickets/reports` are the canonical Ticket routes.
+- One Ticket list and one Ticket detail shell exist.
+- Overview, Conversation, Attachments, and Activity integrate Phase 9 systems; heavy detail surfaces lazy-load independently.
+- SLA loads only where intended; reports never preload from Ticket list/detail.
+- Workspace/Ticket switching clears tenant-bound transient state.
+- Access/capability loss clears sensitive cached UI.
+- Ticket query keys remain Workspace/Ticket/source/filter scoped.
+- Normal mutations use targeted cache invalidation.
+- No demonstrated Ticket list/detail/report N+1 or request fan-out remains.
+- No unnecessary Redis/worker/materialization architecture was introduced.
+- Complete Service Desk UI is responsive/accessibility safe.
+- English/Tamil cover Service Desk UI.
+- Light/Dark/Colorful cover Service Desk UI.
+- Clean migration chain passes.
+- Phase 7 and Phase 8 remain green.
+- No Phase 10+ functionality was introduced.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 57 API unit tests, 117 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 20/20 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase910_final_clean_20260921021222`; no pending migrations remain.
+
+### Phase 9 — TICKET / SERVICE DESK SYSTEM — COMPLETE / PASS
+
+Phase 9 is complete/pass across Ticket Core + Status Engine, Requester + Department + Assignment, Conversation + Internal Notes, SLA Policies + Timers, Queues + Ticket Views + Filters, Escalation + Assignment Workflow, Ticket Attachments + Activity, Service Desk Reports + CSV, Ticket UI Integration, and the final Ticket security/performance/integration audit.
+
+The next phase is Phase 10 — Gamification, XP, Rewards & Leaderboards, and it must not start automatically.
+
+### Phase 10.1 — GAMIFICATION CORE + XP LEDGER Implementation — PASS
+
+Implemented:
+
+- Added a Workspace-scoped immutable `GamificationXpEntry` ledger.
+- XP targets and actors use `WorkspaceMembership` identity, not `User` alone.
+- XP entries are bounded, nonzero signed integer deltas with server-side entry/source/event validation.
+- XP entry types are `EARN`, `DEDUCT`, `REVERSAL`, and `ADJUSTMENT`.
+- XP source types are `TASK`, `PROJECT`, `TICKET`, `STREAK`, `ACHIEVEMENT`, `MANUAL`, and `SYSTEM` for future central-service integrations only.
+- Current XP is derived by summing ledger entries; no stored mutable balance exists.
+- Lifetime earned and deducted totals are server aggregates.
+- Idempotency is enforced with a Workspace/member/idempotency-key unique constraint and same-semantics replay.
+- Negative XP is allowed only when the resulting aggregate balance remains at or above zero.
+- Reversal infrastructure creates a bounded compensating `REVERSAL` entry and prevents reversal chains or duplicate reversal of the same entry.
+- New XP entries require an active target Workspace membership.
+- Actor membership, when supplied, must belong to the same Workspace.
+- Public APIs are read-only: `GET /workspaces/:workspaceId/gamification/me/xp` and `GET /workspaces/:workspaceId/gamification/me/xp/history`.
+- No public XP write API was introduced.
+- `gamification.view` is the only Phase 10.1 runtime permission and is enforced independently through RBAC.
+- Minimal `/workspace/gamification` UI was added with Overview and History tabs only.
+- The UI uses server summary/history APIs, Workspace-scoped query keys, English/Tamil copy, and Light/Dark/Colorful theme inheritance.
+
+Final Phase 10.1 invariants:
+
+- `GamificationXpEntry` is append-only by service contract; XP balance is never updated in place.
+- Database constraints enforce nonzero amount, amount bounds, entry/source enums, nonblank bounded text, idempotency uniqueness, one reversal per original entry, same-Workspace target membership, and same-Workspace actor membership.
+- Central `GamificationService` is the only XP write surface for future modules.
+- Idempotency keys cannot silently apply a different amount, entry type, source type, source event, source entity, or reversal target.
+- Balance floor checks occur inside the write transaction after locking the target membership row.
+- Summary and history endpoints are self-scoped to the authenticated Workspace membership.
+- History pagination is server-side with deterministic `createdAt desc, id desc` ordering.
+- XP reason/idempotency internals are not placed into frontend URL state or local storage.
+- No levels, reward points, badges, achievements, streak tracking, leaderboards, manual admin adjust/reset UI, XP rule configuration UI, pressure score integration, task/project/ticket automatic XP award, worker, Redis, or Phase 10.2 scope was introduced.
+
+Verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 64 API unit tests, 119 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase101_clean_20260921025854` with all 38 migrations applied, including `0038_phase10_1_gamification_xp_ledger`; no pending migrations remain.
+
+Phase 10.1 implementation is pass. The next step is Phase 10.1 Focused Refinement, and it must not start automatically.
+
+Focused checklist refinement:
+
+- Added database-level `UPDATE` and `DELETE` prevention triggers for `gamification_xp_entries`, preserving append-only ledger immutability beyond the service contract.
+- Added focused unit coverage proving the same user can hold independent XP through different Workspace memberships.
+- Added focused unit coverage proving inactive historical memberships can still read XP summary/history while new XP writes are rejected.
+- Reconfirmed no public arbitrary-XP write API exists.
+- Reconfirmed no direct Task/Project/Ticket XP row insertion path exists.
+- Reconfirmed no levels, reward points, streak computation, badges, achievements, leaderboards, pressure score integration, automatic business XP awards, Redis XP authority, XP worker, or Phase 10.2+ scope was introduced.
+
+Focused verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 66 API unit tests, 119 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase101_focused_clean_20260921030450` with all 39 migrations applied, including `0038_phase10_1_gamification_xp_ledger` and `0039_phase10_1_xp_ledger_immutability`; no pending migrations remain.
+- Scratch database trigger audit confirms `gamification_xp_entries_prevent_update` and `gamification_xp_entries_prevent_delete` are installed.
+
+Phase 10.1 focused checklist is pass. The next step is Phase 10.1 Final Completion Verification, and it must not start automatically.
+
+Final completion verification:
+
+- XP belongs to `WorkspaceMembership`, never global `User`.
+- The same user can have independent XP across Workspaces through separate Workspace memberships.
+- Immutable `GamificationXpEntry` ledger is the XP source of truth.
+- XP ledger immutability is enforced in application code and by database triggers from `0039_phase10_1_xp_ledger_immutability`.
+- No mutable `user.xp`, `membership.xp`, or `xpBalance` field is authoritative.
+- Current XP is server-derived from committed signed ledger entries.
+- XP balance cannot fall below zero.
+- Concurrent deductions preserve the zero floor through transaction-scoped membership locking and aggregate floor checks.
+- Positive concurrent awards remain valid.
+- Mixed earn/deduct races commit only valid non-negative final balances.
+- One central Gamification XP service owns XP writes.
+- Task, Project, and Ticket modules do not directly insert XP entries.
+- No arbitrary public XP-write API exists.
+- System XP writes are idempotent.
+- Duplicate concurrent events produce one XP effect through database-backed idempotency uniqueness.
+- Conflicting idempotency payloads are rejected.
+- Exact reversal infrastructure exists.
+- One original entry may be reversed at most once.
+- Reversals remain subject to the XP floor and reversal chains are rejected.
+- XP history is append-only and cannot be mutated or deleted.
+- Same-Workspace target and actor membership fences remain enforced.
+- Inactive memberships retain history but cannot receive new XP.
+- `gamification.view` independently gates own Workspace XP summary/history.
+- Normal users cannot inspect arbitrary membership XP.
+- XP summary is server aggregated.
+- XP history is bounded, server-paginated, and stably ordered by `createdAt DESC`, `id DESC`.
+- History does not hydrate Task, Project, or Ticket details per row.
+- `/workspace/gamification` remains the single Gamification route.
+- Only Overview and History exist in Phase 10.1.
+- Gamification navigation and page access are permission-key gated by `gamification.view`, with no role-name UI authorization.
+- No Level, Badge, Achievement, Streak, Reward, or Leaderboard implementation exists.
+- Pressure Score remains separate from Gamification XP.
+- No automatic business XP awards or XP values exist yet.
+- No Redis XP authority or XP worker exists.
+- No role-name authorization exists.
+- Phase 7, Phase 8, and Phase 9 remain green.
+
+Final verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 66 API unit tests, 120 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase101_final_clean_20260921032317` with all 39 migrations applied, including `0038_phase10_1_gamification_xp_ledger` and `0039_phase10_1_xp_ledger_immutability`; no pending migrations remain.
+- Scratch database trigger audit confirms `gamification_xp_entries_prevent_update` and `gamification_xp_entries_prevent_delete` are installed.
+
+Phase 10.1 is complete/pass. The next step is Phase 10.2 — Levels + Progression, and it must not start automatically.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -1821,6 +2794,45 @@ Phase 8.8 is complete/pass after focused refinement. Do not start Phase 8.9 auto
 - Project-filtered Task views must enforce both Task access and visible Project access; Project membership must not create Task ACL.
 - Project Files must reuse `ProjectAttachment` / `Attachment` / `Asset`; unlink must remove only the Project relation and must not physically delete stored assets.
 - Project Activity must read from `AuditLog` with allowlisted Project actions and safe metadata only.
+- Project Reports must remain server aggregated, tenant safe, and filtered through visible Project-linked Tasks.
+- Project CSV exports must be formula-injection protected and must not expose inaccessible or sensitive data.
+- Project runtime permissions must use permission keys; legacy role names or singular permission aliases must not authorize Phase 8 Project actions.
+- One Project Detail shell must integrate Project Overview, Tasks, Kanban, Timeline, Files, Members, Activity, and Reports.
+- Heavy Project tabs must lazy-load independently without Overview request fan-out.
+- Project query/cache keys must remain Workspace/Project scoped with targeted mutation invalidation.
+- Phase 8 Project code must not introduce Phase 9 Ticket / Service Desk behavior.
+- Ticket core uses one Workspace-scoped `Ticket` model and one `WorkspaceTicketCounter`; no duplicate Ticket core/status/counter table should be added.
+- Ticket primary identity is UUID; human Ticket numbers are Workspace-scoped `TKT-000001` style identifiers.
+- Ticket numbering must remain PostgreSQL-backed and atomic per Workspace; no `MAX + 1`, count-derived, frontend-derived, Redis-derived, or time-derived numbering path.
+- Ticket lifecycle must use same-Workspace `StatusDefinition(TICKET)` records only.
+- Ticket runtime must not depend on status names for authorization or core lifecycle validation.
+- Ticket default statuses must be provisioned for existing and future Workspaces.
+- Ticket priority remains `LOW`, `MEDIUM`, `HIGH`, and `URGENT`.
+- `createdByMembershipId` is creator metadata only and must not become requester, assignee, owner, watcher, participant, or access-control logic.
+- Ticket CRUD and list operations must remain Workspace scoped and exclude soft-deleted Tickets.
+- Ticket permissions must use `tickets.view`, `tickets.view_all`, `tickets.create`, `tickets.update`, `tickets.delete`, `tickets.assign`, `tickets.manage_requester`, `tickets.reply`, `tickets.notes.view`, and `tickets.notes.create`; role names must not grant Ticket authorization.
+- Ticket audit events must use `AuditLog` with bounded safe metadata.
+- Ticket query/cache keys must include Workspace identity.
+- Ticket requester can be INTERNAL or EXTERNAL; creator remains separate and legacy requester-null Tickets remain valid.
+- Ticket Department must reuse the existing Department model, and assignee eligibility must use `WorkspaceMembership.departmentId`.
+- Scoped Ticket visibility must be enforced before list pagination/count/search and direct detail access.
+- Ticket conversation uses one Ticket-scoped `TicketConversationEntry` stream for `PUBLIC_REPLY` and `INTERNAL_NOTE` entries.
+- Ticket conversation entries are immutable in Phase 9.3, same-Workspace fenced, and authored by active Workspace memberships at posting time while historical inactive authors remain readable.
+- Internal notes must be filtered server-side before count and pagination and must require `tickets.notes.view`.
+- Public reply and internal note creation must use dedicated permission keys and must not be granted by `tickets.view_all`, creator/requester/Department/assignee state, or role names.
+- Conversation text must remain out of Audit metadata, logs, URLs, and query keys.
+- Ticket conversation posting must not auto-change Ticket status, auto-assign Ticket, change requester, or create SLA/notification/delivery side effects.
+- Ticket SLA uses separate First Response and Resolution metrics, Workspace-scoped policy/rule/pause-status tables, immutable per-Ticket policy snapshots, and one `TicketSlaState` per Ticket.
+- Ticket SLA pause rules must reference same-Workspace `StatusDefinition(TICKET)` IDs, never status names.
+- Ticket SLA completion must be one-shot, breach detection must be idempotent and based on persisted due dates, and SLA events must never mutate Ticket status or assignment.
+- Ticket SLA worker processing must remain bounded recurring scan work, with no one-delayed-job-per-Ticket or per-second write architecture.
+- Phase 9 Ticket code must not introduce attachments, reporting, escalation, portal, email, WhatsApp, or notification behavior before their explicit phases.
+- Gamification XP uses one Workspace-scoped append-only `GamificationXpEntry` ledger.
+- XP targets and actors must use same-Workspace `WorkspaceMembership` IDs; `User` IDs alone are never XP identity.
+- Current XP must remain a server aggregate over ledger amounts; no stored mutable XP balance should be introduced.
+- Future XP writers must call `GamificationService`; public APIs remain read-only until an explicit later phase.
+- XP writes must preserve idempotency, active target membership validation, same-Workspace actor validation, transaction-scoped balance floor checks, and bounded reversal semantics.
+- Phase 10.1 code must not introduce levels, rewards, badges, achievements, streak computation, leaderboards, XP rule UI, automatic task/project/ticket XP awards, pressure score integration, workers, Redis, or Phase 10.2 scope.
 - Project `plannedStartAt` and `dueAt` are UTC timestamps and must be validated as a final pair.
 - `TaskProject` and `ProjectAttachment` compatibility must be preserved while extending Project features.
 - Each initialized Workspace/entity type has exactly one active default status.
@@ -1851,6 +2863,8 @@ Phase 8.8 is complete/pass after focused refinement. Do not start Phase 8.9 auto
 - Permission
 - StatusDefinition
 - Task / TaskAssignee / TaskFollower / TaskProject / TaskKanbanColumnSetting / TaskRecurrenceSeries / TaskRecurrenceCompletionApprover / TaskCompletionPolicy / TaskCompletionPolicyApprover / TaskCompletionSubmission / TaskCompletionProofItem / TaskCompletionProofAttachment / TaskCompletionSubmissionApprover / TaskCompletionApprovalDecision / WorkspaceTag / TaskTag / ProjectTag / TaskComment / TaskCommentMention / TaskCommentReaction / Attachment / TaskAttachment / ProjectAttachment
+- Ticket / TicketRequester / TicketConversationEntry / TicketConversationAttachment / TicketSlaPolicy / TicketSlaRule / TicketSlaPauseStatus / TicketSlaState / TicketAttachment / TicketSavedView / WorkspaceTicketCounter
+- GamificationXpEntry
 - FeatureDefinition / FeatureEntitlement
 - Project
 - Asset
@@ -1934,6 +2948,20 @@ Do not infer or invent model fields from this list.
 | Phase 8.6     | PASS   | Not tagged                       |
 | Phase 8.7     | PASS   | Not tagged                       |
 | Phase 8.8     | PASS   | Complete/pass; not tagged        |
+| Phase 8.9     | PASS   | Complete/pass; not tagged        |
+| Phase 8       | PASS   | Complete/pass; not tagged        |
+| Phase 9.1     | PASS   | Complete/pass; not tagged        |
+| Phase 9.2     | PASS   | Complete/pass; not tagged        |
+| Phase 9.3     | PASS   | Complete/pass; not tagged        |
+| Phase 9.4     | PASS   | Complete/pass; not tagged        |
+| Phase 9.5     | PASS   | Complete/pass; not tagged        |
+| Phase 9.6     | PASS   | Complete/pass; not tagged        |
+| Phase 9.7     | PASS   | Complete/pass; not tagged        |
+| Phase 9.8     | PASS   | Complete/pass; not tagged        |
+| Phase 9.9     | PASS   | Complete/pass; not tagged        |
+| Phase 9.10    | PASS   | Complete/pass; not tagged        |
+| Phase 9       | PASS   | Complete/pass; not tagged        |
+| Phase 10.1    | PASS   | Complete/pass; not tagged        |
 
 ## Current Warnings
 
@@ -1942,6 +2970,8 @@ Confirmed current warnings:
 - Next build reports: "The Next.js plugin was not detected in your ESLint configuration."
 - Storybook build reports upstream Storybook/Rolldown direct `eval` warnings and chunk-size warnings.
 - `pnpm audit --audit-level high` passes, while reporting 1 moderate vulnerability.
+- API Jest unit run reports the existing open-handle warning after passing.
+- Initial parallel `pnpm build` can collide with an active Playwright `next dev` server; solo rerun passes.
 
 ## Handoff Notes
 
@@ -1988,5 +3018,19 @@ Confirmed current warnings:
 - Phase 8.6 Project Files + Members UI + Activity is complete/pass; the next step is Phase 8.7 Project Reports + CSV, and it must not start automatically.
 - Phase 8.7 Project Reports + CSV is complete/pass; the next step is Phase 8.8 Project UI Integration, and it must not start automatically.
 - Phase 8.8 Project UI Integration is complete/pass after focused refinement; the next step is Phase 8.9 Final Project Security + Performance Audit, and it must not start automatically.
+- Phase 8.9 Final Project Security + Performance + Integration Audit is complete/pass.
+- Phase 8 Project Management System is complete/pass; the next step is Phase 9 Ticket / Service Desk System, and it must not start automatically.
+- Phase 9.1 Ticket Core + Status Engine is complete/pass.
+- Phase 9.2 Requester + Department + Assignment is complete/pass; the next step is Phase 9.3 Ticket Conversation + Internal Notes, and it must not start automatically.
+- Phase 9.3 Ticket Conversation + Internal Notes is complete/pass; the next step is Phase 9.4 SLA Policies + Timers, and it must not start automatically.
+- Phase 9.4 SLA Policies + Timers is complete/pass; the next step is Phase 9.5 Queues + Ticket Views + Filters, and it must not start automatically.
+- Phase 9.5 Queues + Ticket Views + Filters is complete/pass; the next step is Phase 9.6 Escalation + Assignment Workflow, and it must not start automatically.
+- Phase 9.6 Escalation + Assignment Workflow is complete/pass; the next step is Phase 9.7 Attachments + Activity, and it must not start automatically.
+- Phase 9.7 Ticket Attachments + Activity is complete/pass; the next step is Phase 9.8 Service Desk Reports + CSV, and it must not start automatically.
+- Phase 9.8 Service Desk Reports + CSV is complete/pass; the next step is Phase 9.9 Ticket UI Integration, and it must not start automatically.
+- Phase 9.9 Ticket UI Integration is complete/pass after focused refinement; the next step is Phase 9.10 Final Ticket Security + Performance Audit, and it must not start automatically.
+- Phase 9.10 Final Ticket Security + Performance + Integration Audit is complete/pass.
+- Phase 9 Ticket / Service Desk System is complete/pass; the next step is Phase 10 Gamification, XP, Rewards & Leaderboards, and it must not start automatically.
+- Phase 10.1 Gamification Core + XP Ledger is complete/pass; the next step is Phase 10.2 Levels + Progression, and it must not start automatically.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.

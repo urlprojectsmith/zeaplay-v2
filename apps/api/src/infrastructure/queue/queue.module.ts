@@ -1,7 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
 import { validateEnvironment } from '@zea-play/config';
-import { ASSET_PROCESSING_QUEUE, TASK_RECURRENCE_QUEUE } from './queue.constants';
+import { ASSET_PROCESSING_QUEUE, TASK_RECURRENCE_QUEUE, TICKET_SLA_QUEUE } from './queue.constants';
 
 const env = validateEnvironment(process.env);
 
@@ -25,6 +25,7 @@ const env = validateEnvironment(process.env);
     }),
     BullModule.registerQueue({ name: ASSET_PROCESSING_QUEUE }),
     BullModule.registerQueue({ name: TASK_RECURRENCE_QUEUE }),
+    BullModule.registerQueue({ name: TICKET_SLA_QUEUE }),
   ],
   exports: [BullModule],
 })
