@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 10.10 — XP CONTROL CENTER + ANALYZER + RECONCILIATION COMPLETE / PASS
-Next: Phase 10.11 — Global Score Normalization Engine
+Current: Phase 10.11 — GLOBAL SCORE NORMALIZATION ENGINE COMPLETE / PASS
+Next: Phase 10.12 — Agency + Super Admin Global Leaderboards
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -4109,3 +4109,148 @@ Final verification:
 - `git diff --check`: pass with LF-to-CRLF warnings only.
 
 Phase 10.10 XP CONTROL CENTER + ANALYZER + RECONCILIATION is complete/pass; the next step is Phase 10.11 Global Score Normalization Engine, and it must not start automatically.
+
+### Phase 10.11 - PASS
+
+GLOBAL SCORE NORMALIZATION ENGINE implementation is complete/pass.
+
+Implemented:
+
+- Platform/global immutable `GamificationGlobalScoreBaseline` snapshots with no Workspace ownership.
+- Immutable `GamificationGlobalScoreEvent` history linked deterministically one-to-one to `GamificationWorkXpEvent`.
+- Completion baselines from enabled active Workspace-default point rules only, grouped by `workType + category + COMPLETION`.
+- Creation baselines from enabled active Workspace-default creation rules, role-neutralized by averaging roles inside each Workspace before global averaging.
+- Minimum two eligible Workspace contributions required for READY baselines; otherwise INSUFFICIENT_SAMPLE snapshots are recorded.
+- Deterministic integer half-up rounding for baseline averages.
+- Synchronous baseline recalculation after meaningful Workspace-default point rule changes only.
+- Department overrides remain local and do not recalculate global baselines.
+- Global normalizer consumes trusted Work XP Events, not raw Task/Project/Ticket DTOs.
+- Applied creation events use the creation baseline and ignore local creation XP amounts.
+- Applied completion events reuse the Phase 10.8 completion point calculator against normalized baseline snapshots and historical due/completed snapshots.
+- Local NOT_CONFIGURED, RULE_DISABLED, and role-neutral eligible creation skip events can still normalize globally when the real work event is valid.
+- Missing category, inactive/no-recipient, unsupported skip, and no-baseline cases are recorded honestly as skipped normalized evaluations.
+- Reversal events reverse the exact prior applied Global Score Event and do not use the current baseline.
+- Recompletion awards use the latest READY baseline and never recalculate prior normalized history.
+- Global Score aggregates are derived as signed sums of APPLIED Global Score Events for member, Workspace, and agency foundation helper scopes.
+- No Global Score XP ledger writes, public arbitrary normalization endpoint, UI tab, Agency/Super Admin leaderboard, Developer Dashboard, worker, or Redis authority was introduced.
+
+Invariants:
+
+- Local XP remains unchanged and continues to control levels, Workspace leaderboards, achievements, admin adjustment/reset, and XP Control reconciliation.
+- Achievement XP, Streak XP, manual XP, reset XP, reconciliation corrections, Reward Points, redemptions, level/badge/leaderboard state, and legacy/unclassified XP do not feed Global Score.
+- Historical global score events snapshot their baseline id/version and normalized values; historical rules are never recalculated with current Point Rules.
+- Work XP Event history remains immutable.
+- Old XP ledger rows remain immutable.
+- Baseline and Global Score Event rows are append-only with database immutability triggers.
+- Reversal links are unique; duplicate retries create one normalized effect.
+- No global score floor is applied.
+- Cross-Workspace tenant fences remain on Workspace-scoped source events and aggregate helpers.
+- `/workspace/gamification` remains the only Workspace Gamification route; no 10.12 scope was introduced.
+
+Verification:
+
+- Focused normalization service tests: 83/83.
+- API unit: 152/152.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass after applying migration 0050 to the local integration database.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- Clean Prisma migration deploy: pass; migration 0050 applied successfully.
+- Migration status: database schema is up to date, 50 migrations.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+
+Phase 10.11 GLOBAL SCORE NORMALIZATION ENGINE Implementation is complete/pass; the next step is Phase 10.11 Focused Refinement, and Phase 10.12 must not start automatically.
+
+### Phase 10.11 Focused Refinement - PASS
+
+GLOBAL SCORE NORMALIZATION ENGINE focused checklist is complete/pass.
+
+Focused invariants verified:
+
+- Local XP remains unchanged and normalized Global Score is separate from XP.
+- Only Task/Project/Ticket real work contributes through trusted Work XP Events.
+- Achievement XP, Streak XP, manual XP, reset XP, XP reconciliation, Reward Points, redemptions, levels, badges, and local leaderboards do not feed Global Score.
+- Completion baselines are separated by Work Type + Category and use enabled active Workspace-default rules only.
+- Department overrides do not feed global baselines.
+- Each Workspace counts once per Completion bucket.
+- Missing/disabled rules are excluded rather than treated as zero.
+- Minimum two eligible Workspaces are required for READY baselines.
+- All Completion rule parameters are averaged with deterministic integer half-up rounding.
+- Phase 10.8 completion calculator remains the normalized completion scoring engine.
+- Creation baselines average roles inside each Workspace first, then average Workspace contributions globally.
+- Custom role names are not compared across tenants, and Workspaces with more roles are not overweighted.
+- Baseline versions and normalized score events are immutable/idempotent.
+- Historical normalized scores snapshot exact baseline version and values.
+- Baseline changes affect future events only.
+- One Work XP Event gets at most one normalized evaluation.
+- Local `RULE_DISABLED` and `NOT_CONFIGURED` real work can still normalize globally.
+- Missing Project category is not guessed.
+- Inactive recipients are not globally scored.
+- Reopen and creation delete reverse the exact prior normalized score and do not use the current baseline.
+- Recompletion uses the current READY baseline.
+- Restore does not re-award creation XP or Global Score.
+- Pre-10.11 work is not backfilled.
+- XP reset, manual XP, and reconciliation corrections do not affect Global Score.
+- Workspace and Department leaderboards remain local-XP based.
+- User Global Score is the signed normalized-event sum.
+- Workspace Global Score is the all-user normalized-event sum.
+- Agency score helper foundation exists without leaderboard UI.
+- No user-count or Workspace-size normalization exists.
+- Baseline queries are set-based with no N+1 Workspace baseline query.
+- Cross-tenant Point Rule details are not exposed through Global Score APIs.
+- No global leaderboard UI, Developer Dashboard UI, Redis Global Score authority, or Phase 10.12+ scope was introduced.
+
+Focused additions:
+
+- Added tests proving missing Project category and inactive recipient Work XP Events record skipped Global Score evaluations without applying score.
+- Added tests proving manual XP and reset XP do not create Global Score events.
+
+Verification:
+
+- Focused Global Score / Gamification service tests: 85/85.
+- API unit: 154/154.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- `pnpm format`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- Prisma migration status: schema is up to date, 50 migrations.
+
+Phase 10.11 GLOBAL SCORE NORMALIZATION ENGINE Focused Refinement is complete/pass; the next step is Phase 10.11 Final Completion Verification, and Phase 10.12 must not start automatically.
+
+### Phase 10.11 Final Completion Verification - PASS
+
+Phase 10.11 — GLOBAL SCORE NORMALIZATION ENGINE is COMPLETE / PASS.
+
+Final reconfirmed invariants:
+
+- No historical Global Score backfill exists.
+- Department overrides do not contribute to global baselines.
+- Manual, reset, reconciliation, Achievement, and Streak XP do not contribute to Global Score.
+- No Agency/Super Admin leaderboard UI was introduced.
+- No Developer Dashboard scope was introduced.
+- No Redis Global Score authority was introduced.
+- No Phase 10.12 code was introduced during Phase 10.11 final verification.
+
+Final verification:
+
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase1011_final_clean_20260922`, all 50 migrations applied through `0050_phase10_11_global_score_normalization`.
+- Prisma migrate status: database schema is up to date, 50 migrations.
+
+Phase 10.11 — GLOBAL SCORE NORMALIZATION ENGINE is COMPLETE / PASS. Next: Phase 10.12 — Agency + Super Admin Global Leaderboards.

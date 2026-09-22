@@ -7,6 +7,10 @@ import {
 import {
   GamificationAchievementCriterionType,
   GamificationAdminEconomy,
+  GamificationGlobalScoreBaselineScoreType,
+  GamificationGlobalScoreBaselineStatus,
+  GamificationGlobalScoreEventScoreType,
+  GamificationGlobalScoreEventStatus,
   GamificationLeaderboardPrivacyMode,
   GamificationPointCategory,
   GamificationPointScopeType,
@@ -1506,6 +1510,394 @@ describe('GamificationService', () => {
     expect(entries).toHaveLength(0);
   });
 
+  it('calculates completion global score baselines from active workspace defaults only', async () => {
+    const { service, globalScoreBaselines } = makeService({
+      workspaces: [
+        { id: '00000000-0000-4000-8000-000000000201', agencyId: tenant.agencyId, status: 'ACTIVE' },
+        {
+          id: '00000000-0000-4000-8000-000000000202',
+          agencyId: tenant.agencyId,
+          status: 'SUSPENDED',
+        },
+      ],
+      pointRules: [
+        pointRule({
+          id: 'completion-global-1',
+          workspaceId,
+          category: GamificationPointCategory.HIGH,
+          baseXp: 10,
+          earlyBonusXp: 2,
+          earlyThresholdMinutes: 10,
+          latePenaltyPercent: 5,
+          penaltyIntervalMinutes: 20,
+          maxPenaltyXp: 30,
+        }),
+        pointRule({
+          id: 'completion-global-2',
+          workspaceId: '00000000-0000-4000-8000-000000000201',
+          category: GamificationPointCategory.HIGH,
+          baseXp: 11,
+          earlyBonusXp: 3,
+          earlyThresholdMinutes: 11,
+          latePenaltyPercent: 6,
+          penaltyIntervalMinutes: 21,
+          maxPenaltyXp: 31,
+        }),
+        pointRule({
+          id: 'completion-department-ignored',
+          scopeType: GamificationPointScopeType.DEPARTMENT,
+          departmentId,
+          category: GamificationPointCategory.HIGH,
+          baseXp: 999,
+        }),
+        pointRule({
+          id: 'completion-disabled-ignored',
+          workspaceId: otherWorkspaceId,
+          category: GamificationPointCategory.HIGH,
+          isEnabled: false,
+          baseXp: 999,
+        }),
+        pointRule({
+          id: 'completion-inactive-workspace-ignored',
+          workspaceId: '00000000-0000-4000-8000-000000000202',
+          category: GamificationPointCategory.HIGH,
+          baseXp: 999,
+        }),
+      ],
+    });
+
+    await service.recalculateGlobalCompletionScoreBaseline(
+      GamificationPointWorkType.TASK,
+      GamificationPointCategory.HIGH,
+    );
+
+    expect(globalScoreBaselines).toHaveLength(1);
+    expect(globalScoreBaselines[0]).toMatchObject({
+      scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+      status: GamificationGlobalScoreBaselineStatus.READY,
+      eligibleWorkspaceCount: 2,
+      normalizedBaseXp: 11,
+      normalizedEarlyBonusXp: 3,
+      normalizedEarlyThresholdMinutes: 11,
+      normalizedLatePenaltyPercent: 6,
+      normalizedPenaltyIntervalMinutes: 21,
+      normalizedMaxPenaltyXp: 31,
+    });
+  });
+
+  it('calculates creation baselines by averaging roles inside each workspace first', async () => {
+    const { service, globalScoreBaselines } = makeService({
+      creationPointRules: [
+        creationPointRule({
+          id: 'creation-global-1',
+          category: GamificationPointCategory.MEDIUM,
+          roleId: tenant.roleId,
+          creationXp: 10,
+        }),
+        creationPointRule({
+          id: 'creation-global-2',
+          category: GamificationPointCategory.MEDIUM,
+          roleId: actorMembershipId,
+          creationXp: 20,
+        }),
+        creationPointRule({
+          id: 'creation-global-3',
+          workspaceId: otherWorkspaceId,
+          category: GamificationPointCategory.MEDIUM,
+          roleId: tenant.roleId,
+          creationXp: 30,
+        }),
+        creationPointRule({
+          id: 'creation-department-ignored',
+          scopeType: GamificationPointScopeType.DEPARTMENT,
+          departmentId,
+          category: GamificationPointCategory.MEDIUM,
+          roleId: tenant.roleId,
+          creationXp: 999,
+        }),
+      ],
+    });
+
+    await service.recalculateGlobalCreationScoreBaseline(
+      GamificationPointWorkType.TASK,
+      GamificationPointCategory.MEDIUM,
+    );
+
+    expect(globalScoreBaselines[0]).toMatchObject({
+      scoreType: GamificationGlobalScoreBaselineScoreType.CREATION,
+      status: GamificationGlobalScoreBaselineStatus.READY,
+      eligibleWorkspaceCount: 2,
+      normalizedCreationXp: 23,
+    });
+  });
+
+  it('records insufficient-sample baselines without pretending a normalized score is ready', async () => {
+    const { service, globalScoreBaselines } = makeService({
+      pointRules: [
+        pointRule({
+          id: 'single-completion-default',
+          workType: GamificationPointWorkType.TICKET,
+          category: GamificationPointCategory.URGENT,
+          baseXp: 50,
+        }),
+      ],
+    });
+
+    await service.recalculateGlobalCompletionScoreBaseline(
+      GamificationPointWorkType.TICKET,
+      GamificationPointCategory.URGENT,
+    );
+
+    expect(globalScoreBaselines[0]).toMatchObject({
+      status: GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE,
+      eligibleWorkspaceCount: 1,
+    });
+    expect(globalScoreBaselines[0]).not.toHaveProperty('normalizedBaseXp');
+  });
+
+  it('normalizes eligible skipped creation events without creating local XP ledger rows', async () => {
+    const taskId = '00000000-0000-4000-8000-000000000030';
+    const { service, entries, workXpEvents, globalScoreEvents } = makeService({
+      creationPointRules: [
+        creationPointRule({
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.MEDIUM,
+          roleId: tenant.roleId,
+          isEnabled: false,
+          creationXp: 0,
+        }),
+      ],
+      globalScoreBaselines: [
+        globalScoreBaseline({
+          scoreType: GamificationGlobalScoreBaselineScoreType.CREATION,
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.MEDIUM,
+          normalizedCreationXp: 25,
+        }),
+      ],
+      task: {
+        id: taskId,
+        title: 'Disabled local creation',
+        priority: GamificationPointCategory.MEDIUM,
+      },
+    });
+
+    await service.handleTaskCreationXp(workspaceId, taskId, membershipId);
+    await service.handleTaskCreationXp(workspaceId, taskId, membershipId);
+
+    expect(entries).toHaveLength(0);
+    expect(workXpEvents[0]).toMatchObject({
+      outcome: GamificationWorkXpEventOutcome.SKIPPED,
+      skipReason: GamificationWorkXpSkipReason.RULE_DISABLED,
+    });
+    expect(globalScoreEvents).toHaveLength(1);
+    expect(globalScoreEvents[0]).toMatchObject({
+      scoreType: GamificationGlobalScoreEventScoreType.CREATION,
+      status: GamificationGlobalScoreEventStatus.APPLIED,
+      normalizedScore: 25,
+    });
+  });
+
+  it('uses completion baseline snapshots for normalized score and keeps local XP unchanged', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(Date.UTC(2026, 0, 1, 11, 0)));
+    const taskId = '00000000-0000-4000-8000-000000000030';
+    const { service, entries, globalScoreEvents } = makeService({
+      pointRules: [
+        pointRule({
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.HIGH,
+          baseXp: 1,
+        }),
+      ],
+      globalScoreBaselines: [
+        globalScoreBaseline({
+          scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.HIGH,
+          normalizedBaseXp: 100,
+          normalizedEarlyBonusXp: 10,
+          normalizedEarlyThresholdMinutes: 30,
+        }),
+      ],
+      task: {
+        id: taskId,
+        title: 'Globally normalized task',
+        priority: GamificationPointCategory.HIGH,
+        dueAt: new Date(Date.UTC(2026, 0, 1, 12, 0)),
+      },
+    });
+
+    await service.handleTaskCompletionXp(workspaceId, taskId, actorMembershipId);
+
+    expect(entries.map((entry) => entry.amount)).toEqual([1]);
+    expect(globalScoreEvents[0]).toMatchObject({
+      scoreType: GamificationGlobalScoreEventScoreType.COMPLETION,
+      status: GamificationGlobalScoreEventStatus.APPLIED,
+      normalizedBaseXpSnapshot: 100,
+      normalizedBonusXpSnapshot: 10,
+      normalizedPenaltyXpSnapshot: 0,
+      normalizedScore: 110,
+    });
+  });
+
+  it('records missing Project category and inactive recipients without applying global score', async () => {
+    const projectId = '00000000-0000-4000-8000-000000000040';
+    const taskId = '00000000-0000-4000-8000-000000000030';
+    const { service, globalScoreEvents, workXpEvents } = makeService({
+      memberships: [
+        {
+          id: membershipId,
+          workspaceId,
+          status: MembershipStatus.SUSPENDED,
+          roleId: tenant.roleId,
+        },
+        { id: actorMembershipId, workspaceId, status: MembershipStatus.ACTIVE },
+      ],
+      globalScoreBaselines: [
+        globalScoreBaseline({
+          scoreType: GamificationGlobalScoreBaselineScoreType.CREATION,
+          workType: GamificationPointWorkType.PROJECT,
+          category: GamificationPointCategory.LONG_TERM,
+          normalizedCreationXp: 25,
+        }),
+        globalScoreBaseline({
+          scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.HIGH,
+          normalizedBaseXp: 50,
+        }),
+      ],
+      project: {
+        id: projectId,
+        name: 'Uncategorized project',
+        xpCategory: null,
+        ownerMembershipId: membershipId,
+      },
+      task: {
+        id: taskId,
+        title: 'Inactive assignee task',
+        priority: GamificationPointCategory.HIGH,
+      },
+    });
+
+    await service.handleProjectCreationXp(workspaceId, projectId, membershipId);
+    await service.handleTaskCompletionXp(workspaceId, taskId, actorMembershipId);
+
+    expect(workXpEvents.map((event) => event.skipReason)).toEqual([
+      GamificationWorkXpSkipReason.MISSING_CATEGORY,
+      GamificationWorkXpSkipReason.INACTIVE_RECIPIENT,
+    ]);
+    expect(globalScoreEvents).toHaveLength(2);
+    expect(globalScoreEvents.map((event) => event.status)).toEqual([
+      GamificationGlobalScoreEventStatus.SKIPPED_UNSUPPORTED_EVENT,
+      GamificationGlobalScoreEventStatus.SKIPPED_UNSUPPORTED_EVENT,
+    ]);
+    expect(globalScoreEvents.map((event) => event.normalizedScore)).toEqual([undefined, undefined]);
+  });
+
+  it('keeps manual XP and reset XP out of Global Score', async () => {
+    const adminTenant = {
+      ...tenant,
+      permissions: [
+        'gamification.adjustments.manage',
+        'gamification.reset',
+        'gamification.xp_control.reconcile',
+      ],
+    };
+    const grant = resetGrant(GamificationAdminEconomy.XP);
+    const { service, globalScoreEvents, entries, stepUpGrants } = makeService({
+      entries: [baseInput({ amount: 100, idempotencyKey: 'seed:manual-global-isolation' })],
+      stepUpGrants: [grant],
+    });
+
+    await service.adjustAdminBalance(adminTenant, {
+      targetMembershipId: membershipId,
+      economy: GamificationAdminEconomy.XP,
+      operation: GamificationAdminAdjustmentOperation.ADD,
+      amount: 20,
+      reason: 'Manual correction',
+      idempotencyKey: 'manual-global-isolation',
+    });
+    await service.resetAdminBalance(
+      adminTenant,
+      {
+        targetMembershipId: membershipId,
+        economy: GamificationAdminEconomy.XP,
+        reason: 'Reset isolation',
+        confirmation: 'RESET',
+        stepUpGrantId: String(grant.id),
+        idempotencyKey: 'reset-global-isolation',
+      },
+      'refresh-token',
+    );
+
+    expect(entries.map((entry) => entry.sourceType)).toContain(GamificationXpSourceType.MANUAL);
+    expect(stepUpGrants[0]?.usedAt).toBeInstanceOf(Date);
+    expect(globalScoreEvents).toHaveLength(0);
+  });
+
+  it('reverses normalized score exactly and recompletion uses the latest baseline', async () => {
+    const taskId = '00000000-0000-4000-8000-000000000030';
+    const task = {
+      id: taskId,
+      title: 'Normalized cycle task',
+      priority: GamificationPointCategory.HIGH,
+    };
+    const { service, globalScoreBaselines, globalScoreEvents } = makeService({
+      pointRules: [
+        pointRule({
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.HIGH,
+          baseXp: 5,
+        }),
+      ],
+      globalScoreBaselines: [
+        globalScoreBaseline({
+          id: '00000000-0000-4000-8000-000000000301',
+          baselineVersion: '00000000-0000-4000-8000-000000000401',
+          scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+          workType: GamificationPointWorkType.TASK,
+          category: GamificationPointCategory.HIGH,
+          normalizedBaseXp: 50,
+        }),
+      ],
+      task,
+    });
+
+    await service.handleTaskCompletionXp(workspaceId, taskId, actorMembershipId);
+    await service.handleWorkReopen(
+      workspaceId,
+      GamificationPointWorkType.TASK,
+      taskId,
+      actorMembershipId,
+    );
+    globalScoreBaselines.push(
+      globalScoreBaseline({
+        id: '00000000-0000-4000-8000-000000000302',
+        baselineVersion: '00000000-0000-4000-8000-000000000402',
+        scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+        workType: GamificationPointWorkType.TASK,
+        category: GamificationPointCategory.HIGH,
+        normalizedBaseXp: 80,
+        createdAt: new Date(Date.UTC(2026, 0, 2)),
+        calculatedAt: new Date(Date.UTC(2026, 0, 2)),
+      }),
+    );
+    await service.handleTaskCompletionXp(workspaceId, taskId, actorMembershipId);
+
+    expect(globalScoreEvents.map((event) => event.normalizedScore)).toEqual([50, -50, 80]);
+    expect(globalScoreEvents[1]).toMatchObject({
+      scoreType: GamificationGlobalScoreEventScoreType.REVERSAL,
+      reversalOfGlobalScoreEventId: globalScoreEvents[0]!.id,
+    });
+    expect(globalScoreEvents[2]).toMatchObject({
+      baselineVersionSnapshot: '00000000-0000-4000-8000-000000000402',
+    });
+    await expect(service.getUserGlobalScore(workspaceId, membershipId)).resolves.toBe(80);
+    await expect(service.getWorkspaceGlobalScore(workspaceId)).resolves.toBe(80);
+    await expect(service.getAgencyGlobalScoreFoundation(tenant.agencyId)).resolves.toBe(80);
+  });
+
   it('awards creation XP once to the creator through a durable linked work event', async () => {
     const { service, entries, workXpEvents } = makeService({
       memberships: [
@@ -2945,6 +3337,29 @@ function creationPointRule(overrides: Record<string, unknown>) {
   };
 }
 
+function globalScoreBaseline(overrides: Record<string, unknown>) {
+  return {
+    id: '00000000-0000-4000-8000-000000000300',
+    baselineVersion: '00000000-0000-4000-8000-000000000400',
+    workType: GamificationPointWorkType.TASK,
+    category: GamificationPointCategory.MEDIUM,
+    scoreType: GamificationGlobalScoreBaselineScoreType.CREATION,
+    status: GamificationGlobalScoreBaselineStatus.READY,
+    eligibleWorkspaceCount: 2,
+    normalizedCreationXp: null,
+    normalizedBaseXp: null,
+    normalizedEarlyBonusXp: null,
+    normalizedEarlyThresholdMinutes: null,
+    normalizedLatePenaltyPercent: 0,
+    normalizedPenaltyIntervalMinutes: null,
+    normalizedMaxPenaltyXp: 0,
+    calculatedAt: new Date(Date.UTC(2026, 0, 1)),
+    calculationVersion: 'phase10.11.v1',
+    createdAt: new Date(Date.UTC(2026, 0, 1)),
+    ...overrides,
+  };
+}
+
 function achievementDefinition(overrides: Record<string, unknown>) {
   return {
     id: '00000000-0000-4000-8000-000000000016',
@@ -3131,6 +3546,9 @@ function makeService(options?: {
   roles?: Array<Record<string, unknown>>;
   pointRules?: Array<Record<string, unknown>>;
   creationPointRules?: Array<Record<string, unknown>>;
+  workspaces?: Array<Record<string, unknown>>;
+  globalScoreBaselines?: Array<Record<string, unknown>>;
+  globalScoreEvents?: Array<Record<string, unknown>>;
   leaderboardConfig?: Record<string, unknown> | null;
   leaderboardPreferences?: Array<Record<string, unknown>>;
   auditRows?: Array<Record<string, unknown>>;
@@ -3175,6 +3593,15 @@ function makeService(options?: {
   const creationPointRules: Array<Record<string, unknown>> = [
     ...(options?.creationPointRules ?? []),
   ];
+  const workspaces: Array<Record<string, unknown>> = [
+    { id: workspaceId, agencyId: tenant.agencyId, status: 'ACTIVE' },
+    { id: otherWorkspaceId, agencyId: tenant.agencyId, status: 'ACTIVE' },
+    ...(options?.workspaces ?? []),
+  ];
+  const globalScoreBaselines: Array<Record<string, unknown>> = [
+    ...(options?.globalScoreBaselines ?? []),
+  ];
+  const globalScoreEvents: Array<Record<string, unknown>> = [...(options?.globalScoreEvents ?? [])];
   let leaderboardConfig: Record<string, unknown> | null | undefined = options?.leaderboardConfig;
   const leaderboardPreferences: Array<Record<string, unknown>> = [
     ...(options?.leaderboardPreferences ?? []).map((preference) => ({
@@ -3207,6 +3634,10 @@ function makeService(options?: {
       if (key === 'workXpEvent' && value && typeof value === 'object' && 'is' in value) {
         const event = workXpEvents.find((candidate) => candidate.id === entry.workXpEventId);
         return Boolean(event && matchesEntry(event, (value as { is: Record<string, unknown> }).is));
+      }
+      if (key === 'workspace' && value && typeof value === 'object') {
+        const workspace = workspaces.find((candidate) => candidate.id === entry.workspaceId);
+        return Boolean(workspace && matchesEntry(workspace, value as Record<string, unknown>));
       }
       if (value && typeof value === 'object' && 'not' in value) {
         const not = (value as { not: unknown }).not;
@@ -3685,6 +4116,90 @@ function makeService(options?: {
           ...data,
         };
         workXpEvents.push(created);
+        return Promise.resolve(created);
+      }),
+    },
+    gamificationGlobalScoreBaseline: {
+      findFirst: jest.fn(
+        ({
+          where,
+          orderBy,
+        }: {
+          where: Record<string, unknown>;
+          orderBy?: Array<Record<string, string>>;
+        }) => {
+          const found = globalScoreBaselines.filter((baseline) => matchesEntry(baseline, where));
+          if (orderBy) found.sort(sortNewestFirst);
+          return Promise.resolve(found[0] ?? null);
+        },
+      ),
+      findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(globalScoreBaselines.filter((baseline) => matchesEntry(baseline, where))),
+      ),
+      create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+        const created = {
+          id: `00000000-0000-4000-8000-${String(1800 + ++sequence).padStart(12, '0')}`,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)),
+          ...data,
+        };
+        globalScoreBaselines.push(created);
+        return Promise.resolve(created);
+      }),
+    },
+    gamificationGlobalScoreEvent: {
+      aggregate: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve({
+          _sum: {
+            normalizedScore: globalScoreEvents
+              .filter((event) => matchesEntry(event, where))
+              .reduce((sum, event) => sum + Number(event.normalizedScore ?? 0), 0),
+          },
+        }),
+      ),
+      findUnique: jest.fn(
+        ({
+          where,
+        }: {
+          where: {
+            workXpEventId?: string;
+            idempotencyKey?: string;
+            reversalOfGlobalScoreEventId?: string;
+          };
+        }) =>
+          Promise.resolve(
+            globalScoreEvents.find((event) =>
+              where.workXpEventId
+                ? event.workXpEventId === where.workXpEventId
+                : where.idempotencyKey
+                  ? event.idempotencyKey === where.idempotencyKey
+                  : event.reversalOfGlobalScoreEventId === where.reversalOfGlobalScoreEventId,
+            ) ?? null,
+          ),
+      ),
+      findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(globalScoreEvents.filter((event) => matchesEntry(event, where))),
+      ),
+      create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+        if (globalScoreEvents.some((event) => event.workXpEventId === data.workXpEventId)) {
+          throw uniqueConstraintError();
+        }
+        if (globalScoreEvents.some((event) => event.idempotencyKey === data.idempotencyKey)) {
+          throw uniqueConstraintError();
+        }
+        if (
+          data.reversalOfGlobalScoreEventId &&
+          globalScoreEvents.some(
+            (event) => event.reversalOfGlobalScoreEventId === data.reversalOfGlobalScoreEventId,
+          )
+        ) {
+          throw uniqueConstraintError();
+        }
+        const created = {
+          id: `00000000-0000-4000-8000-${String(1900 + ++sequence).padStart(12, '0')}`,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)),
+          ...data,
+        };
+        globalScoreEvents.push(created);
         return Promise.resolve(created);
       }),
     },
@@ -4262,6 +4777,8 @@ function makeService(options?: {
         const redemptionSnapshot = [...redemptions];
         const pointRuleSnapshot = [...pointRules];
         const creationPointRuleSnapshot = [...creationPointRules];
+        const globalScoreBaselineSnapshot = [...globalScoreBaselines];
+        const globalScoreEventSnapshot = [...globalScoreEvents];
         const streakDaySnapshot = [...streakDays];
         const streakConfigSnapshot = streakConfig ? { ...streakConfig } : streakConfig;
         const leaderboardConfigSnapshot = leaderboardConfig
@@ -4282,6 +4799,12 @@ function makeService(options?: {
           redemptions.splice(0, redemptions.length, ...redemptionSnapshot);
           pointRules.splice(0, pointRules.length, ...pointRuleSnapshot);
           creationPointRules.splice(0, creationPointRules.length, ...creationPointRuleSnapshot);
+          globalScoreBaselines.splice(
+            0,
+            globalScoreBaselines.length,
+            ...globalScoreBaselineSnapshot,
+          );
+          globalScoreEvents.splice(0, globalScoreEvents.length, ...globalScoreEventSnapshot);
           streakDays.splice(0, streakDays.length, ...streakDaySnapshot);
           streakConfig = streakConfigSnapshot;
           leaderboardConfig = leaderboardConfigSnapshot;
@@ -4300,6 +4823,8 @@ function makeService(options?: {
     workspaceMembership: tx.workspaceMembership,
     gamificationXpEntry: tx.gamificationXpEntry,
     gamificationWorkXpEvent: tx.gamificationWorkXpEvent,
+    gamificationGlobalScoreBaseline: tx.gamificationGlobalScoreBaseline,
+    gamificationGlobalScoreEvent: tx.gamificationGlobalScoreEvent,
     gamificationXpReconciliation: tx.gamificationXpReconciliation,
     gamificationRewardPointEntry: tx.gamificationRewardPointEntry,
     gamificationRewardDefinition: tx.gamificationRewardDefinition,
@@ -4345,6 +4870,8 @@ function makeService(options?: {
     reconciliations,
     pointRules,
     creationPointRules,
+    globalScoreBaselines,
+    globalScoreEvents,
     rewards,
     redemptions,
     leaderboardPreferences,

@@ -350,6 +350,29 @@ enum GamificationXpReconciliationStatus {
   FAILED
 }
 
+enum GamificationGlobalScoreBaselineScoreType {
+  CREATION
+  COMPLETION
+}
+
+enum GamificationGlobalScoreBaselineStatus {
+  READY
+  INSUFFICIENT_SAMPLE
+}
+
+enum GamificationGlobalScoreEventScoreType {
+  CREATION
+  COMPLETION
+  REVERSAL
+}
+
+enum GamificationGlobalScoreEventStatus {
+  APPLIED
+  SKIPPED_INSUFFICIENT_SAMPLE
+  SKIPPED_NO_BASELINE
+  SKIPPED_UNSUPPORTED_EVENT
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -490,6 +513,7 @@ model Workspace {
   gamificationCreationPointRules     GamificationCreationPointRule[]     @relation("GamificationCreationPointRuleWorkspace")
   gamificationWorkXpEvents           GamificationWorkXpEvent[]           @relation("GamificationWorkXpEventWorkspace")
   gamificationXpReconciliations      GamificationXpReconciliation[]      @relation("GamificationXpReconciliationWorkspace")
+  gamificationGlobalScoreEvents      GamificationGlobalScoreEvent[]      @relation("GamificationGlobalScoreEventWorkspace")
   tasks                              Task[]
   taskRecurrenceSeries               TaskRecurrenceSeries[]
   taskTemplates                      TaskTemplate[]
@@ -668,6 +692,7 @@ model WorkspaceMembership {
   gamificationTriggeredWorkXpEvents  GamificationWorkXpEvent[]          @relation("GamificationWorkXpEventTrigger")
   gamificationXpReconciliations      GamificationXpReconciliation[]     @relation("GamificationXpReconciliationTarget")
   gamificationXpReconciliationActors GamificationXpReconciliation[]     @relation("GamificationXpReconciliationActor")
+  gamificationGlobalScoreEvents      GamificationGlobalScoreEvent[]     @relation("GamificationGlobalScoreEventRecipient")
   gamificationLeaderboardPreference  GamificationLeaderboardPreference? @relation("GamificationLeaderboardPreferenceTarget")
   securityStepUpGrants               SecurityStepUpGrant[]              @relation("SecurityStepUpGrantTarget")
   securityOtpChallenges              SecurityOtpChallenge[]             @relation("SecurityOtpChallengeTarget")
@@ -783,12 +808,13 @@ model GamificationWorkXpEvent {
   reversalOfEventId              String?                        @map("reversal_of_event_id") @db.Uuid
   createdAt                      DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  workspace             Workspace                 @relation("GamificationWorkXpEventWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
-  recipientMembership   WorkspaceMembership?      @relation("GamificationWorkXpEventRecipient", fields: [recipientMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  triggeredByMembership WorkspaceMembership?      @relation("GamificationWorkXpEventTrigger", fields: [triggeredByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  reversalOfEvent       GamificationWorkXpEvent?  @relation("GamificationWorkXpEventReversal", fields: [reversalOfEventId], references: [id], onDelete: Restrict)
-  reversalEvents        GamificationWorkXpEvent[] @relation("GamificationWorkXpEventReversal")
-  xpEntries             GamificationXpEntry[]     @relation("GamificationXpEntryWorkXpEvent")
+  workspace             Workspace                     @relation("GamificationWorkXpEventWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  recipientMembership   WorkspaceMembership?          @relation("GamificationWorkXpEventRecipient", fields: [recipientMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  triggeredByMembership WorkspaceMembership?          @relation("GamificationWorkXpEventTrigger", fields: [triggeredByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  reversalOfEvent       GamificationWorkXpEvent?      @relation("GamificationWorkXpEventReversal", fields: [reversalOfEventId], references: [id], onDelete: Restrict)
+  reversalEvents        GamificationWorkXpEvent[]     @relation("GamificationWorkXpEventReversal")
+  xpEntries             GamificationXpEntry[]         @relation("GamificationXpEntryWorkXpEvent")
+  globalScoreEvent      GamificationGlobalScoreEvent?
 
   @@unique([id, workspaceId])
   @@unique([workspaceId, idempotencyKey])
@@ -797,6 +823,72 @@ model GamificationWorkXpEvent {
   @@index([workspaceId, triggeredByMembershipId])
   @@index([reversalOfEventId])
   @@map("gamification_work_xp_events")
+}
+
+model GamificationGlobalScoreBaseline {
+  id                               String                                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  baselineVersion                  String                                   @map("baseline_version") @db.Uuid
+  workType                         GamificationPointWorkType                @map("work_type")
+  category                         GamificationPointCategory
+  scoreType                        GamificationGlobalScoreBaselineScoreType @map("score_type")
+  status                           GamificationGlobalScoreBaselineStatus
+  eligibleWorkspaceCount           Int                                      @map("eligible_workspace_count")
+  normalizedCreationXp             Int?                                     @map("normalized_creation_xp")
+  normalizedBaseXp                 Int?                                     @map("normalized_base_xp")
+  normalizedEarlyBonusXp           Int?                                     @map("normalized_early_bonus_xp")
+  normalizedEarlyThresholdMinutes  Int?                                     @map("normalized_early_threshold_minutes")
+  normalizedLatePenaltyPercent     Int?                                     @map("normalized_late_penalty_percent")
+  normalizedPenaltyIntervalMinutes Int?                                     @map("normalized_penalty_interval_minutes")
+  normalizedMaxPenaltyXp           Int?                                     @map("normalized_max_penalty_xp")
+  calculatedAt                     DateTime                                 @map("calculated_at") @db.Timestamptz(6)
+  calculationVersion               String                                   @map("calculation_version") @db.VarChar(40)
+  createdAt                        DateTime                                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  globalScoreEvents GamificationGlobalScoreEvent[]
+
+  @@unique([baselineVersion])
+  @@index([scoreType, workType, category, status, calculatedAt, id], map: "gamification_global_score_baselines_latest_idx")
+  @@index([workType, category, scoreType, createdAt], map: "gamification_global_score_baselines_bucket_idx")
+  @@map("gamification_global_score_baselines")
+}
+
+model GamificationGlobalScoreEvent {
+  id                             String                                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                    String                                @map("workspace_id") @db.Uuid
+  recipientMembershipId          String?                               @map("recipient_membership_id") @db.Uuid
+  workXpEventId                  String                                @unique @map("work_xp_event_id") @db.Uuid
+  workType                       GamificationPointWorkType             @map("work_type")
+  sourceEntityId                 String                                @map("source_entity_id") @db.Uuid
+  eventType                      GamificationWorkXpEventType           @map("event_type")
+  scoreType                      GamificationGlobalScoreEventScoreType @map("score_type")
+  categorySnapshot               GamificationPointCategory?            @map("category_snapshot")
+  baselineId                     String?                               @map("baseline_id") @db.Uuid
+  baselineVersionSnapshot        String?                               @map("baseline_version_snapshot") @db.Uuid
+  eligibleWorkspaceCountSnapshot Int?                                  @map("eligible_workspace_count_snapshot")
+  normalizedCreationXpSnapshot   Int?                                  @map("normalized_creation_xp_snapshot")
+  normalizedBaseXpSnapshot       Int?                                  @map("normalized_base_xp_snapshot")
+  normalizedBonusXpSnapshot      Int?                                  @map("normalized_bonus_xp_snapshot")
+  normalizedPenaltyXpSnapshot    Int?                                  @map("normalized_penalty_xp_snapshot")
+  normalizedScore                Int?                                  @map("normalized_score")
+  status                         GamificationGlobalScoreEventStatus
+  occurredAt                     DateTime                              @map("occurred_at") @db.Timestamptz(6)
+  reversalOfGlobalScoreEventId   String?                               @unique @map("reversal_of_global_score_event_id") @db.Uuid
+  idempotencyKey                 String                                @unique @map("idempotency_key") @db.VarChar(220)
+  createdAt                      DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace                  Workspace                        @relation("GamificationGlobalScoreEventWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  recipientMembership        WorkspaceMembership?             @relation("GamificationGlobalScoreEventRecipient", fields: [recipientMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workXpEvent                GamificationWorkXpEvent          @relation(fields: [workXpEventId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  baseline                   GamificationGlobalScoreBaseline? @relation(fields: [baselineId], references: [id], onDelete: Restrict)
+  reversalOfGlobalScoreEvent GamificationGlobalScoreEvent?    @relation("GamificationGlobalScoreEventReversal", fields: [reversalOfGlobalScoreEventId], references: [id], onDelete: Restrict)
+  reversalGlobalScoreEvent   GamificationGlobalScoreEvent?    @relation("GamificationGlobalScoreEventReversal")
+
+  @@unique([workXpEventId, workspaceId], map: "gamification_global_score_events_work_workspace_key")
+  @@index([workspaceId, recipientMembershipId, occurredAt, id], map: "gamification_global_score_events_member_idx")
+  @@index([workspaceId, occurredAt, id], map: "gamification_global_score_events_workspace_idx")
+  @@index([baselineId], map: "gamification_global_score_events_baseline_idx")
+  @@index([workspaceId, workType, sourceEntityId, eventType], map: "gamification_global_score_events_source_idx")
+  @@map("gamification_global_score_events")
 }
 
 model GamificationLevel {

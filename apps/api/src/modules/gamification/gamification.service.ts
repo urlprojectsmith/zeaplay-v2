@@ -5,12 +5,16 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { DateTime } from 'luxon';
 import {
   GamificationAchievementCriterionType,
   GamificationAchievementDefinition,
   GamificationAdminEconomy,
+  GamificationGlobalScoreBaselineScoreType,
+  GamificationGlobalScoreBaselineStatus,
+  GamificationGlobalScoreEventScoreType,
+  GamificationGlobalScoreEventStatus,
   GamificationLeaderboardPrivacyMode,
   GamificationPointCategory,
   GamificationPointScopeType,
@@ -33,6 +37,7 @@ import {
   SecurityStepUpPurpose,
   StatusEntityType,
   RoleScope,
+  WorkspaceStatus,
 } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { JwtTokenService } from '../../common/auth/jwt.service';
@@ -115,6 +120,8 @@ const IDEMPOTENCY_KEY_MAX_LENGTH = 160;
 const REASON_MAX_LENGTH = 500;
 const LEADERBOARD_TOP_LIMIT = 100;
 const POINT_RULE_MAX_XP = 1_000_000;
+const GLOBAL_SCORE_CALCULATION_VERSION = 'phase10.11.v1';
+const GLOBAL_SCORE_MIN_WORKSPACES = 2;
 
 export interface ApplyXpChangeInput {
   workspaceId: string;
@@ -559,6 +566,9 @@ export class GamificationService {
       entityId: updated.id,
       metadata: pointRuleAuditMetadata(updated),
     });
+    if (dto.scopeType === GamificationPointScopeType.WORKSPACE) {
+      await this.recalculateGlobalCompletionScoreBaseline(dto.workType, dto.category);
+    }
     return updated;
   }
 
@@ -664,6 +674,9 @@ export class GamificationService {
       entityId: updated.id,
       metadata: creationPointRuleAuditMetadata(updated),
     });
+    if (dto.scopeType === GamificationPointScopeType.WORKSPACE) {
+      await this.recalculateGlobalCreationScoreBaseline(dto.workType, dto.category);
+    }
     return updated;
   }
 
@@ -1421,6 +1434,153 @@ export class GamificationService {
         currentLevel: deriveLevelProgress(completeCurrentXp, activeLevels).currentLevel,
       };
     });
+  }
+
+  async recalculateGlobalCompletionScoreBaseline(
+    workType: GamificationPointWorkType,
+    category: GamificationPointCategory,
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    validatePointCategory(workType, category);
+    const rules = await client.gamificationPointRule.findMany({
+      where: {
+        workType,
+        category,
+        scopeType: GamificationPointScopeType.WORKSPACE,
+        departmentId: null,
+        isEnabled: true,
+        workspace: { status: WorkspaceStatus.ACTIVE },
+      },
+      select: gamificationPointRuleSelect,
+      orderBy: [{ workspaceId: 'asc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+    });
+    const byWorkspace = new Map<string, (typeof rules)[number]>();
+    for (const rule of rules) {
+      if (!byWorkspace.has(rule.workspaceId)) byWorkspace.set(rule.workspaceId, rule);
+    }
+    const contributions = [...byWorkspace.values()];
+    const calculatedAt = new Date();
+    if (contributions.length < GLOBAL_SCORE_MIN_WORKSPACES) {
+      return client.gamificationGlobalScoreBaseline.create({
+        data: {
+          baselineVersion: randomUUID(),
+          workType,
+          category,
+          scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+          status: GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE,
+          eligibleWorkspaceCount: contributions.length,
+          calculatedAt,
+          calculationVersion: GLOBAL_SCORE_CALCULATION_VERSION,
+        },
+      });
+    }
+    return client.gamificationGlobalScoreBaseline.create({
+      data: {
+        baselineVersion: randomUUID(),
+        workType,
+        category,
+        scoreType: GamificationGlobalScoreBaselineScoreType.COMPLETION,
+        status: GamificationGlobalScoreBaselineStatus.READY,
+        eligibleWorkspaceCount: contributions.length,
+        normalizedBaseXp: roundHalfUpAverage(contributions.map((rule) => rule.baseXp)),
+        normalizedEarlyBonusXp: roundHalfUpAverage(contributions.map((rule) => rule.earlyBonusXp)),
+        normalizedEarlyThresholdMinutes: roundHalfUpAverage(
+          contributions.map((rule) => rule.earlyThresholdMinutes ?? 0),
+        ),
+        normalizedLatePenaltyPercent: roundHalfUpAverage(
+          contributions.map((rule) => rule.latePenaltyPercent),
+        ),
+        normalizedPenaltyIntervalMinutes: roundHalfUpAverage(
+          contributions.map((rule) => rule.penaltyIntervalMinutes ?? 0),
+        ),
+        normalizedMaxPenaltyXp: roundHalfUpAverage(contributions.map((rule) => rule.maxPenaltyXp)),
+        calculatedAt,
+        calculationVersion: GLOBAL_SCORE_CALCULATION_VERSION,
+      },
+    });
+  }
+
+  async recalculateGlobalCreationScoreBaseline(
+    workType: GamificationPointWorkType,
+    category: GamificationPointCategory,
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    validatePointCategory(workType, category);
+    const rules = await client.gamificationCreationPointRule.findMany({
+      where: {
+        workType,
+        category,
+        scopeType: GamificationPointScopeType.WORKSPACE,
+        departmentId: null,
+        isEnabled: true,
+        workspace: { status: WorkspaceStatus.ACTIVE },
+      },
+      select: gamificationCreationPointRuleSelect,
+      orderBy: [{ workspaceId: 'asc' }, { roleId: 'asc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+    });
+    const byWorkspace = new Map<string, number[]>();
+    for (const rule of rules) {
+      const bucket = byWorkspace.get(rule.workspaceId) ?? [];
+      bucket.push(rule.creationXp);
+      byWorkspace.set(rule.workspaceId, bucket);
+    }
+    const workspaceAverages = [...byWorkspace.values()].map((values) => roundHalfUpAverage(values));
+    const calculatedAt = new Date();
+    if (workspaceAverages.length < GLOBAL_SCORE_MIN_WORKSPACES) {
+      return client.gamificationGlobalScoreBaseline.create({
+        data: {
+          baselineVersion: randomUUID(),
+          workType,
+          category,
+          scoreType: GamificationGlobalScoreBaselineScoreType.CREATION,
+          status: GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE,
+          eligibleWorkspaceCount: workspaceAverages.length,
+          calculatedAt,
+          calculationVersion: GLOBAL_SCORE_CALCULATION_VERSION,
+        },
+      });
+    }
+    return client.gamificationGlobalScoreBaseline.create({
+      data: {
+        baselineVersion: randomUUID(),
+        workType,
+        category,
+        scoreType: GamificationGlobalScoreBaselineScoreType.CREATION,
+        status: GamificationGlobalScoreBaselineStatus.READY,
+        eligibleWorkspaceCount: workspaceAverages.length,
+        normalizedCreationXp: roundHalfUpAverage(workspaceAverages),
+        calculatedAt,
+        calculationVersion: GLOBAL_SCORE_CALCULATION_VERSION,
+      },
+    });
+  }
+
+  async getUserGlobalScore(workspaceId: string, membershipId: string) {
+    const result = await this.prisma.gamificationGlobalScoreEvent.aggregate({
+      where: {
+        workspaceId,
+        recipientMembershipId: membershipId,
+        status: GamificationGlobalScoreEventStatus.APPLIED,
+      },
+      _sum: { normalizedScore: true },
+    });
+    return result._sum.normalizedScore ?? 0;
+  }
+
+  async getWorkspaceGlobalScore(workspaceId: string) {
+    const result = await this.prisma.gamificationGlobalScoreEvent.aggregate({
+      where: { workspaceId, status: GamificationGlobalScoreEventStatus.APPLIED },
+      _sum: { normalizedScore: true },
+    });
+    return result._sum.normalizedScore ?? 0;
+  }
+
+  async getAgencyGlobalScoreFoundation(agencyId: string) {
+    const result = await this.prisma.gamificationGlobalScoreEvent.aggregate({
+      where: { workspace: { agencyId }, status: GamificationGlobalScoreEventStatus.APPLIED },
+      _sum: { normalizedScore: true },
+    });
+    return result._sum.normalizedScore ?? 0;
   }
 
   private async xpSourceBreakdown(workspaceId: string, membershipId: string) {
@@ -2612,6 +2772,185 @@ export class GamificationService {
     });
   }
 
+  private async normalizeGlobalScoreForWorkXpEvent(
+    client: Prisma.TransactionClient | PrismaService,
+    event: GlobalScoreWorkXpEvent,
+  ) {
+    const existing = await client.gamificationGlobalScoreEvent.findUnique({
+      where: { workXpEventId: event.id },
+    });
+    if (existing) return existing;
+    const idempotencyKey = `global-score:${event.id}`;
+    try {
+      if (isWorkXpReversal(event.eventType)) {
+        return this.normalizeGlobalScoreReversal(client, event, idempotencyKey);
+      }
+      if (!isGloballyEligibleWorkXpEvent(event)) {
+        return client.gamificationGlobalScoreEvent.create({
+          data: globalScoreEventBase(
+            event,
+            event.eventType === GamificationWorkXpEventType.CREATION_AWARD
+              ? GamificationGlobalScoreEventScoreType.CREATION
+              : GamificationGlobalScoreEventScoreType.COMPLETION,
+            GamificationGlobalScoreEventStatus.SKIPPED_UNSUPPORTED_EVENT,
+            idempotencyKey,
+          ),
+        });
+      }
+      if (!event.categorySnapshot || !event.recipientMembershipId) {
+        return client.gamificationGlobalScoreEvent.create({
+          data: globalScoreEventBase(
+            event,
+            event.eventType === GamificationWorkXpEventType.CREATION_AWARD
+              ? GamificationGlobalScoreEventScoreType.CREATION
+              : GamificationGlobalScoreEventScoreType.COMPLETION,
+            GamificationGlobalScoreEventStatus.SKIPPED_UNSUPPORTED_EVENT,
+            idempotencyKey,
+          ),
+        });
+      }
+      const baselineScoreType =
+        event.eventType === GamificationWorkXpEventType.CREATION_AWARD
+          ? GamificationGlobalScoreBaselineScoreType.CREATION
+          : GamificationGlobalScoreBaselineScoreType.COMPLETION;
+      const eventScoreType =
+        event.eventType === GamificationWorkXpEventType.CREATION_AWARD
+          ? GamificationGlobalScoreEventScoreType.CREATION
+          : GamificationGlobalScoreEventScoreType.COMPLETION;
+      const baseline = await client.gamificationGlobalScoreBaseline.findFirst({
+        where: {
+          workType: event.workType,
+          category: event.categorySnapshot,
+          scoreType: baselineScoreType,
+          status: GamificationGlobalScoreBaselineStatus.READY,
+        },
+        orderBy: [{ calculatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      });
+      if (!baseline) {
+        const latest = await client.gamificationGlobalScoreBaseline.findFirst({
+          where: {
+            workType: event.workType,
+            category: event.categorySnapshot,
+            scoreType: baselineScoreType,
+          },
+          orderBy: [{ calculatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+        });
+        return client.gamificationGlobalScoreEvent.create({
+          data: globalScoreEventBase(
+            event,
+            eventScoreType,
+            latest?.status === GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE
+              ? GamificationGlobalScoreEventStatus.SKIPPED_INSUFFICIENT_SAMPLE
+              : GamificationGlobalScoreEventStatus.SKIPPED_NO_BASELINE,
+            idempotencyKey,
+          ),
+        });
+      }
+      if (baselineScoreType === GamificationGlobalScoreBaselineScoreType.CREATION) {
+        return client.gamificationGlobalScoreEvent.create({
+          data: {
+            ...globalScoreEventBase(
+              event,
+              eventScoreType,
+              GamificationGlobalScoreEventStatus.APPLIED,
+              idempotencyKey,
+            ),
+            ...globalScoreBaselineSnapshots(baseline),
+            normalizedScore: baseline.normalizedCreationXp ?? 0,
+          },
+        });
+      }
+      const calculation = calculateCompletionPoints(
+        {
+          isEnabled: true,
+          baseXp: baseline.normalizedBaseXp ?? 0,
+          earlyBonusXp: baseline.normalizedEarlyBonusXp ?? 0,
+          earlyThresholdMinutes: zeroToNull(baseline.normalizedEarlyThresholdMinutes),
+          latePenaltyPercent: baseline.normalizedLatePenaltyPercent ?? 0,
+          penaltyIntervalMinutes: zeroToNull(baseline.normalizedPenaltyIntervalMinutes),
+          maxPenaltyXp: baseline.normalizedMaxPenaltyXp ?? 0,
+        },
+        event.completedAtSnapshot ?? event.occurredAt,
+        event.dueAtSnapshot ?? null,
+      );
+      return client.gamificationGlobalScoreEvent.create({
+        data: {
+          ...globalScoreEventBase(
+            event,
+            eventScoreType,
+            GamificationGlobalScoreEventStatus.APPLIED,
+            idempotencyKey,
+          ),
+          ...globalScoreBaselineSnapshots(baseline),
+          normalizedBaseXpSnapshot: calculation.baseXp,
+          normalizedBonusXpSnapshot: calculation.earlyBonusXp,
+          normalizedPenaltyXpSnapshot: calculation.penaltyXp,
+          normalizedScore: calculation.netCompletionXp,
+        },
+      });
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return client.gamificationGlobalScoreEvent.findUnique({
+          where: { workXpEventId: event.id },
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async normalizeGlobalScoreReversal(
+    client: Prisma.TransactionClient | PrismaService,
+    event: GlobalScoreWorkXpEvent,
+    idempotencyKey: string,
+  ) {
+    if (
+      event.outcome !== GamificationWorkXpEventOutcome.APPLIED ||
+      !event.reversalOfEventId ||
+      !event.recipientMembershipId
+    ) {
+      return client.gamificationGlobalScoreEvent.create({
+        data: globalScoreEventBase(
+          event,
+          GamificationGlobalScoreEventScoreType.REVERSAL,
+          GamificationGlobalScoreEventStatus.SKIPPED_UNSUPPORTED_EVENT,
+          idempotencyKey,
+        ),
+      });
+    }
+    const prior = await client.gamificationGlobalScoreEvent.findUnique({
+      where: { workXpEventId: event.reversalOfEventId },
+    });
+    if (!prior || prior.status !== GamificationGlobalScoreEventStatus.APPLIED) {
+      return client.gamificationGlobalScoreEvent.create({
+        data: globalScoreEventBase(
+          event,
+          GamificationGlobalScoreEventScoreType.REVERSAL,
+          GamificationGlobalScoreEventStatus.SKIPPED_NO_BASELINE,
+          idempotencyKey,
+        ),
+      });
+    }
+    return client.gamificationGlobalScoreEvent.create({
+      data: {
+        ...globalScoreEventBase(
+          event,
+          GamificationGlobalScoreEventScoreType.REVERSAL,
+          GamificationGlobalScoreEventStatus.APPLIED,
+          idempotencyKey,
+        ),
+        baselineId: prior.baselineId,
+        baselineVersionSnapshot: prior.baselineVersionSnapshot,
+        eligibleWorkspaceCountSnapshot: prior.eligibleWorkspaceCountSnapshot,
+        normalizedCreationXpSnapshot: negateNullable(prior.normalizedCreationXpSnapshot),
+        normalizedBaseXpSnapshot: negateNullable(prior.normalizedBaseXpSnapshot),
+        normalizedBonusXpSnapshot: negateNullable(prior.normalizedBonusXpSnapshot),
+        normalizedPenaltyXpSnapshot: negateNullable(prior.normalizedPenaltyXpSnapshot),
+        normalizedScore: -(prior.normalizedScore ?? 0),
+        reversalOfGlobalScoreEventId: prior.id,
+      },
+    });
+  }
+
   private async applyWorkCreationXp(input: WorkCreationInput) {
     const eventBase = workEventBase(input, GamificationWorkXpEventType.CREATION_AWARD);
     if (!input.creatorMembershipId) {
@@ -2802,7 +3141,7 @@ export class GamificationService {
       select: { id: true },
     });
     if (existing) return;
-    await this.prisma.gamificationWorkXpEvent.create({
+    const event = await this.prisma.gamificationWorkXpEvent.create({
       data: {
         workspaceId: input.workspaceId,
         recipientMembershipId: input.recipientMembershipId,
@@ -2826,6 +3165,7 @@ export class GamificationService {
         occurredAt: input.occurredAt,
       },
     });
+    await this.normalizeGlobalScoreForWorkXpEvent(this.prisma, event);
   }
 
   private async createAppliedWorkXpEvent(input: WorkAppliedEventInput) {
@@ -2877,8 +3217,8 @@ export class GamificationService {
           completedAtSnapshot: input.completedAt ?? null,
           occurredAt: input.occurredAt,
         },
-        select: { id: true },
       });
+      await this.normalizeGlobalScoreForWorkXpEvent(tx, event);
       for (const component of input.components) {
         if (component.amount === 0) continue;
         await tx.gamificationXpEntry.create({
@@ -3022,8 +3362,8 @@ export class GamificationService {
           occurredAt: new Date(),
           reversalOfEventId: award.id,
         },
-        select: { id: true },
       });
+      await this.normalizeGlobalScoreForWorkXpEvent(tx, event);
       for (const entry of award.xpEntries) {
         await tx.gamificationXpEntry.create({
           data: {
@@ -4319,6 +4659,81 @@ interface WorkReverseInput {
   eventType: GamificationWorkXpEventType;
   reversalType: GamificationWorkXpEventType;
   triggeredByMembershipId: string | null;
+}
+
+type GlobalScoreWorkXpEvent = Prisma.GamificationWorkXpEventGetPayload<object>;
+type GlobalScoreBaseline = Prisma.GamificationGlobalScoreBaselineGetPayload<object>;
+
+function roundHalfUpAverage(values: number[]) {
+  if (values.length === 0) return 0;
+  return Math.floor(values.reduce((sum, value) => sum + value, 0) / values.length + 0.5);
+}
+
+function zeroToNull(value: number | null | undefined) {
+  return value && value > 0 ? value : null;
+}
+
+function negateNullable(value: number | null | undefined) {
+  return value === null || value === undefined ? null : -value;
+}
+
+function isWorkXpReversal(eventType: GamificationWorkXpEventType) {
+  return (
+    eventType === GamificationWorkXpEventType.CREATION_REVERSAL ||
+    eventType === GamificationWorkXpEventType.COMPLETION_REVERSAL
+  );
+}
+
+function isGloballyEligibleWorkXpEvent(event: GlobalScoreWorkXpEvent) {
+  if (
+    event.eventType !== GamificationWorkXpEventType.CREATION_AWARD &&
+    event.eventType !== GamificationWorkXpEventType.COMPLETION_AWARD
+  ) {
+    return false;
+  }
+  if (event.outcome === GamificationWorkXpEventOutcome.APPLIED) return true;
+  if (event.outcome !== GamificationWorkXpEventOutcome.SKIPPED) return false;
+  return (
+    event.skipReason === GamificationWorkXpSkipReason.NOT_CONFIGURED ||
+    event.skipReason === GamificationWorkXpSkipReason.RULE_DISABLED ||
+    (event.eventType === GamificationWorkXpEventType.CREATION_AWARD &&
+      event.skipReason === GamificationWorkXpSkipReason.AMBIGUOUS_ROLE)
+  );
+}
+
+function globalScoreBaselineSnapshots(
+  baseline: GlobalScoreBaseline,
+): Partial<Prisma.GamificationGlobalScoreEventUncheckedCreateInput> {
+  return {
+    baselineId: baseline.id,
+    baselineVersionSnapshot: baseline.baselineVersion,
+    eligibleWorkspaceCountSnapshot: baseline.eligibleWorkspaceCount,
+    normalizedCreationXpSnapshot: baseline.normalizedCreationXp,
+    normalizedBaseXpSnapshot: baseline.normalizedBaseXp,
+    normalizedBonusXpSnapshot: baseline.normalizedEarlyBonusXp,
+    normalizedPenaltyXpSnapshot: baseline.normalizedMaxPenaltyXp,
+  };
+}
+
+function globalScoreEventBase(
+  event: GlobalScoreWorkXpEvent,
+  scoreType: GamificationGlobalScoreEventScoreType,
+  status: GamificationGlobalScoreEventStatus,
+  idempotencyKey: string,
+): Prisma.GamificationGlobalScoreEventUncheckedCreateInput {
+  return {
+    workspaceId: event.workspaceId,
+    recipientMembershipId: event.recipientMembershipId,
+    workXpEventId: event.id,
+    workType: event.workType,
+    sourceEntityId: event.sourceEntityId,
+    eventType: event.eventType,
+    scoreType,
+    categorySnapshot: event.categorySnapshot,
+    status,
+    occurredAt: event.occurredAt,
+    idempotencyKey,
+  };
 }
 
 function categoryFrom(value: string | null | undefined) {
