@@ -5,6 +5,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { DateTime } from 'luxon';
 import {
   GamificationAchievementCriterionType,
@@ -17,6 +18,7 @@ import {
   GamificationWorkXpEventOutcome,
   GamificationWorkXpEventType,
   GamificationWorkXpSkipReason,
+  GamificationXpReconciliationStatus,
   GamificationRewardInventoryMode,
   GamificationRewardPointEntry,
   GamificationRewardPointEntryType,
@@ -75,6 +77,12 @@ import {
 } from './dto/gamification-streak.dto';
 import { GamificationXpHistoryQueryDto } from './dto/gamification-xp-query.dto';
 import {
+  GamificationXpControlQueryDto,
+  GamificationXpLogQueryDto,
+  GamificationXpReconciliationApplyDto,
+  GamificationXpReconciliationPreviewDto,
+} from './dto/gamification-xp-control.dto';
+import {
   GamificationPointPreviewDto,
   GamificationPointRulesQueryDto,
   RemoveGamificationPointRuleOverrideDto,
@@ -118,6 +126,7 @@ export interface ApplyXpChangeInput {
   sourceEntityId?: string | null;
   idempotencyKey?: string | null;
   workXpEventId?: string | null;
+  reconciliationId?: string | null;
   actorMembershipId?: string | null;
   reason?: string | null;
   achievementEvaluationDepth?: number;
@@ -1080,6 +1089,383 @@ export class GamificationService {
         metadata: safeAdminAuditMetadata(row.metadata),
       })),
     };
+  }
+
+  async getXpControlAnalyzer(tenant: WorkspaceTenantContext, query: GamificationXpControlQueryDto) {
+    assertPermission(tenant, PermissionKeys.gamificationXpControlView);
+    const rows = await this.computeXpControlRows(tenant.workspaceId);
+    const search = normalizeOptionalSearch(query.search);
+    let filtered = rows.filter((row) => {
+      if (search && !row.displayName.toLowerCase().includes(search.toLowerCase())) return false;
+      if (query.departmentId && row.departmentId !== query.departmentId) return false;
+      if (query.status && row.status !== query.status) return false;
+      if (query.hasDelta === true && row.delta === 0) return false;
+      if (query.hasDelta === false && row.delta !== 0) return false;
+      return true;
+    });
+    filtered = sortXpControlRows(filtered, query.sortBy, query.sortDirection);
+    const pageSize = clampPageSize(query.pageSize, 100);
+    const page = Math.max(1, query.page);
+    const start = (page - 1) * pageSize;
+    return {
+      items: filtered.slice(start, start + pageSize),
+      page,
+      pageSize,
+      total: filtered.length,
+    };
+  }
+
+  async getXpControlMemberDetail(tenant: WorkspaceTenantContext, membershipId: string) {
+    assertPermission(tenant, PermissionKeys.gamificationXpControlView);
+    const row = (await this.computeXpControlRows(tenant.workspaceId)).find(
+      (item) => item.membershipId === membershipId,
+    );
+    if (!row) throw new ForbiddenException('TARGET_MEMBERSHIP_NOT_FOUND');
+    const breakdown = await this.xpSourceBreakdown(tenant.workspaceId, membershipId);
+    return { member: row, breakdown };
+  }
+
+  async getXpControlMemberLog(
+    tenant: WorkspaceTenantContext,
+    membershipId: string,
+    query: GamificationXpLogQueryDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationXpControlView);
+    await this.requireReplayTargetMembership(tenant.workspaceId, membershipId);
+    const where: Prisma.GamificationXpEntryWhereInput = {
+      workspaceId: tenant.workspaceId,
+      membershipId,
+      ...xpLogCategoryWhere(query.category),
+    };
+    const pageSize = clampPageSize(query.pageSize, 100);
+    const page = Math.max(1, query.page);
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.gamificationXpEntry.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: {
+          workXpEvent: true,
+          reconciliation: true,
+          actorMembership: { select: adminMemberSelect },
+        },
+      }),
+      this.prisma.gamificationXpEntry.count({ where }),
+    ]);
+    return {
+      items: items.map(serializeXpControlLogEntry),
+      page,
+      pageSize,
+      total,
+    };
+  }
+
+  async previewXpReconciliation(
+    tenant: WorkspaceTenantContext,
+    dto: GamificationXpReconciliationPreviewDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationXpControlReconcile);
+    const row = await this.xpControlRowForMembership(tenant.workspaceId, dto.targetMembershipId);
+    if (row.memberStatus !== MembershipStatus.ACTIVE)
+      throw new ForbiddenException('TARGET_MEMBERSHIP_INACTIVE');
+    return reconciliationPreviewFromRow(row);
+  }
+
+  async applyXpReconciliation(
+    tenant: WorkspaceTenantContext,
+    dto: GamificationXpReconciliationApplyDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationXpControlReconcile);
+    const actorMembershipId = requireWorkspaceMembership(tenant);
+    if (dto.confirmation !== 'RECONCILE')
+      throw new BadRequestException('RECONCILIATION_CONFIRMATION_INVALID');
+    const reason = requireBoundedText(dto.reason, REASON_MAX_LENGTH, 'GAMIFICATION_REASON_INVALID');
+    const idempotencyKey = requireBoundedText(
+      dto.idempotencyKey,
+      IDEMPOTENCY_KEY_MAX_LENGTH,
+      'GAMIFICATION_IDEMPOTENCY_KEY_INVALID',
+    );
+    return this.prisma.$transaction(async (tx) => {
+      const preview = parseXpControlPreviewToken(dto.previewToken);
+      if (preview.targetMembershipId !== dto.targetMembershipId) {
+        throw new ConflictException('RECONCILIATION_IDEMPOTENCY_CONFLICT');
+      }
+      await lockMembership(tx, tenant.workspaceId, dto.targetMembershipId);
+      const target = await assertActiveMembership(tx, tenant.workspaceId, dto.targetMembershipId);
+      const existing = await tx.gamificationXpReconciliation.findUnique({
+        where: {
+          workspaceId_membershipId_idempotencyKey: {
+            workspaceId: tenant.workspaceId,
+            membershipId: dto.targetMembershipId,
+            idempotencyKey,
+          },
+        },
+        include: { xpEntries: true },
+      });
+      if (existing) {
+        if (
+          existing.claimedXpSnapshot !== preview.claimedXp ||
+          existing.storedXpSnapshot !== preview.storedXp ||
+          existing.currentXpBeforeSnapshot !== preview.currentXp ||
+          existing.deltaSnapshot !== preview.delta ||
+          existing.evidenceHash !== preview.evidenceHash ||
+          existing.reason !== reason
+        ) {
+          throw new ConflictException('RECONCILIATION_IDEMPOTENCY_CONFLICT');
+        }
+        return reconciliationResult(existing, adminMemberFromMembership(target));
+      }
+      const row = await this.xpControlRowForMembershipInTransaction(
+        tx,
+        tenant.workspaceId,
+        dto.targetMembershipId,
+      );
+      if (row.sourceAnomalyCount > 0 || row.status === 'NEEDS_REVIEW') {
+        throw new ConflictException('RECONCILIATION_NEEDS_REVIEW');
+      }
+      if (
+        row.claimedXp !== preview.claimedXp ||
+        row.storedXp !== preview.storedXp ||
+        row.currentXp !== preview.currentXp ||
+        row.delta !== preview.delta ||
+        row.status !== preview.status ||
+        row.sourceAnomalyCount !== preview.sourceAnomalyCount
+      ) {
+        throw new ConflictException('RECONCILIATION_STALE');
+      }
+      if (row.delta === 0) throw new ConflictException('RECONCILIATION_NO_CHANGE');
+      if (row.currentXp + row.delta < 0)
+        throw new ConflictException('RECONCILIATION_FLOOR_CONFLICT');
+      await assertWorkspaceMembership(tx, tenant.workspaceId, actorMembershipId);
+      const reconciliation = await tx.gamificationXpReconciliation.create({
+        data: {
+          workspaceId: tenant.workspaceId,
+          membershipId: dto.targetMembershipId,
+          claimedXpSnapshot: row.claimedXp,
+          storedXpSnapshot: row.storedXp,
+          currentXpBeforeSnapshot: row.currentXp,
+          deltaSnapshot: row.delta,
+          adjustmentAmount: row.delta,
+          currentXpAfterSnapshot: row.currentXp + row.delta,
+          status: GamificationXpReconciliationStatus.APPLIED,
+          reason,
+          actorMembershipId,
+          idempotencyKey,
+          evidenceHash: preview.evidenceHash,
+        },
+        include: { xpEntries: true },
+      });
+      const entry = await applyXpChangeInTransaction(tx, {
+        workspaceId: tenant.workspaceId,
+        membershipId: dto.targetMembershipId,
+        amount: row.delta,
+        entryType: GamificationXpEntryType.ADJUSTMENT,
+        sourceType: GamificationXpSourceType.SYSTEM,
+        sourceEvent: 'XP_RECONCILIATION_ADJUSTMENT',
+        sourceEntityId: reconciliation.id,
+        idempotencyKey: `${idempotencyKey}:xp`,
+        reversalOfEntryId: null,
+        workXpEventId: null,
+        reconciliationId: reconciliation.id,
+        actorMembershipId,
+        reason,
+      });
+      await tx.auditLog.create({
+        data: {
+          agencyId: tenant.agencyId,
+          workspaceId: tenant.workspaceId,
+          userId: tenant.userId,
+          action: 'gamification.xp_control.reconciled',
+          entityType: 'GamificationXpReconciliation',
+          entityId: reconciliation.id,
+          metadata: {
+            targetMembershipId: dto.targetMembershipId,
+            claimedXp: row.claimedXp,
+            storedXp: row.storedXp,
+            currentXpBefore: row.currentXp,
+            delta: row.delta,
+            currentXpAfter: row.currentXp + row.delta,
+            reason,
+            idempotencyKey,
+            entryId: entry.id,
+          },
+        },
+      });
+      return reconciliationResult(
+        { ...reconciliation, xpEntries: [entry] },
+        adminMemberFromMembership(target),
+      );
+    });
+  }
+
+  private async xpControlRowForMembership(workspaceId: string, membershipId: string) {
+    const row = (await this.computeXpControlRows(workspaceId)).find(
+      (item) => item.membershipId === membershipId,
+    );
+    if (!row) throw new ForbiddenException('TARGET_MEMBERSHIP_NOT_FOUND');
+    return row;
+  }
+
+  private async xpControlRowForMembershipInTransaction(
+    tx: Prisma.TransactionClient,
+    workspaceId: string,
+    membershipId: string,
+  ) {
+    const rows = await this.computeXpControlRows(workspaceId, tx);
+    const row = rows.find((item) => item.membershipId === membershipId);
+    if (!row) throw new ForbiddenException('TARGET_MEMBERSHIP_NOT_FOUND');
+    return row;
+  }
+
+  private async computeXpControlRows(
+    workspaceId: string,
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const [members, workEvents, workStored, current, lastActivity, reconciliations, activeLevels] =
+      await Promise.all([
+        client.workspaceMembership.findMany({
+          where: { workspaceId },
+          select: {
+            id: true,
+            status: true,
+            departmentId: true,
+            user: { select: { name: true, email: true } },
+            department: { select: { name: true } },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: 1000,
+        }),
+        client.gamificationWorkXpEvent.findMany({
+          where: { workspaceId, recipientMembershipId: { not: null } },
+          select: {
+            recipientMembershipId: true,
+            outcome: true,
+            skipReason: true,
+            netXpSnapshot: true,
+          },
+        }),
+        client.gamificationXpEntry.groupBy({
+          by: ['membershipId'],
+          where: {
+            workspaceId,
+            OR: [{ workXpEventId: { not: null } }, { reconciliationId: { not: null } }],
+          },
+          _sum: { amount: true },
+        }),
+        client.gamificationXpEntry.groupBy({
+          by: ['membershipId'],
+          where: { workspaceId },
+          _sum: { amount: true },
+        }),
+        client.gamificationXpEntry.groupBy({
+          by: ['membershipId'],
+          where: { workspaceId },
+          _max: { createdAt: true },
+        }),
+        client.gamificationXpReconciliation.groupBy({
+          by: ['membershipId'],
+          where: { workspaceId, status: GamificationXpReconciliationStatus.APPLIED },
+          _count: { _all: true },
+        }),
+        client.gamificationLevel.findMany({
+          where: { workspaceId, isActive: true },
+          orderBy: [{ levelNumber: 'asc' }, { id: 'asc' }],
+          select: gamificationLevelSelect,
+        }),
+      ]);
+    const claimed = new Map<string, number>();
+    const reviewCounts = new Map<string, number>();
+    for (const event of workEvents) {
+      const membershipId = event.recipientMembershipId;
+      if (!membershipId) continue;
+      if (event.outcome === GamificationWorkXpEventOutcome.APPLIED) {
+        claimed.set(membershipId, (claimed.get(membershipId) ?? 0) + event.netXpSnapshot);
+      } else if (event.skipReason === GamificationWorkXpSkipReason.AMBIGUOUS_ROLE) {
+        reviewCounts.set(membershipId, (reviewCounts.get(membershipId) ?? 0) + 1);
+      }
+    }
+    const stored = new Map(workStored.map((row) => [row.membershipId, row._sum.amount ?? 0]));
+    const currentXp = new Map(current.map((row) => [row.membershipId, row._sum.amount ?? 0]));
+    const last = new Map(lastActivity.map((row) => [row.membershipId, row._max.createdAt ?? null]));
+    const reconciliationCount = new Map(
+      reconciliations.map((row) => [row.membershipId, row._count._all]),
+    );
+    return members.map((member) => {
+      const claimedXp = claimed.get(member.id) ?? 0;
+      const storedXp = stored.get(member.id) ?? 0;
+      const completeCurrentXp = Math.max(0, currentXp.get(member.id) ?? 0);
+      const delta = claimedXp - storedXp;
+      const sourceAnomalyCount = reviewCounts.get(member.id) ?? 0;
+      const status =
+        sourceAnomalyCount > 0
+          ? 'NEEDS_REVIEW'
+          : delta !== 0
+            ? 'MISMATCH'
+            : (reconciliationCount.get(member.id) ?? 0) > 0
+              ? 'RECONCILED'
+              : 'BALANCED';
+      return {
+        membershipId: member.id,
+        displayName: safeMemberDisplayName(member.user.name || member.user.email),
+        departmentId: member.departmentId,
+        departmentName: member.department?.name ?? null,
+        memberStatus: member.status,
+        claimedXp,
+        storedXp,
+        currentXp: completeCurrentXp,
+        delta,
+        status,
+        sourceAnomalyCount,
+        lastActivityAt: last.get(member.id),
+        currentLevel: deriveLevelProgress(completeCurrentXp, activeLevels).currentLevel,
+      };
+    });
+  }
+
+  private async xpSourceBreakdown(workspaceId: string, membershipId: string) {
+    const entries = await this.prisma.gamificationXpEntry.findMany({
+      where: { workspaceId, membershipId },
+      select: {
+        amount: true,
+        sourceType: true,
+        sourceEvent: true,
+        workXpEvent: { select: { workType: true } },
+        reconciliationId: true,
+      },
+    });
+    const result = {
+      taskXp: 0,
+      projectXp: 0,
+      ticketXp: 0,
+      achievementXp: 0,
+      streakXp: 0,
+      manualXp: 0,
+      resetXp: 0,
+      reconciliationXp: 0,
+      legacyXp: 0,
+      currentXp: 0,
+    };
+    for (const entry of entries) {
+      result.currentXp += entry.amount;
+      if (entry.reconciliationId) result.reconciliationXp += entry.amount;
+      else if (entry.workXpEvent?.workType === GamificationPointWorkType.TASK)
+        result.taskXp += entry.amount;
+      else if (entry.workXpEvent?.workType === GamificationPointWorkType.PROJECT)
+        result.projectXp += entry.amount;
+      else if (entry.workXpEvent?.workType === GamificationPointWorkType.TICKET)
+        result.ticketXp += entry.amount;
+      else if (entry.sourceType === GamificationXpSourceType.ACHIEVEMENT)
+        result.achievementXp += entry.amount;
+      else if (entry.sourceType === GamificationXpSourceType.STREAK)
+        result.streakXp += entry.amount;
+      else if (entry.sourceEvent.includes('RESET')) result.resetXp += entry.amount;
+      else if (entry.sourceType === GamificationXpSourceType.MANUAL)
+        result.manualXp += entry.amount;
+      else result.legacyXp += entry.amount;
+    }
+    result.currentXp = Math.max(0, result.currentXp);
+    return result;
   }
 
   private async requireActiveTargetMembership(workspaceId: string, membershipId: string) {
@@ -4008,6 +4394,7 @@ function normalizeApplyInput(
     ),
     reversalOfEntryId: null,
     workXpEventId: input.workXpEventId ?? null,
+    reconciliationId: input.reconciliationId ?? null,
     actorMembershipId: input.actorMembershipId ?? null,
     reason: normalizeBoundedText(input.reason, REASON_MAX_LENGTH, 'XP_REASON_INVALID'),
   };
@@ -4591,11 +4978,49 @@ function assertIdempotentReplay(
     existing.sourceType !== input.sourceType ||
     existing.sourceEvent !== input.sourceEvent ||
     existing.sourceEntityId !== input.sourceEntityId ||
-    existing.reversalOfEntryId !== input.reversalOfEntryId
+    existing.reversalOfEntryId !== input.reversalOfEntryId ||
+    existing.workXpEventId !== input.workXpEventId ||
+    existing.reconciliationId !== input.reconciliationId
   ) {
     throw new ConflictException('XP_IDEMPOTENCY_CONFLICT');
   }
   return existing;
+}
+
+async function applyXpChangeInTransaction(
+  tx: Prisma.TransactionClient,
+  input: Prisma.GamificationXpEntryUncheckedCreateInput,
+) {
+  await lockMembership(tx, input.workspaceId, input.membershipId);
+  const existing = input.idempotencyKey
+    ? await tx.gamificationXpEntry.findFirst({
+        where: {
+          workspaceId: input.workspaceId,
+          membershipId: input.membershipId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      })
+    : null;
+  if (existing) return assertIdempotentReplay(existing, input);
+  await assertActiveMembership(tx, input.workspaceId, input.membershipId);
+  if (input.actorMembershipId)
+    await assertWorkspaceMembership(tx, input.workspaceId, input.actorMembershipId);
+  await assertBalanceFloor(tx, input.workspaceId, input.membershipId, input.amount);
+  try {
+    return await tx.gamificationXpEntry.create({ data: input });
+  } catch (error) {
+    if (isUniqueConstraintError(error) && input.idempotencyKey) {
+      const replay = await tx.gamificationXpEntry.findFirstOrThrow({
+        where: {
+          workspaceId: input.workspaceId,
+          membershipId: input.membershipId,
+          idempotencyKey: input.idempotencyKey,
+        },
+      });
+      return assertIdempotentReplay(replay, input);
+    }
+    throw error;
+  }
 }
 
 function assertRewardPointIdempotentReplay(
@@ -4792,6 +5217,345 @@ function requireBoundedText(value: string | undefined, max: number, error: strin
 function normalizeBoundedText(value: string | null | undefined, max: number, error: string) {
   if (value == null || value === '') return null;
   return requireBoundedText(value, max, error);
+}
+
+const XP_CONTROL_ANALYSIS_VERSION = 'phase10.10.v2';
+
+function xpControlPreviewSecret() {
+  return (
+    process.env.GAMIFICATION_XP_CONTROL_PREVIEW_SECRET ??
+    process.env.JWT_ACCESS_SECRET ??
+    'zea-play-xp-control-preview-development-secret'
+  );
+}
+
+type XpControlPreviewSnapshot = {
+  targetMembershipId: string;
+  claimedXp: number;
+  storedXp: number;
+  currentXp: number;
+  delta: number;
+  status: string;
+  sourceAnomalyCount: number;
+  evidenceHash: string;
+};
+
+function createXpControlPreviewToken(snapshot: XpControlPreviewSnapshot) {
+  const payload = JSON.stringify({
+    version: XP_CONTROL_ANALYSIS_VERSION,
+    ...snapshot,
+  });
+  const encodedPayload = Buffer.from(payload, 'utf8').toString('base64url');
+  const signature = createHmac('sha256', xpControlPreviewSecret())
+    .update(encodedPayload)
+    .digest('base64url');
+  return `${encodedPayload}.${signature}`;
+}
+
+function parseXpControlPreviewToken(token: string) {
+  const [encodedPayload, signature] = token.split('.');
+  if (!encodedPayload || !signature)
+    throw new BadRequestException('RECONCILIATION_PREVIEW_INVALID');
+  const expected = createHmac('sha256', xpControlPreviewSecret())
+    .update(encodedPayload)
+    .digest('base64url');
+  const providedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (
+    providedBuffer.length !== expectedBuffer.length ||
+    !timingSafeEqual(providedBuffer, expectedBuffer)
+  ) {
+    throw new BadRequestException('RECONCILIATION_PREVIEW_INVALID');
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as {
+      version?: unknown;
+      targetMembershipId?: unknown;
+      claimedXp?: unknown;
+      storedXp?: unknown;
+      currentXp?: unknown;
+      delta?: unknown;
+      status?: unknown;
+      sourceAnomalyCount?: unknown;
+      evidenceHash?: unknown;
+    };
+    if (
+      payload.version !== XP_CONTROL_ANALYSIS_VERSION ||
+      typeof payload.targetMembershipId !== 'string' ||
+      typeof payload.claimedXp !== 'number' ||
+      typeof payload.storedXp !== 'number' ||
+      typeof payload.currentXp !== 'number' ||
+      typeof payload.delta !== 'number' ||
+      typeof payload.status !== 'string' ||
+      typeof payload.sourceAnomalyCount !== 'number' ||
+      typeof payload.evidenceHash !== 'string'
+    ) {
+      throw new BadRequestException('RECONCILIATION_PREVIEW_INVALID');
+    }
+    return {
+      targetMembershipId: payload.targetMembershipId,
+      claimedXp: payload.claimedXp,
+      storedXp: payload.storedXp,
+      currentXp: payload.currentXp,
+      delta: payload.delta,
+      status: payload.status,
+      sourceAnomalyCount: payload.sourceAnomalyCount,
+      evidenceHash: payload.evidenceHash,
+    };
+  } catch (error) {
+    if (error instanceof BadRequestException) throw error;
+    throw new BadRequestException('RECONCILIATION_PREVIEW_INVALID');
+  }
+}
+
+function clampPageSize(value: number, max: number) {
+  return Math.min(Math.max(1, value), max);
+}
+
+function sortXpControlRows<T extends { [key: string]: unknown; membershipId: string }>(
+  rows: T[],
+  sortBy: string,
+  direction: 'asc' | 'desc',
+) {
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return [...rows].sort((left, right) => {
+    const a = left[sortBy];
+    const b = right[sortBy];
+    const comparison =
+      typeof a === 'number' && typeof b === 'number'
+        ? a - b
+        : xpControlSortText(a).localeCompare(xpControlSortText(b));
+    if (comparison !== 0) return comparison * multiplier;
+    return left.membershipId.localeCompare(right.membershipId);
+  });
+}
+
+function xpControlSortText(value: unknown) {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return '';
+}
+
+function xpControlEvidenceHash(row: {
+  membershipId: string;
+  claimedXp: number;
+  storedXp: number;
+  currentXp: number;
+  delta: number;
+  status: string;
+  sourceAnomalyCount: number;
+}) {
+  return [
+    row.membershipId,
+    row.claimedXp,
+    row.storedXp,
+    row.currentXp,
+    row.delta,
+    row.status,
+    row.sourceAnomalyCount,
+  ].join(':');
+}
+
+function reconciliationPreviewFromRow(row: {
+  membershipId: string;
+  displayName: string;
+  claimedXp: number;
+  storedXp: number;
+  currentXp: number;
+  delta: number;
+  status: string;
+  sourceAnomalyCount: number;
+}) {
+  if (row.delta === 0) throw new ConflictException('RECONCILIATION_NO_CHANGE');
+  if (row.sourceAnomalyCount > 0) throw new ConflictException('RECONCILIATION_NEEDS_REVIEW');
+  if (row.currentXp + row.delta < 0) throw new ConflictException('RECONCILIATION_FLOOR_CONFLICT');
+  const evidenceHash = xpControlEvidenceHash(row);
+  return {
+    targetMembershipId: row.membershipId,
+    displayName: row.displayName,
+    claimedXp: row.claimedXp,
+    storedXp: row.storedXp,
+    currentXp: row.currentXp,
+    delta: row.delta,
+    proposedDirection: row.delta > 0 ? 'ADD' : 'DEDUCT',
+    proposedCorrectionAmount: Math.abs(row.delta),
+    expectedStoredXp: row.claimedXp,
+    expectedCurrentXp: row.currentXp + row.delta,
+    sourceAnomalyCount: row.sourceAnomalyCount,
+    analysisVersion: XP_CONTROL_ANALYSIS_VERSION,
+    previewToken: createXpControlPreviewToken({
+      targetMembershipId: row.membershipId,
+      claimedXp: row.claimedXp,
+      storedXp: row.storedXp,
+      currentXp: row.currentXp,
+      delta: row.delta,
+      status: row.status,
+      sourceAnomalyCount: row.sourceAnomalyCount,
+      evidenceHash,
+    }),
+    evidenceReferences: [
+      `membership:${row.membershipId}`,
+      `analysis:${XP_CONTROL_ANALYSIS_VERSION}`,
+    ],
+  };
+}
+
+function reconciliationResult(
+  reconciliation: {
+    id: string;
+    claimedXpSnapshot: number;
+    storedXpSnapshot: number;
+    currentXpBeforeSnapshot: number;
+    deltaSnapshot: number;
+    adjustmentAmount: number;
+    currentXpAfterSnapshot: number;
+    status: GamificationXpReconciliationStatus;
+    reason: string;
+    createdAt: Date;
+    xpEntries: Array<{ id: string }>;
+  },
+  member: ReturnType<typeof adminMemberFromMembership>,
+) {
+  return {
+    id: reconciliation.id,
+    member,
+    claimedXp: reconciliation.claimedXpSnapshot,
+    storedXp: reconciliation.storedXpSnapshot,
+    currentXpBefore: reconciliation.currentXpBeforeSnapshot,
+    delta: reconciliation.deltaSnapshot,
+    adjustmentAmount: reconciliation.adjustmentAmount,
+    currentXpAfter: reconciliation.currentXpAfterSnapshot,
+    status: reconciliation.status,
+    reason: reconciliation.reason,
+    entryIds: reconciliation.xpEntries.map((entry) => entry.id),
+    createdAt: reconciliation.createdAt,
+  };
+}
+
+function xpLogCategoryWhere(category: string): Prisma.GamificationXpEntryWhereInput {
+  switch (category) {
+    case 'TASKS':
+      return { workXpEvent: { is: { workType: GamificationPointWorkType.TASK } } };
+    case 'PROJECTS':
+      return { workXpEvent: { is: { workType: GamificationPointWorkType.PROJECT } } };
+    case 'TICKETS':
+      return { workXpEvent: { is: { workType: GamificationPointWorkType.TICKET } } };
+    case 'CREATION_XP':
+      return { sourceEvent: { contains: 'CREATION' } };
+    case 'BONUS_XP':
+      return { sourceEvent: { contains: 'BONUS' } };
+    case 'PENALTY_XP':
+      return { sourceEvent: { contains: 'PENALTY' } };
+    case 'REVERSALS':
+      return { entryType: GamificationXpEntryType.REVERSAL };
+    case 'ACHIEVEMENTS':
+      return { sourceType: GamificationXpSourceType.ACHIEVEMENT };
+    case 'STREAKS':
+      return { sourceType: GamificationXpSourceType.STREAK };
+    case 'MANUAL_ADJUSTMENTS':
+      return {
+        sourceType: GamificationXpSourceType.MANUAL,
+        sourceEvent: { contains: 'ADJUSTMENT' },
+      };
+    case 'RESETS':
+      return { sourceEvent: { contains: 'RESET' } };
+    case 'RECONCILIATION':
+      return { reconciliationId: { not: null } };
+    case 'LEGACY':
+      return {
+        workXpEventId: null,
+        reconciliationId: null,
+        sourceType: {
+          notIn: [
+            GamificationXpSourceType.ACHIEVEMENT,
+            GamificationXpSourceType.STREAK,
+            GamificationXpSourceType.MANUAL,
+          ],
+        },
+        NOT: [
+          { sourceEvent: { contains: 'RESET' } },
+          { sourceEvent: { contains: 'RECONCILIATION' } },
+        ],
+      };
+    default:
+      return {};
+  }
+}
+
+function serializeXpControlLogEntry(
+  entry: Prisma.GamificationXpEntryGetPayload<{
+    include: {
+      workXpEvent: true;
+      reconciliation: true;
+      actorMembership: { select: typeof adminMemberSelect };
+    };
+  }>,
+) {
+  return {
+    id: entry.id,
+    timestamp: entry.createdAt,
+    amount: entry.amount,
+    entryType: entry.entryType,
+    sourceType: entry.sourceType,
+    sourceEvent: entry.sourceEvent,
+    sourceEntityId: entry.sourceEntityId,
+    category: xpLogCategory(entry),
+    reason: entry.reason,
+    actor: entry.actorMembership ? adminMemberFromMembership(entry.actorMembership) : null,
+    work: entry.workXpEvent
+      ? {
+          workType: entry.workXpEvent.workType,
+          sourceLabel: entry.workXpEvent.sourceLabelSnapshot,
+          departmentName: entry.workXpEvent.departmentNameSnapshot,
+          category: entry.workXpEvent.categorySnapshot,
+          ruleSource: entry.workXpEvent.ruleSourceSnapshot,
+          baseXp: entry.workXpEvent.baseXpSnapshot,
+          bonusXp: entry.workXpEvent.bonusXpSnapshot,
+          penaltyXp: entry.workXpEvent.penaltyXpSnapshot,
+          netXp: entry.workXpEvent.netXpSnapshot,
+          dueAt: entry.workXpEvent.dueAtSnapshot,
+          completedAt: entry.workXpEvent.completedAtSnapshot,
+          completionCycle: entry.workXpEvent.completionCycle,
+          eventType: entry.workXpEvent.eventType,
+          outcome: entry.workXpEvent.outcome,
+          skipReason: entry.workXpEvent.skipReason,
+          reversalOfEventId: entry.workXpEvent.reversalOfEventId,
+        }
+      : null,
+    reconciliation: entry.reconciliation
+      ? {
+          id: entry.reconciliation.id,
+          claimedXp: entry.reconciliation.claimedXpSnapshot,
+          storedXp: entry.reconciliation.storedXpSnapshot,
+          delta: entry.reconciliation.deltaSnapshot,
+          currentXpBefore: entry.reconciliation.currentXpBeforeSnapshot,
+          currentXpAfter: entry.reconciliation.currentXpAfterSnapshot,
+          reason: entry.reconciliation.reason,
+          createdAt: entry.reconciliation.createdAt,
+        }
+      : null,
+  };
+}
+
+function xpLogCategory(entry: {
+  sourceType: GamificationXpSourceType;
+  sourceEvent: string;
+  entryType: GamificationXpEntryType;
+  reconciliationId: string | null;
+}) {
+  if (entry.reconciliationId) return 'RECONCILIATION';
+  if (entry.entryType === GamificationXpEntryType.REVERSAL) return 'REVERSALS';
+  if (entry.sourceType === GamificationXpSourceType.TASK) return 'TASKS';
+  if (entry.sourceType === GamificationXpSourceType.PROJECT) return 'PROJECTS';
+  if (entry.sourceType === GamificationXpSourceType.TICKET) return 'TICKETS';
+  if (entry.sourceType === GamificationXpSourceType.ACHIEVEMENT) return 'ACHIEVEMENTS';
+  if (entry.sourceType === GamificationXpSourceType.STREAK) return 'STREAKS';
+  if (entry.sourceEvent.includes('RESET')) return 'RESETS';
+  if (entry.sourceType === GamificationXpSourceType.MANUAL) return 'MANUAL_ADJUSTMENTS';
+  return 'LEGACY';
 }
 
 function isUniqueConstraintError(error: unknown) {

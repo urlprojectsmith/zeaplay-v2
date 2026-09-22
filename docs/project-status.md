@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 10.9 — XP ENGINE + TASK / PROJECT / TICKET INTEGRATION COMPLETE / PASS
-Next: Phase 10.10 — XP Control Center + Analyzer + Reconciliation
+Current: Phase 10.10 — XP CONTROL CENTER + ANALYZER + RECONCILIATION COMPLETE / PASS
+Next: Phase 10.11 — Global Score Normalization Engine
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -3925,3 +3925,187 @@ Confirmed current warnings:
 - Final security search found no direct Task/Project/Ticket `GamificationXpEntry` inserts, no client-authoritative XP amounts or completion timestamps for awards, no follower/project-member/requester completion XP path, no Project priority XP-category mixup, no Ticket EMERGENCY enum, no duplicated timing calculator, no standalone late penalty, no reopen-as-penalty path, no historical XP backfill, no manual XP claim button, no direct Reward Point work award, and no Phase 10.10+ UI surface.
 - Final migration status on local database `zea_play`: 48 migrations found, including `0048_phase10_9_xp_engine_work_events`, and `prisma migrate status` reports the database schema is up to date with no pending migrations.
 - Phase 10.9 final verification passed: focused API gamification tests 72/72, API unit 141/141, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, `git diff --check`, and migration status.
+
+### Phase 10.10 - PASS
+
+XP Control Center + Analyzer + Reconciliation.
+
+Implemented:
+
+- Added Workspace XP Control Center APIs under existing `/workspaces/:workspaceId/gamification/xp-control/*`, guarded by `gamification.xp_control.view` and `gamification.xp_control.reconcile`.
+- Added analyzer rows with User, Claimed XP, Stored XP, Current XP, Delta, Status, and Action. Claimed XP is derived from immutable `GamificationWorkXpEvent` snapshots; Stored XP is limited to linked work XP ledger rows plus reconciliation corrections; Current XP remains the full XP ledger balance.
+- Added durable `GamificationXpReconciliation` records and deterministic ledger links through `GamificationXpEntry.reconciliationId`, with migration, seed permissions, and immutable applied/no-change reconciliation guard.
+- Added preview/apply reconciliation flow with explicit `RECONCILE`, reason, stale snapshot reanalysis, floor conflict checks, idempotency, audit logging, and central Gamification XP service ledger insertion.
+- Added XP Control Center tab inside existing `/workspace/gamification`, including analyzer filters, detail/source breakdown, XP log categories, preview, and apply controls. Manual add/deduct/reset remain in the existing Admin tab.
+
+Security and scope invariants:
+
+- Reconciliation never mutates historical work events or old XP ledger rows; it writes a new correction entry linked to an immutable reconciliation record.
+- Work mismatch uses `delta = claimedXp - storedXp`; current XP is displayed and protected by floor checks but is not used to compute mismatch.
+- Achievement, Streak, manual adjustment, reset, legacy, and other non-work XP remain visible in logs/breakdown/current balances but do not create Work XP mismatches.
+- No auto-fix, worker/Redis XP authority, Agency/Super Admin global view, Developer dashboard, global score normalization, or Phase 10.11 scope was introduced.
+
+Verification:
+
+- `pnpm prisma:generate`
+- `pnpm prisma:validate`
+- `pnpm --filter @zea-play/api typecheck`
+- `pnpm --filter @zea-play/web typecheck`
+- `pnpm --filter @zea-play/web test -- phase10-1.test.tsx` (6 files, 127 tests passed)
+- `pnpm --filter @zea-play/api test -- gamification.service.spec.ts --runInBand` (72 tests passed)
+
+Phase 10.10 XP CONTROL CENTER + ANALYZER + RECONCILIATION is complete/pass; the next step is Phase 10.10 Focused Refinement.
+
+### Phase 10.10 Focused Checklist - PASS
+
+XP Control Center + Analyzer + Reconciliation focused hardening.
+
+Refinements:
+
+- Reconciliation apply now uses a server-signed preview token instead of client-authoritative claimed/stored/current/delta values.
+- Server re-analysis compares signed claimed, stored, current, delta, status, and anomaly snapshot fields immediately before new correction.
+- Exact idempotent reconciliation retry now replays the existing reconciliation before stale-state rejection, preventing duplicate ledger or audit effects.
+- Review-required anomalies now derive `NEEDS_REVIEW` before `MISMATCH`, and reconciliation preview/apply rejects unprovable rows.
+- XP log Task/Project/Ticket filters now use linked `GamificationWorkXpEvent.workType` instead of source-type guessing.
+- Legacy XP filtering now excludes reset, manual, classified non-work, and reconciliation rows so unclassified XP stays honest.
+- XP Control frontend apply sends only target, signed preview token, reason, confirmation, and idempotency key.
+- XP Control reconcile controls are shown only for `MISMATCH` rows with reconcile permission.
+- Stale reconciliation errors clear the old preview/confirmation state; admins must refresh analysis.
+- Workspace switch clears XP Control filters, pagination, selected member, log category/page, reason, preview, and confirmation.
+- Main table tooltips now state Claimed, Stored, and Current XP semantics.
+
+Focused invariants:
+
+- Claimed XP is immutable expected source XP, never current XP.
+- Stored XP is actual reconcilable linked ledger XP plus valid reconciliation corrections.
+- Current XP is the complete immutable XP ledger balance.
+- Delta is strictly Claimed minus Stored.
+- Manual, reset, Achievement, and Streak XP never create false work-source mismatches.
+- Historical Work XP Event snapshots remain calculation authority; current Point Rules are never used to recalculate historical XP.
+- Intentional skipped work events do not become fake mismatches.
+- Ambiguous/unprovable anomalies become `NEEDS_REVIEW`.
+- Analyzer status is derived from current source/ledger state, and historical `RECONCILED` state cannot mask a new mismatch.
+- Analyzer list remains set-based, Workspace fenced, bounded, and server paginated; mismatch/status filters are applied before pagination.
+- Member detail summary matches main analyzer.
+- XP source breakdown avoids Base/Bonus/Penalty/Reversal double counting.
+- XP log is server paginated and deterministically ordered.
+- Legacy XP remains visible without guessed source mapping.
+- Reconciliation preview is server-authoritative.
+- Server re-analysis is mandatory immediately before new correction.
+- Stale analysis is rejected even when Delta coincidentally remains unchanged.
+- Correction amount is server-derived current proven Delta.
+- Negative floor conflict rejects without partial correction.
+- Reconciliation is one-member-at-a-time and human confirmed; no automatic, bulk, or Fix-All reconciliation exists.
+- Reconciliation uses the central XP service.
+- Existing Work XP Events and ledger rows remain immutable.
+- One durable reconciliation record maps to one corrective ledger effect.
+- Valid cumulative reconciliation corrections participate in Stored XP accounting.
+- Reconciliation is idempotent and duplicate audits are prevented.
+- Reconciliation does not grant manual-adjust/reset privileges.
+- Inactive membership reconciliation is denied.
+- Cross-Workspace analysis/reconciliation is blocked by tenant fencing and membership lookup.
+- Existing Phase 10.7 manual adjustment and OTP reset flows are reused.
+- `/workspace/gamification` remains the single route.
+- XP Control Center remains functional, while Phase 10.14 still owns final UI consolidation.
+- No Global Score Normalization, Agency/Super Admin Global Leaderboard, Developer Gamification dashboard, analyzer/reconciliation worker, or Redis authority exists.
+- Phase 7 through Phase 10.9 remain green.
+
+Verification:
+
+- Focused API gamification tests: 77/77.
+- Focused Web XP Control tests: Phase 10 web suite 127/127.
+- API unit: 146/146.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- Clean migration deploy: pass, no pending migrations.
+- Migration status: database schema up to date, 49 migrations.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+
+Phase 10.10 XP CONTROL CENTER + ANALYZER + RECONCILIATION Focused Checklist is pass; the next step is Phase 10.10 Final Completion Verification, and it must not start automatically.
+
+### Phase 10.10 Final Completion Verification - PASS
+
+XP Control Center + Analyzer + Reconciliation is complete/pass.
+
+Final invariants:
+
+- XP Control Center remains Workspace/Subaccount scoped.
+- Primary analyzer columns are User / Claimed XP / Stored XP / Current XP / Delta / Status / Action.
+- Claimed XP is immutable expected reconcilable source XP.
+- Stored XP is actual source-linked ledger XP plus valid reconciliation corrections.
+- Current XP is the complete immutable XP ledger balance.
+- Delta is strictly Claimed minus Stored.
+- Current Point Rules never recalculate historical Work XP.
+- Intentional source skips do not create false mismatches.
+- Unprovable anomalies are `NEEDS_REVIEW`, and `NEEDS_REVIEW` takes precedence over guessed mismatch.
+- Achievement, Streak, manual, and reset XP never create false work-source mismatch.
+- Analyzer remains set-based, server-authoritative, Workspace fenced, bounded, and server paginated.
+- Filters/status/mismatch semantics are applied before pagination.
+- Member detail summary matches analyzer.
+- XP source breakdown avoids double counting.
+- Work XP log classification uses relational Work XP Event semantics.
+- Legacy/unclassified XP remains honest and is not guessed.
+- Reconciliation preview is server-generated.
+- Signed preview state prevents client correction authority.
+- Server re-analysis is mandatory before reconcile.
+- Stale analysis is rejected even if Delta coincidentally matches.
+- Correction amount is current server-proven Delta.
+- Floor conflicts reject with no clamp or partial correction.
+- Reconciliation uses the central XP service.
+- Original Work XP Events and ledger rows remain immutable.
+- Valid reconciliation corrections participate in effective Stored XP.
+- Reconciliation records and corrective ledger entries are deterministically linked.
+- Reconciliation is idempotent; exact retries return the prior committed result without duplicate audit.
+- Conflicting idempotency keys are rejected.
+- No automatic, bulk, or Fix-All reconciliation exists.
+- Manual Add/Deduct still uses Phase 10.7 controls.
+- Reset still uses Phase 10.7 password + Email OTP security.
+- Permissions remain separated between view, reconcile, adjust, and reset.
+- Inactive membership reconciliation is denied.
+- Cross-Workspace analysis/reconciliation is blocked.
+- `/workspace/gamification` remains the single Workspace Gamification route.
+- XP Control Center remains a functional tab.
+- No Global Score Normalization exists yet.
+- No Agency/Super Admin Global Leaderboard work exists yet.
+- No Developer Gamification Dashboard exists yet.
+- No analyzer/reconciliation worker or Redis authority exists.
+- Phase 7 through Phase 10.9 remain green.
+
+Final verification:
+
+- Focused XP Control / Analyzer / Reconciliation / XP log API tests: 77/77.
+- Focused frontend XP Control tests: Phase 10 web suite 127/127.
+- API unit: 146/146.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- Clean Prisma migration deploy: pass, no pending migrations.
+- Migration status: database schema is up to date, 49 migrations.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+
+Phase 10.10 XP CONTROL CENTER + ANALYZER + RECONCILIATION is complete/pass; the next step is Phase 10.11 Global Score Normalization Engine, and it must not start automatically.

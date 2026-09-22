@@ -49,6 +49,11 @@ const getGamificationPointManagement = vi.fn();
 const upsertGamificationCompletionPointRule = vi.fn();
 const upsertGamificationCreationPointRule = vi.fn();
 const previewGamificationCompletionPoints = vi.fn();
+const listGamificationXpControl = vi.fn();
+const getGamificationXpControlDetail = vi.fn();
+const listGamificationXpControlLog = vi.fn();
+const previewGamificationXpReconciliation = vi.fn();
+const applyGamificationXpReconciliation = vi.fn();
 
 vi.mock('../services/workspace-roles', () => ({
   rolesKeys: {
@@ -208,6 +213,26 @@ vi.mock('../services/workspace-gamification', () => ({
       'points',
       departmentId,
     ],
+    xpControl: (workspaceId: string | null, params: unknown) => [
+      'workspace',
+      workspaceId,
+      'gamification',
+      'xp-control',
+      params,
+    ],
+    xpControlDetail: (workspaceId: string | null, membershipId: string | null) => [
+      'workspace',
+      workspaceId,
+      'gamification',
+      'xp-control-detail',
+      membershipId,
+    ],
+    xpControlLog: (
+      workspaceId: string | null,
+      membershipId: string | null,
+      category: string,
+      page: number,
+    ) => ['workspace', workspaceId, 'gamification', 'xp-control-log', membershipId, category, page],
     all: (workspaceId: string | null) => ['workspace-gamification', workspaceId],
   },
   getMyGamificationXpSummary: (...args: unknown[]) => getMyGamificationXpSummary(...args),
@@ -267,6 +292,13 @@ vi.mock('../services/workspace-gamification', () => ({
     upsertGamificationCreationPointRule(...args),
   previewGamificationCompletionPoints: (...args: unknown[]) =>
     previewGamificationCompletionPoints(...args),
+  listGamificationXpControl: (...args: unknown[]) => listGamificationXpControl(...args),
+  getGamificationXpControlDetail: (...args: unknown[]) => getGamificationXpControlDetail(...args),
+  listGamificationXpControlLog: (...args: unknown[]) => listGamificationXpControlLog(...args),
+  previewGamificationXpReconciliation: (...args: unknown[]) =>
+    previewGamificationXpReconciliation(...args),
+  applyGamificationXpReconciliation: (...args: unknown[]) =>
+    applyGamificationXpReconciliation(...args),
 }));
 
 describe('Phase 10 gamification page', () => {
@@ -342,6 +374,14 @@ describe('Phase 10 gamification page', () => {
           {
             id: 'permission-gamification-points-manage-workspace',
             key: 'gamification.points.manage_workspace',
+          },
+          {
+            id: 'permission-gamification-xp-control-view',
+            key: 'gamification.xp_control.view',
+          },
+          {
+            id: 'permission-gamification-xp-control-reconcile',
+            key: 'gamification.xp_control.reconcile',
           },
         ],
         createdAt: '',
@@ -515,6 +555,75 @@ describe('Phase 10 gamification page', () => {
       lateMinutes: 0,
       lateIntervals: 0,
     });
+    listGamificationXpControl.mockResolvedValue({
+      items: [
+        {
+          membershipId: 'target-membership-1',
+          displayName: 'Target User',
+          departmentId: 'department-1',
+          departmentName: 'Support',
+          memberStatus: 'ACTIVE',
+          claimedXp: 120,
+          storedXp: 90,
+          currentXp: 140,
+          delta: 30,
+          status: 'MISMATCH',
+          sourceAnomalyCount: 0,
+          lastActivityAt: '2026-01-01T00:00:00.000Z',
+          currentLevel: null,
+        },
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+    });
+    getGamificationXpControlDetail.mockResolvedValue({
+      member: {
+        membershipId: 'target-membership-1',
+        displayName: 'Target User',
+        departmentId: 'department-1',
+        departmentName: 'Support',
+        memberStatus: 'ACTIVE',
+        claimedXp: 120,
+        storedXp: 90,
+        currentXp: 140,
+        delta: 30,
+        status: 'MISMATCH',
+        sourceAnomalyCount: 0,
+        lastActivityAt: '2026-01-01T00:00:00.000Z',
+        currentLevel: null,
+      },
+      breakdown: {
+        taskXp: 100,
+        projectXp: 20,
+        ticketXp: 0,
+        achievementXp: 10,
+        streakXp: 0,
+        manualXp: 10,
+        resetXp: 0,
+        reconciliationXp: 0,
+        legacyXp: 0,
+        currentXp: 140,
+      },
+    });
+    listGamificationXpControlLog.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+    previewGamificationXpReconciliation.mockResolvedValue({
+      targetMembershipId: 'target-membership-1',
+      displayName: 'Target User',
+      claimedXp: 120,
+      storedXp: 90,
+      currentXp: 140,
+      delta: 30,
+      proposedDirection: 'ADD',
+      proposedCorrectionAmount: 30,
+      expectedStoredXp: 120,
+      expectedCurrentXp: 170,
+      sourceAnomalyCount: 0,
+      analysisVersion: 'phase10.10.v2',
+      previewToken: 'signed-preview-token',
+      evidenceReferences: ['work-xp-events'],
+    });
+    applyGamificationXpReconciliation.mockResolvedValue({ changed: true });
     getGamificationLeaderboardConfig.mockResolvedValue({
       id: 'leaderboard-config-1',
       workspaceId: 'workspace-1',
@@ -952,6 +1061,50 @@ describe('Phase 10 gamification page', () => {
     expect(await screen.findByRole('heading', { name: 'Admin Reset' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Admin Adjustments' })).not.toBeInTheDocument();
     expect(getMyGamificationXpSummary).not.toHaveBeenCalled();
+  });
+
+  it('shows the XP Control Center analyzer and applies a confirmed reconciliation snapshot', async () => {
+    renderGamificationPage();
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'XP Control Center' }));
+
+    expect(await screen.findByText('Claimed XP')).toBeInTheDocument();
+    expect(screen.getByText('Stored XP')).toBeInTheDocument();
+    expect(screen.getByText('Delta')).toBeInTheDocument();
+    expect(await screen.findByText('Target User')).toBeInTheDocument();
+    expect(screen.getAllByText('+30 XP').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect' }));
+    expect(await screen.findByRole('heading', { name: 'Reconciliation' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview Reconciliation' }));
+    await waitFor(() =>
+      expect(previewGamificationXpReconciliation).toHaveBeenCalledWith(
+        'workspace-1',
+        'target-membership-1',
+      ),
+    );
+    expect(await screen.findByText(/Expected current XP: 170/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Reason'), {
+      target: { value: 'Backfill immutable work XP snapshots' },
+    });
+    fireEvent.change(screen.getByLabelText('Type RECONCILE'), {
+      target: { value: 'RECONCILE' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Reconciliation' }));
+
+    await waitFor(() =>
+      expect(applyGamificationXpReconciliation).toHaveBeenCalledWith(
+        'workspace-1',
+        expect.objectContaining({
+          targetMembershipId: 'target-membership-1',
+          previewToken: 'signed-preview-token',
+          reason: 'Backfill immutable work XP snapshots',
+          confirmation: 'RECONCILE',
+        }),
+      ),
+    );
   });
 
   it('does not call XP APIs when the selected role lacks gamification.view', async () => {

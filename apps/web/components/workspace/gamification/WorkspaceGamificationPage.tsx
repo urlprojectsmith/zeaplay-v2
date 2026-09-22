@@ -21,6 +21,7 @@ import {
   createGamificationReward,
   fulfillGamificationRewardRedemption,
   getGamificationAdminMemberBalance,
+  getGamificationXpControlDetail,
   getGamificationLeaderboardConfig,
   getGamificationPointManagement,
   getMyGamificationLeaderboardPreference,
@@ -34,11 +35,14 @@ import {
   listGamificationAdminActions,
   listGamificationAchievements,
   listGamificationBadges,
+  listGamificationXpControl,
+  listGamificationXpControlLog,
   listGamificationLevels,
   listGamificationRewardRedemptions,
   listGamificationRewards,
   listMyGamificationRewardRedemptions,
   previewGamificationCompletionPoints,
+  previewGamificationXpReconciliation,
   redeemGamificationReward,
   resetGamificationAdminBalance,
   searchGamificationAdminMembers,
@@ -52,6 +56,7 @@ import {
   updateGamificationLevel,
   updateGamificationReward,
   verifyGamificationResetEmailOtp,
+  applyGamificationXpReconciliation,
   type GamificationAdminAction,
   type GamificationAdminAdjustmentOperation,
   type GamificationAdminEconomy,
@@ -77,6 +82,11 @@ import {
   type GamificationXpEntry,
   type GamificationXpEntryType,
   type GamificationXpSourceType,
+  type GamificationXpControlLogEntry,
+  type GamificationXpSourceBreakdown,
+  type GamificationXpControlStatus,
+  type GamificationXpLogCategory,
+  type GamificationXpReconciliationPreview,
   type GamificationLevel,
   type GamificationXpSummary,
   getWorkspaceGamificationLeaderboard,
@@ -92,6 +102,7 @@ const tabs = [
   'rewards',
   'leaderboard',
   'points',
+  'xpControl',
   'admin',
   'history',
 ] as const;
@@ -109,6 +120,25 @@ const pointCategories: Record<GamificationPointWorkType, GamificationPointCatego
   PROJECT: ['MEDIUM', 'HIGH', 'LONG_TERM'],
   TICKET: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'],
 };
+const xpControlStatuses: Array<'ALL' | GamificationXpControlStatus> = [
+  'ALL',
+  'MISMATCH',
+  'NEEDS_REVIEW',
+  'RECONCILED',
+  'BALANCED',
+];
+const xpLogCategories: GamificationXpLogCategory[] = [
+  'ALL',
+  'TASKS',
+  'PROJECTS',
+  'TICKETS',
+  'ACHIEVEMENTS',
+  'STREAKS',
+  'MANUAL_ADJUSTMENTS',
+  'RESETS',
+  'RECONCILIATION',
+  'LEGACY',
+];
 
 export function WorkspaceGamificationPage() {
   const { locale } = useLanguage();
@@ -160,6 +190,9 @@ export function WorkspaceGamificationPage() {
   const canUseAdminControls = canManageAdjustments || canResetGamification;
   const canManagePoints = canManageWorkspacePoints || canManageDepartmentPoints;
   const canUsePointManagement = canViewPoints || canManagePoints;
+  const canViewXpControl = permissions.has('*') || permissions.has('gamification.xp_control.view');
+  const canReconcileXpControl =
+    permissions.has('*') || permissions.has('gamification.xp_control.reconcile');
   const canShowSelfTabs = !rolesQuery.isFetched || canView;
   const [pointDepartmentId, setPointDepartmentId] = useState<string | null>(null);
   const visibleTabs = useMemo(
@@ -169,22 +202,35 @@ export function WorkspaceGamificationPage() {
           ? canUseAdminControls
           : tab === 'points'
             ? canUsePointManagement
-            : canShowSelfTabs,
+            : tab === 'xpControl'
+              ? canViewXpControl
+              : canShowSelfTabs,
       ),
-    [canShowSelfTabs, canUseAdminControls, canUsePointManagement],
+    [canShowSelfTabs, canUseAdminControls, canUsePointManagement, canViewXpControl],
   );
 
   useEffect(() => {
-    if (rolesQuery.isFetched && !canView && canUseAdminControls) {
+    if (rolesQuery.isFetched && !canView && canViewXpControl) {
+      setActiveTab('xpControl');
+    } else if (rolesQuery.isFetched && !canView && canUseAdminControls) {
       setActiveTab('admin');
     } else if (rolesQuery.isFetched && !canView && canUsePointManagement) {
       setActiveTab('points');
     } else if (activeTab === 'admin' && !canUseAdminControls) {
       setActiveTab('overview');
+    } else if (activeTab === 'xpControl' && !canViewXpControl) {
+      setActiveTab('overview');
     } else if (activeTab === 'points' && !canUsePointManagement) {
       setActiveTab('overview');
     }
-  }, [activeTab, canUseAdminControls, canUsePointManagement, canView, rolesQuery.isFetched]);
+  }, [
+    activeTab,
+    canUseAdminControls,
+    canUsePointManagement,
+    canView,
+    canViewXpControl,
+    rolesQuery.isFetched,
+  ]);
 
   const summaryQuery = useQuery({
     queryKey: gamificationKeys.summary(selectedWorkspaceId),
@@ -326,7 +372,13 @@ export function WorkspaceGamificationPage() {
       />
     );
   }
-  if (rolesQuery.isFetched && !canView && !canUseAdminControls && !canUsePointManagement) {
+  if (
+    rolesQuery.isFetched &&
+    !canView &&
+    !canUseAdminControls &&
+    !canUsePointManagement &&
+    !canViewXpControl
+  ) {
     return (
       <EmptyState
         title={t(locale, 'states.permissionDenied')}
@@ -388,9 +440,11 @@ export function WorkspaceGamificationPage() {
                           ? t(locale, 'gamification.leaderboard')
                           : tab === 'points'
                             ? t(locale, 'gamification.points')
-                            : tab === 'admin'
-                              ? t(locale, 'gamification.admin')
-                              : t(locale, 'gamification.history')}
+                            : tab === 'xpControl'
+                              ? t(locale, 'gamification.xpControlCenter')
+                              : tab === 'admin'
+                                ? t(locale, 'gamification.admin')
+                                : t(locale, 'gamification.history')}
           </button>
         ))}
       </nav>
@@ -509,6 +563,8 @@ export function WorkspaceGamificationPage() {
             isError={pointManagementQuery.isError}
             onDepartmentChange={setPointDepartmentId}
           />
+        ) : activeTab === 'xpControl' ? (
+          <XpControlPanel workspaceId={selectedWorkspaceId} canReconcile={canReconcileXpControl} />
         ) : activeTab === 'admin' ? (
           <AdminControlsPanel
             workspaceId={selectedWorkspaceId}
@@ -2484,6 +2540,476 @@ function YourPositionCard({ leaderboard }: { leaderboard: GamificationLeaderboar
   );
 }
 
+function XpControlPanel({
+  workspaceId,
+  canReconcile,
+}: {
+  workspaceId: string;
+  canReconcile: boolean;
+}) {
+  const { locale } = useLanguage();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<'ALL' | GamificationXpControlStatus>('ALL');
+  const [hasDelta, setHasDelta] = useState(false);
+  const [page, setPage] = useState(1);
+  const [selectedMembershipId, setSelectedMembershipId] = useState<string | null>(null);
+  const [logCategory, setLogCategory] = useState<GamificationXpLogCategory>('ALL');
+  const [logPage, setLogPage] = useState(1);
+  const [preview, setPreview] = useState<GamificationXpReconciliationPreview | null>(null);
+  const [reason, setReason] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+
+  const params = useMemo(
+    () => ({
+      page,
+      pageSize,
+      search: search.trim() || undefined,
+      status: status === 'ALL' ? undefined : status,
+      hasDelta: hasDelta ? true : undefined,
+      sortBy: 'delta' as const,
+      sortDirection: 'desc' as const,
+    }),
+    [hasDelta, page, search, status],
+  );
+  const analyzerQuery = useQuery({
+    queryKey: gamificationKeys.xpControl(workspaceId, params),
+    queryFn: () => listGamificationXpControl(workspaceId, params),
+  });
+  const detailQuery = useQuery({
+    queryKey: gamificationKeys.xpControlDetail(workspaceId, selectedMembershipId),
+    queryFn: () => getGamificationXpControlDetail(workspaceId, selectedMembershipId as string),
+    enabled: Boolean(selectedMembershipId),
+  });
+  const logQuery = useQuery({
+    queryKey: gamificationKeys.xpControlLog(
+      workspaceId,
+      selectedMembershipId,
+      logCategory,
+      logPage,
+    ),
+    queryFn: () =>
+      listGamificationXpControlLog(workspaceId, selectedMembershipId as string, {
+        category: logCategory,
+        page: logPage,
+        pageSize,
+      }),
+    enabled: Boolean(selectedMembershipId),
+  });
+
+  useEffect(() => {
+    setSearch('');
+    setStatus('ALL');
+    setHasDelta(false);
+    setPage(1);
+    setSelectedMembershipId(null);
+    setLogCategory('ALL');
+    setLogPage(1);
+    setPreview(null);
+    setReason('');
+    setConfirmation('');
+  }, [workspaceId]);
+  useEffect(() => {
+    setPreview(null);
+    setReason('');
+    setConfirmation('');
+    setLogPage(1);
+  }, [selectedMembershipId]);
+
+  const previewMutation = useMutation({
+    mutationFn: () =>
+      previewGamificationXpReconciliation(workspaceId, selectedMembershipId as string),
+    onSuccess: (result) => setPreview(result),
+  });
+  const applyMutation = useMutation({
+    mutationFn: () =>
+      applyGamificationXpReconciliation(workspaceId, {
+        targetMembershipId: preview?.targetMembershipId ?? '',
+        previewToken: preview?.previewToken ?? '',
+        reason,
+        confirmation,
+        idempotencyKey: createIdempotencyKey(),
+      }),
+    onSuccess: async () => {
+      setPreview(null);
+      setReason('');
+      setConfirmation('');
+      await queryClient.invalidateQueries({ queryKey: gamificationKeys.all(workspaceId) });
+    },
+    onError: (error) => {
+      const message = getMutationErrorMessage(error) ?? '';
+      if (message.includes('RECONCILIATION_STALE')) {
+        setPreview(null);
+        setConfirmation('');
+      }
+    },
+  });
+
+  const selectedRow =
+    detailQuery.data?.member ??
+    analyzerQuery.data?.items.find((item) => item.membershipId === selectedMembershipId) ??
+    null;
+  const pageCount = Math.max(1, Math.ceil((analyzerQuery.data?.total ?? 0) / pageSize));
+  const logPageCount = Math.max(1, Math.ceil((logQuery.data?.total ?? 0) / pageSize));
+
+  if (analyzerQuery.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (analyzerQuery.isError)
+    return <EmptyState title={t(locale, 'gamification.unableToLoadXpControl')} />;
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,0.9fr)]">
+      <section className="space-y-3">
+        <div className="grid gap-3 rounded-md border bg-card p-4 md:grid-cols-[1fr_auto_auto]">
+          <label className="grid gap-1 text-sm font-medium">
+            {t(locale, 'gamification.searchMembers')}
+            <input
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+          <label className="grid gap-1 text-sm font-medium">
+            {t(locale, 'gamification.status')}
+            <select
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value as 'ALL' | GamificationXpControlStatus);
+                setPage(1);
+              }}
+            >
+              {xpControlStatuses.map((item) => (
+                <option key={item} value={item}>
+                  {item === 'ALL'
+                    ? t(locale, 'gamification.allStatuses')
+                    : xpControlStatusLabel(locale, item)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-end gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={hasDelta}
+              onChange={(event) => {
+                setHasDelta(event.target.checked);
+                setPage(1);
+              }}
+            />
+            {t(locale, 'gamification.onlyMismatches')}
+          </label>
+        </div>
+
+        <div className="overflow-x-auto rounded-md border">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-3 py-2">{t(locale, 'gamification.member')}</th>
+                <th className="px-3 py-2" title={t(locale, 'gamification.claimedXpTooltip')}>
+                  {t(locale, 'gamification.claimedXp')}
+                </th>
+                <th className="px-3 py-2" title={t(locale, 'gamification.storedXpTooltip')}>
+                  {t(locale, 'gamification.storedXp')}
+                </th>
+                <th className="px-3 py-2" title={t(locale, 'gamification.currentXpTooltip')}>
+                  {t(locale, 'gamification.currentXp')}
+                </th>
+                <th className="px-3 py-2">{t(locale, 'gamification.delta')}</th>
+                <th className="px-3 py-2">{t(locale, 'gamification.status')}</th>
+                <th className="px-3 py-2">{t(locale, 'gamification.action')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {(analyzerQuery.data?.items ?? []).map((row) => (
+                <tr key={row.membershipId} className={row.delta !== 0 ? 'bg-destructive/5' : ''}>
+                  <td className="px-3 py-2">
+                    <p className="font-medium">{row.displayName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {row.departmentName ?? t(locale, 'workspaceUsers.noDepartment')}
+                    </p>
+                  </td>
+                  <td className="px-3 py-2">{row.claimedXp}</td>
+                  <td className="px-3 py-2">{row.storedXp}</td>
+                  <td className="px-3 py-2">{row.currentXp}</td>
+                  <td
+                    className={[
+                      'px-3 py-2 font-medium',
+                      row.delta === 0 ? '' : 'text-destructive',
+                    ].join(' ')}
+                  >
+                    {formatXpAmount(row.delta)}
+                  </td>
+                  <td className="px-3 py-2">{xpControlStatusLabel(locale, row.status)}</td>
+                  <td className="px-3 py-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setSelectedMembershipId(row.membershipId)}
+                    >
+                      {t(locale, 'gamification.inspect')}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {(analyzerQuery.data?.items ?? []).length === 0 ? (
+          <EmptyState title={t(locale, 'gamification.noXpControlRows')} />
+        ) : null}
+        <Pager page={page} pageCount={pageCount} onPageChange={setPage} />
+      </section>
+
+      <aside className="space-y-4">
+        {!selectedRow ? (
+          <EmptyState title={t(locale, 'gamification.selectMember')} />
+        ) : (
+          <>
+            <section className="space-y-3 rounded-md border bg-card p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">{selectedRow.displayName}</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedRow.departmentName ?? t(locale, 'workspaceUsers.noDepartment')}
+                  </p>
+                </div>
+                <span className="rounded-md border px-2 py-1 text-xs">
+                  {xpControlStatusLabel(locale, selectedRow.status)}
+                </span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <AdminBalanceCard
+                  label={t(locale, 'gamification.claimedXp')}
+                  value={selectedRow.claimedXp}
+                  suffix="XP"
+                />
+                <AdminBalanceCard
+                  label={t(locale, 'gamification.storedXp')}
+                  value={selectedRow.storedXp}
+                  suffix="XP"
+                />
+                <AdminBalanceCard
+                  label={t(locale, 'gamification.currentXp')}
+                  value={selectedRow.currentXp}
+                  suffix="XP"
+                />
+                <AdminBalanceCard
+                  label={t(locale, 'gamification.delta')}
+                  value={selectedRow.delta}
+                  suffix="XP"
+                />
+              </div>
+            </section>
+
+            {detailQuery.data ? (
+              <XpBreakdownCard detail={detailQuery.data.breakdown} />
+            ) : (
+              <Skeleton className="h-32 w-full" />
+            )}
+
+            {canReconcile && selectedRow.status === 'MISMATCH' ? (
+              <section className="space-y-3 rounded-md border bg-card p-4">
+                <h2 className="text-lg font-semibold">
+                  {t(locale, 'gamification.reconciliation')}
+                </h2>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={previewMutation.isPending}
+                  onClick={() => previewMutation.mutate()}
+                >
+                  {t(locale, 'gamification.previewReconciliation')}
+                </Button>
+                {preview ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      {preview.proposedDirection} {preview.proposedCorrectionAmount} XP.{' '}
+                      {t(locale, 'gamification.expectedCurrentXp')}: {preview.expectedCurrentXp}
+                    </p>
+                    <div className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-2">
+                      <span>
+                        {t(locale, 'gamification.claimedXp')}: {preview.claimedXp}
+                      </span>
+                      <span>
+                        {t(locale, 'gamification.storedXp')}: {preview.storedXp}
+                      </span>
+                      <span>
+                        {t(locale, 'gamification.currentXp')}: {preview.currentXp}
+                      </span>
+                      <span>
+                        {t(locale, 'gamification.delta')}: {formatXpAmount(preview.delta)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t(locale, 'gamification.reconciliationAppendOnly')}
+                    </p>
+                    <label className="grid gap-1 text-sm font-medium">
+                      {t(locale, 'gamification.reason')}
+                      <textarea
+                        className="min-h-20 rounded-md border bg-background px-3 py-2 text-sm"
+                        value={reason}
+                        maxLength={500}
+                        onChange={(event) => setReason(event.target.value)}
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm font-medium">
+                      {t(locale, 'gamification.confirmReconcile')}
+                      <input
+                        className="h-10 rounded-md border bg-background px-3 text-sm"
+                        value={confirmation}
+                        onChange={(event) => setConfirmation(event.target.value)}
+                      />
+                    </label>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      disabled={
+                        applyMutation.isPending || confirmation !== 'RECONCILE' || !reason.trim()
+                      }
+                      onClick={() => applyMutation.mutate()}
+                    >
+                      {t(locale, 'gamification.applyReconciliation')}
+                    </Button>
+                  </div>
+                ) : null}
+                {previewMutation.isError || applyMutation.isError ? (
+                  <p className="text-sm text-destructive">
+                    {getMutationErrorMessage(previewMutation.error ?? applyMutation.error) ??
+                      t(locale, 'gamification.reconciliationFailed')}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
+
+            <section className="space-y-3 rounded-md border bg-card p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <h2 className="text-lg font-semibold">{t(locale, 'gamification.xpLog')}</h2>
+                <select
+                  className="h-10 rounded-md border bg-background px-3 text-sm"
+                  value={logCategory}
+                  onChange={(event) => {
+                    setLogCategory(event.target.value as GamificationXpLogCategory);
+                    setLogPage(1);
+                  }}
+                >
+                  {xpLogCategories.map((item) => (
+                    <option key={item} value={item}>
+                      {xpLogCategoryLabel(locale, item)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {logQuery.isLoading ? (
+                <Skeleton className="h-28 w-full" />
+              ) : (
+                <XpLogList entries={logQuery.data?.items ?? []} />
+              )}
+              <Pager page={logPage} pageCount={logPageCount} onPageChange={setLogPage} />
+            </section>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function XpBreakdownCard({ detail }: { detail: GamificationXpSourceBreakdown }) {
+  const { locale } = useLanguage();
+  const rows = [
+    [t(locale, 'gamification.tasksCompleted'), detail.taskXp],
+    [t(locale, 'gamification.projectsCompleted'), detail.projectXp],
+    [t(locale, 'gamification.ticketsResolved'), detail.ticketXp],
+    [t(locale, 'gamification.achievements'), detail.achievementXp],
+    [t(locale, 'gamification.streaks'), detail.streakXp],
+    [t(locale, 'gamification.adminAdjustments'), detail.manualXp],
+    [t(locale, 'gamification.adminReset'), detail.resetXp],
+    [t(locale, 'gamification.reconciliation'), detail.reconciliationXp],
+    [t(locale, 'gamification.legacyXp'), detail.legacyXp],
+  ];
+  return (
+    <section className="space-y-3 rounded-md border bg-card p-4">
+      <h2 className="text-lg font-semibold">{t(locale, 'gamification.sourceBreakdown')}</h2>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {rows.map(([label, value]) => (
+          <div
+            key={String(label)}
+            className="flex justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+          >
+            <span>{label}</span>
+            <span className="font-medium">{value} XP</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function XpLogList({ entries }: { entries: GamificationXpControlLogEntry[] }) {
+  const { locale } = useLanguage();
+  if (entries.length === 0)
+    return (
+      <p className="text-sm text-muted-foreground">{t(locale, 'gamification.noXpActivity')}</p>
+    );
+  return (
+    <div className="space-y-2">
+      {entries.map((entry) => (
+        <article key={entry.id} className="rounded-md border p-3 text-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+            <p className="font-medium">
+              {formatXpAmount(entry.amount)} / {xpLogCategoryLabel(locale, entry.category)}
+            </p>
+            <time className="text-muted-foreground">{formatDate(entry.timestamp)}</time>
+          </div>
+          <p className="mt-1 text-muted-foreground">
+            {entry.work?.sourceLabel ?? sourceEventLabel(locale, entry.sourceEvent)}
+            {entry.reason ? ` / ${entry.reason}` : ''}
+          </p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function Pager({
+  page,
+  pageCount,
+  onPageChange,
+}: {
+  page: number;
+  pageCount: number;
+  onPageChange: (page: number) => void;
+}) {
+  const { locale } = useLanguage();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <p className="text-sm text-muted-foreground">
+        {t(locale, 'gamification.page')} {page} / {pageCount}
+      </p>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          {t(locale, 'gamification.previous')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={page >= pageCount}
+          onClick={() => onPageChange(page + 1)}
+        >
+          {t(locale, 'gamification.next')}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AdminControlsPanel({
   workspaceId,
   canAdjust,
@@ -3086,6 +3612,42 @@ function safeAdminMetadataValue(value: unknown) {
     return String(value);
   }
   return '';
+}
+
+function xpControlStatusLabel(locale: 'en' | 'ta', status: GamificationXpControlStatus) {
+  const labels: Record<GamificationXpControlStatus, string> = {
+    BALANCED: t(locale, 'gamification.statusBalanced'),
+    MISMATCH: t(locale, 'gamification.statusMismatch'),
+    NEEDS_REVIEW: t(locale, 'gamification.statusNeedsReview'),
+    RECONCILED: t(locale, 'gamification.statusReconciled'),
+  };
+  return labels[status];
+}
+
+function xpLogCategoryLabel(locale: 'en' | 'ta', category: GamificationXpLogCategory) {
+  const labels: Record<GamificationXpLogCategory, string> = {
+    ALL: t(locale, 'gamification.allActivity'),
+    TASKS: t(locale, 'gamification.tasksCompleted'),
+    PROJECTS: t(locale, 'gamification.projectsCompleted'),
+    TICKETS: t(locale, 'gamification.ticketsResolved'),
+    CREATION_XP: t(locale, 'gamification.creationXp'),
+    BONUS_XP: t(locale, 'gamification.bonusXp'),
+    PENALTY_XP: t(locale, 'gamification.penaltyXp'),
+    REVERSALS: t(locale, 'gamification.xpReversal'),
+    ACHIEVEMENTS: t(locale, 'gamification.achievements'),
+    STREAKS: t(locale, 'gamification.streaks'),
+    MANUAL_ADJUSTMENTS: t(locale, 'gamification.adminAdjustments'),
+    RESETS: t(locale, 'gamification.adminReset'),
+    RECONCILIATION: t(locale, 'gamification.reconciliation'),
+    LEGACY: t(locale, 'gamification.legacyXp'),
+  };
+  return labels[category];
+}
+
+function getMutationErrorMessage(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  if ('message' in error && typeof error.message === 'string') return error.message;
+  return null;
 }
 
 function criterionLabel(locale: 'en' | 'ta', type: GamificationAchievementCriterionType) {

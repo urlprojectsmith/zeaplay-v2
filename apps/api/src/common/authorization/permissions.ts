@@ -115,6 +115,8 @@ export const PermissionKeys = {
   gamificationPointsView: 'gamification.points.view',
   gamificationPointsManageWorkspace: 'gamification.points.manage_workspace',
   gamificationPointsManageDepartment: 'gamification.points.manage_department',
+  gamificationXpControlView: 'gamification.xp_control.view',
+  gamificationXpControlReconcile: 'gamification.xp_control.reconcile',
   projectRead: 'project.read',
   projectCreate: 'project.create',
   projectUpdate: 'project.update',

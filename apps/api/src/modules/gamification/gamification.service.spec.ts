@@ -2534,6 +2534,232 @@ describe('GamificationService', () => {
       }),
     );
   });
+
+  it('derives XP Control analyzer from immutable work events, linked ledger, and non-work current XP', async () => {
+    const workEventId = '00000000-0000-4000-8000-000000002001';
+    const { service } = makeService({
+      workXpEvents: [
+        xpWorkEvent({ id: workEventId, netXpSnapshot: 32 }),
+        xpWorkEvent({
+          id: '00000000-0000-4000-8000-000000002002',
+          outcome: GamificationWorkXpEventOutcome.SKIPPED,
+          skipReason: GamificationWorkXpSkipReason.RULE_DISABLED,
+          netXpSnapshot: 0,
+        }),
+      ],
+      entries: [
+        xpEntry({ amount: 40, workXpEventId: workEventId }),
+        xpEntry({
+          id: '00000000-0000-4000-8000-000000003002',
+          amount: 10,
+          sourceType: GamificationXpSourceType.ACHIEVEMENT,
+          sourceEvent: 'ACHIEVEMENT_XP_REWARD',
+        }),
+        xpEntry({
+          id: '00000000-0000-4000-8000-000000003003',
+          amount: 5,
+          sourceType: GamificationXpSourceType.STREAK,
+          sourceEvent: 'STREAK_DAILY_XP_REWARD',
+        }),
+        xpEntry({
+          id: '00000000-0000-4000-8000-000000003004',
+          amount: -5,
+          sourceType: GamificationXpSourceType.SYSTEM,
+          sourceEvent: 'MANUAL_XP_RESET',
+        }),
+      ],
+    });
+
+    const result = await service.getXpControlAnalyzer(xpControlViewTenant(), {
+      page: 1,
+      pageSize: 20,
+      sortBy: 'delta',
+      sortDirection: 'desc',
+    });
+
+    const row = result.items.find((item) => item.membershipId === membershipId);
+    expect(row).toMatchObject({
+      membershipId,
+      claimedXp: 32,
+      storedXp: 40,
+      currentXp: 50,
+      delta: -8,
+      status: 'MISMATCH',
+    });
+  });
+
+  it('marks ambiguous XP Control sources as NEEDS_REVIEW and refuses preview', async () => {
+    const { service } = makeService({
+      workXpEvents: [
+        xpWorkEvent({
+          id: '00000000-0000-4000-8000-000000002011',
+          netXpSnapshot: 20,
+        }),
+        xpWorkEvent({
+          id: '00000000-0000-4000-8000-000000002012',
+          outcome: GamificationWorkXpEventOutcome.SKIPPED,
+          skipReason: GamificationWorkXpSkipReason.AMBIGUOUS_ROLE,
+          netXpSnapshot: 0,
+        }),
+      ],
+    });
+
+    const result = await service.getXpControlAnalyzer(xpControlViewTenant(), {
+      page: 1,
+      pageSize: 20,
+      sortBy: 'delta',
+      sortDirection: 'desc',
+    });
+
+    expect(result.items[0]).toMatchObject({ delta: 20, status: 'NEEDS_REVIEW' });
+    await expect(
+      service.previewXpReconciliation(xpControlReconcileTenant(), {
+        targetMembershipId: membershipId,
+      }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('applies XP Control reconciliation from a server preview token and replays idempotently', async () => {
+    const workEventId = '00000000-0000-4000-8000-000000002021';
+    const { service, entries, reconciliations, auditRows } = makeService({
+      workXpEvents: [xpWorkEvent({ id: workEventId, netXpSnapshot: 40 })],
+      entries: [xpEntry({ amount: 25, workXpEventId: workEventId })],
+    });
+    const admin = xpControlReconcileTenant();
+    const preview = await service.previewXpReconciliation(admin, {
+      targetMembershipId: membershipId,
+    });
+
+    const first = await service.applyXpReconciliation(admin, {
+      targetMembershipId: membershipId,
+      previewToken: preview.previewToken,
+      reason: 'Repair missing work XP component',
+      confirmation: 'RECONCILE',
+      idempotencyKey: 'xp-control:repair:1',
+    });
+    const retry = await service.applyXpReconciliation(admin, {
+      targetMembershipId: membershipId,
+      previewToken: preview.previewToken,
+      reason: 'Repair missing work XP component',
+      confirmation: 'RECONCILE',
+      idempotencyKey: 'xp-control:repair:1',
+    });
+
+    expect(first.id).toBe(retry.id);
+    expect(reconciliations).toHaveLength(1);
+    expect(entries.filter((entry) => entry.reconciliationId === first.id)).toHaveLength(1);
+    expect(
+      auditRows.filter((row) => row.action === 'gamification.xp_control.reconciled'),
+    ).toHaveLength(1);
+    const balanced = await service.getXpControlAnalyzer(xpControlViewTenant(), {
+      page: 1,
+      pageSize: 20,
+      sortBy: 'delta',
+      sortDirection: 'desc',
+    });
+    expect(balanced.items[0]).toMatchObject({ storedXp: 40, delta: 0, status: 'RECONCILED' });
+  });
+
+  it('rejects stale and floor-conflicting XP Control reconciliation previews', async () => {
+    const staleEventId = '00000000-0000-4000-8000-000000002031';
+    const stale = makeService({
+      workXpEvents: [xpWorkEvent({ id: staleEventId, netXpSnapshot: 40 })],
+      entries: [xpEntry({ amount: 25, workXpEventId: staleEventId })],
+    });
+    const admin = xpControlReconcileTenant();
+    const preview = await stale.service.previewXpReconciliation(admin, {
+      targetMembershipId: membershipId,
+    });
+    stale.entries.push(
+      xpEntry({
+        id: '00000000-0000-4000-8000-000000003031',
+        amount: 1,
+        workXpEventId: staleEventId,
+      }),
+    );
+
+    await expect(
+      stale.service.applyXpReconciliation(admin, {
+        targetMembershipId: membershipId,
+        previewToken: preview.previewToken,
+        reason: 'Stale correction',
+        confirmation: 'RECONCILE',
+        idempotencyKey: 'xp-control:stale:1',
+      }),
+    ).rejects.toThrow(ConflictException);
+
+    const floorEventId = '00000000-0000-4000-8000-000000002032';
+    const floor = makeService({
+      workXpEvents: [xpWorkEvent({ id: floorEventId, netXpSnapshot: 10 })],
+      entries: [xpEntry({ amount: 30, workXpEventId: floorEventId })],
+    });
+    floor.entries.push(
+      xpEntry({
+        id: '00000000-0000-4000-8000-000000003032',
+        amount: -20,
+        sourceType: GamificationXpSourceType.SYSTEM,
+        sourceEvent: 'MANUAL_XP_RESET',
+      }),
+    );
+
+    await expect(
+      floor.service.previewXpReconciliation(admin, { targetMembershipId: membershipId }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('keeps XP Control log filters source-linked and legacy honest', async () => {
+    const taskEventId = '00000000-0000-4000-8000-000000002041';
+    const { service } = makeService({
+      workXpEvents: [
+        xpWorkEvent({
+          id: taskEventId,
+          workType: GamificationPointWorkType.TASK,
+          netXpSnapshot: 10,
+        }),
+      ],
+      entries: [
+        xpEntry({
+          amount: 10,
+          workXpEventId: taskEventId,
+          sourceType: GamificationXpSourceType.SYSTEM,
+        }),
+        xpEntry({
+          id: '00000000-0000-4000-8000-000000003041',
+          amount: -20,
+          sourceType: GamificationXpSourceType.SYSTEM,
+          sourceEvent: 'MANUAL_XP_RESET',
+        }),
+        xpEntry({
+          id: '00000000-0000-4000-8000-000000003042',
+          amount: 7,
+          sourceType: GamificationXpSourceType.SYSTEM,
+          sourceEvent: 'IMPORTED_XP',
+        }),
+      ],
+    });
+
+    const taskLog = await service.getXpControlMemberLog(xpControlViewTenant(), membershipId, {
+      page: 1,
+      pageSize: 20,
+      category: 'TASKS',
+    });
+    const resetLog = await service.getXpControlMemberLog(xpControlViewTenant(), membershipId, {
+      page: 1,
+      pageSize: 20,
+      category: 'RESETS',
+    });
+    const legacyLog = await service.getXpControlMemberLog(xpControlViewTenant(), membershipId, {
+      page: 1,
+      pageSize: 20,
+      category: 'LEGACY',
+    });
+
+    expect(taskLog.items).toHaveLength(1);
+    expect(taskLog.items[0]?.work?.workType).toBe(GamificationPointWorkType.TASK);
+    expect(resetLog.items).toHaveLength(1);
+    expect(legacyLog.items).toHaveLength(1);
+    expect(legacyLog.items[0]?.sourceEvent).toBe('IMPORTED_XP');
+  });
 });
 
 function baseInput(overrides: Record<string, unknown> = {}) {
@@ -2547,6 +2773,40 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     idempotencyKey: null,
     actorMembershipId: null,
     reason: null,
+    ...overrides,
+  };
+}
+
+function xpControlViewTenant() {
+  return { ...tenant, permissions: ['gamification.xp_control.view'] };
+}
+
+function xpControlReconcileTenant() {
+  return { ...tenant, permissions: ['gamification.xp_control.reconcile'] };
+}
+
+function xpWorkEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '00000000-0000-4000-8000-000000002001',
+    workspaceId,
+    recipientMembershipId: membershipId,
+    workType: GamificationPointWorkType.TASK,
+    outcome: GamificationWorkXpEventOutcome.APPLIED,
+    skipReason: null,
+    netXpSnapshot: 10,
+    baseXpSnapshot: 10,
+    bonusXpSnapshot: 0,
+    penaltyXpSnapshot: 0,
+    sourceLabelSnapshot: 'Task Alpha',
+    departmentNameSnapshot: 'Support',
+    categorySnapshot: GamificationPointCategory.MEDIUM,
+    ruleSourceSnapshot: 'WORKSPACE_DEFAULT',
+    dueAtSnapshot: null,
+    completedAtSnapshot: null,
+    completionCycle: null,
+    eventType: GamificationWorkXpEventType.COMPLETION_AWARD,
+    reversalOfEventId: null,
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 1)),
     ...overrides,
   };
 }
@@ -2593,7 +2853,7 @@ function rewardPointEntry(overrides: Record<string, unknown>) {
   };
 }
 
-function xpEntry(overrides: Record<string, unknown>) {
+function xpEntry(overrides: Record<string, unknown> = {}) {
   const targetMembershipId =
     typeof overrides.membershipId === 'string' ? overrides.membershipId : membershipId;
   const amount = Number(overrides.amount ?? 10);
@@ -2612,6 +2872,8 @@ function xpEntry(overrides: Record<string, unknown>) {
     sourceEntityId: null,
     idempotencyKey: null,
     reversalOfEntryId: null,
+    workXpEventId: null,
+    reconciliationId: null,
     actorMembershipId: null,
     reason: null,
     createdAt: new Date(Date.UTC(2026, 0, 1)),
@@ -2860,6 +3122,7 @@ function makeService(options?: {
   entries?: Array<Record<string, unknown>>;
   rewardPointEntries?: Array<Record<string, unknown>>;
   workXpEvents?: Array<Record<string, unknown>>;
+  reconciliations?: Array<Record<string, unknown>>;
   levels?: Array<Record<string, unknown>>;
   achievements?: Array<Record<string, unknown>>;
   rewards?: Array<Record<string, unknown>>;
@@ -2890,6 +3153,7 @@ function makeService(options?: {
     ...(options?.rewardPointEntries ?? []),
   ];
   const workXpEvents: Array<Record<string, unknown>> = [...(options?.workXpEvents ?? [])];
+  const reconciliations: Array<Record<string, unknown>> = [...(options?.reconciliations ?? [])];
   const levels: Array<Record<string, unknown>> = [...(options?.levels ?? [])];
   const achievements: Array<Record<string, unknown>> = [...(options?.achievements ?? [])];
   const rewards: Array<Record<string, unknown>> = [...(options?.rewards ?? [])];
@@ -2934,6 +3198,22 @@ function makeService(options?: {
     Object.entries(where).every(([key, value]) => {
       if (key === 'OR' && Array.isArray(value)) {
         return value.some((candidate) => matchesEntry(entry, candidate as Record<string, unknown>));
+      }
+      if (key === 'NOT' && Array.isArray(value)) {
+        return !value.some((candidate) =>
+          matchesEntry(entry, candidate as Record<string, unknown>),
+        );
+      }
+      if (key === 'workXpEvent' && value && typeof value === 'object' && 'is' in value) {
+        const event = workXpEvents.find((candidate) => candidate.id === entry.workXpEventId);
+        return Boolean(event && matchesEntry(event, (value as { is: Record<string, unknown> }).is));
+      }
+      if (value && typeof value === 'object' && 'not' in value) {
+        const not = (value as { not: unknown }).not;
+        return not === null ? entry[key] !== null && entry[key] !== undefined : entry[key] !== not;
+      }
+      if (value && typeof value === 'object' && 'notIn' in value) {
+        return !(value as { notIn: unknown[] }).notIn.includes(entry[key]);
       }
       if (value && typeof value === 'object' && 'gt' in value)
         return Number(entry[key]) > Number((value as { gt: number }).gt);
@@ -3085,6 +3365,27 @@ function makeService(options?: {
       ),
     },
     workspaceMembership: {
+      findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          memberships
+            .filter((item) => matchesEntry(item, where))
+            .map((item) => ({
+              id: item.id,
+              status: item.status,
+              departmentId: item.departmentId ?? null,
+              user: {
+                name: item.userName ?? 'Member',
+                email: 'member@zeaplay.test',
+              },
+              department:
+                departments.find(
+                  (department) =>
+                    department.id === item.departmentId &&
+                    department.workspaceId === item.workspaceId,
+                ) ?? null,
+            })),
+        ),
+      ),
       findFirst: jest.fn(({ where }: { where: { id: string; workspaceId: string } }) =>
         Promise.resolve(
           membershipResult(
@@ -3198,6 +3499,35 @@ function makeService(options?: {
       findUnique: jest.fn(() => Promise.resolve({ timezone: workspaceTimezone })),
     },
     gamificationXpEntry: {
+      groupBy: jest.fn(
+        ({
+          where,
+        }: {
+          by: string[];
+          where: Record<string, unknown>;
+          _sum?: unknown;
+          _max?: unknown;
+        }) => {
+          const grouped = new Map<string, { amount: number; createdAt: Date | null }>();
+          for (const entry of entries.filter((item) => matchesEntry(item, where))) {
+            const membership = String(entry.membershipId);
+            const current = grouped.get(membership) ?? { amount: 0, createdAt: null };
+            current.amount += Number(entry.amount ?? 0);
+            const createdAt = entry.createdAt instanceof Date ? entry.createdAt : null;
+            if (createdAt && (!current.createdAt || createdAt > current.createdAt)) {
+              current.createdAt = createdAt;
+            }
+            grouped.set(membership, current);
+          }
+          return Promise.resolve(
+            [...grouped.entries()].map(([membershipId, value]) => ({
+              membershipId,
+              _sum: { amount: value.amount },
+              _max: { createdAt: value.createdAt },
+            })),
+          );
+        },
+      ),
       aggregate: jest.fn(({ where }: { where: Record<string, unknown> }) =>
         Promise.resolve({
           _sum: {
@@ -3223,12 +3553,36 @@ function makeService(options?: {
         return Promise.resolve(found);
       }),
       findMany: jest.fn(
-        ({ where, skip, take }: { where: Record<string, unknown>; skip: number; take: number }) =>
+        ({
+          where,
+          skip = 0,
+          take = entries.length,
+          include,
+        }: {
+          where: Record<string, unknown>;
+          skip?: number;
+          take?: number;
+          include?: Record<string, unknown>;
+        }) =>
           Promise.resolve(
             entries
               .filter((entry) => matchesEntry(entry, where))
               .sort(sortNewestFirst)
-              .slice(skip, skip + take),
+              .slice(skip, skip + take)
+              .map((entry) => ({
+                ...entry,
+                workXpEvent: include?.workXpEvent
+                  ? (workXpEvents.find((event) => event.id === entry.workXpEventId) ?? null)
+                  : undefined,
+                reconciliation: include?.reconciliation
+                  ? (reconciliations.find((item) => item.id === entry.reconciliationId) ?? null)
+                  : undefined,
+                actorMembership: include?.actorMembership
+                  ? membershipResult(
+                      memberships.find((member) => member.id === entry.actorMembershipId),
+                    )
+                  : undefined,
+              })),
           ),
       ),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
@@ -3333,6 +3687,89 @@ function makeService(options?: {
         workXpEvents.push(created);
         return Promise.resolve(created);
       }),
+    },
+    gamificationXpReconciliation: {
+      groupBy: jest.fn(
+        ({ where }: { by: string[]; where: Record<string, unknown>; _count?: unknown }) => {
+          const grouped = new Map<string, number>();
+          for (const item of reconciliations.filter((entry) => matchesEntry(entry, where))) {
+            const membership = String(item.membershipId);
+            grouped.set(membership, (grouped.get(membership) ?? 0) + 1);
+          }
+          return Promise.resolve(
+            [...grouped.entries()].map(([membershipId, count]) => ({
+              membershipId,
+              _count: { _all: count },
+            })),
+          );
+        },
+      ),
+      findUnique: jest.fn(
+        ({
+          where,
+          include,
+        }: {
+          where: {
+            workspaceId_membershipId_idempotencyKey?: {
+              workspaceId: string;
+              membershipId: string;
+              idempotencyKey: string;
+            };
+          };
+          include?: { xpEntries?: boolean };
+        }) => {
+          const key = where.workspaceId_membershipId_idempotencyKey;
+          const found = key
+            ? reconciliations.find(
+                (item) =>
+                  item.workspaceId === key.workspaceId &&
+                  item.membershipId === key.membershipId &&
+                  item.idempotencyKey === key.idempotencyKey,
+              )
+            : null;
+          return Promise.resolve(
+            found
+              ? {
+                  ...found,
+                  xpEntries: include?.xpEntries
+                    ? entries.filter((entry) => entry.reconciliationId === found.id)
+                    : undefined,
+                }
+              : null,
+          );
+        },
+      ),
+      create: jest.fn(
+        ({
+          data,
+          include,
+        }: {
+          data: Record<string, unknown>;
+          include?: { xpEntries?: boolean };
+        }) => {
+          if (
+            reconciliations.some(
+              (item) =>
+                item.workspaceId === data.workspaceId &&
+                item.membershipId === data.membershipId &&
+                item.idempotencyKey === data.idempotencyKey,
+            )
+          ) {
+            throw uniqueConstraintError();
+          }
+          const created = {
+            id: `00000000-0000-4000-8000-${String(1700 + ++sequence).padStart(12, '0')}`,
+            createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)),
+            analysisVersion: 'phase10.10.v2',
+            ...data,
+          };
+          reconciliations.push(created);
+          return Promise.resolve({
+            ...created,
+            xpEntries: include?.xpEntries ? [] : undefined,
+          });
+        },
+      ),
     },
     gamificationRewardPointEntry: {
       aggregate: jest.fn(({ where }: { where: Record<string, unknown> }) =>
@@ -3813,51 +4250,57 @@ function makeService(options?: {
   };
   const prisma = {
     $queryRaw: tx.$queryRaw,
-    $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => {
-      const entrySnapshot = [...entries];
-      const rewardPointEntrySnapshot = [...rewardPointEntries];
-      const workXpEventSnapshot = [...workXpEvents];
-      const levelSnapshot = [...levels];
-      const rewardSnapshot = [...rewards];
-      const redemptionSnapshot = [...redemptions];
-      const pointRuleSnapshot = [...pointRules];
-      const creationPointRuleSnapshot = [...creationPointRules];
-      const streakDaySnapshot = [...streakDays];
-      const streakConfigSnapshot = streakConfig ? { ...streakConfig } : streakConfig;
-      const leaderboardConfigSnapshot = leaderboardConfig
-        ? { ...leaderboardConfig }
-        : leaderboardConfig;
-      const leaderboardPreferenceSnapshot = [...leaderboardPreferences];
-      const auditSnapshot = [...auditRows];
-      const stepUpGrantSnapshot = [...stepUpGrants];
-      try {
-        return await callback(tx);
-      } catch (error) {
-        entries.splice(0, entries.length, ...entrySnapshot);
-        rewardPointEntries.splice(0, rewardPointEntries.length, ...rewardPointEntrySnapshot);
-        workXpEvents.splice(0, workXpEvents.length, ...workXpEventSnapshot);
-        levels.splice(0, levels.length, ...levelSnapshot);
-        rewards.splice(0, rewards.length, ...rewardSnapshot);
-        redemptions.splice(0, redemptions.length, ...redemptionSnapshot);
-        pointRules.splice(0, pointRules.length, ...pointRuleSnapshot);
-        creationPointRules.splice(0, creationPointRules.length, ...creationPointRuleSnapshot);
-        streakDays.splice(0, streakDays.length, ...streakDaySnapshot);
-        streakConfig = streakConfigSnapshot;
-        leaderboardConfig = leaderboardConfigSnapshot;
-        leaderboardPreferences.splice(
-          0,
-          leaderboardPreferences.length,
-          ...leaderboardPreferenceSnapshot,
-        );
-        auditRows.splice(0, auditRows.length, ...auditSnapshot);
-        stepUpGrants.splice(0, stepUpGrants.length, ...stepUpGrantSnapshot);
-        throw error;
-      }
-    }),
+    $transaction: jest.fn(
+      async (callback: ((client: typeof tx) => unknown) | Array<Promise<unknown>>) => {
+        if (Array.isArray(callback)) return Promise.all(callback);
+        const entrySnapshot = [...entries];
+        const rewardPointEntrySnapshot = [...rewardPointEntries];
+        const workXpEventSnapshot = [...workXpEvents];
+        const reconciliationSnapshot = [...reconciliations];
+        const levelSnapshot = [...levels];
+        const rewardSnapshot = [...rewards];
+        const redemptionSnapshot = [...redemptions];
+        const pointRuleSnapshot = [...pointRules];
+        const creationPointRuleSnapshot = [...creationPointRules];
+        const streakDaySnapshot = [...streakDays];
+        const streakConfigSnapshot = streakConfig ? { ...streakConfig } : streakConfig;
+        const leaderboardConfigSnapshot = leaderboardConfig
+          ? { ...leaderboardConfig }
+          : leaderboardConfig;
+        const leaderboardPreferenceSnapshot = [...leaderboardPreferences];
+        const auditSnapshot = [...auditRows];
+        const stepUpGrantSnapshot = [...stepUpGrants];
+        try {
+          return await callback(tx);
+        } catch (error) {
+          entries.splice(0, entries.length, ...entrySnapshot);
+          rewardPointEntries.splice(0, rewardPointEntries.length, ...rewardPointEntrySnapshot);
+          workXpEvents.splice(0, workXpEvents.length, ...workXpEventSnapshot);
+          reconciliations.splice(0, reconciliations.length, ...reconciliationSnapshot);
+          levels.splice(0, levels.length, ...levelSnapshot);
+          rewards.splice(0, rewards.length, ...rewardSnapshot);
+          redemptions.splice(0, redemptions.length, ...redemptionSnapshot);
+          pointRules.splice(0, pointRules.length, ...pointRuleSnapshot);
+          creationPointRules.splice(0, creationPointRules.length, ...creationPointRuleSnapshot);
+          streakDays.splice(0, streakDays.length, ...streakDaySnapshot);
+          streakConfig = streakConfigSnapshot;
+          leaderboardConfig = leaderboardConfigSnapshot;
+          leaderboardPreferences.splice(
+            0,
+            leaderboardPreferences.length,
+            ...leaderboardPreferenceSnapshot,
+          );
+          auditRows.splice(0, auditRows.length, ...auditSnapshot);
+          stepUpGrants.splice(0, stepUpGrants.length, ...stepUpGrantSnapshot);
+          throw error;
+        }
+      },
+    ),
     workspace: tx.workspace,
     workspaceMembership: tx.workspaceMembership,
     gamificationXpEntry: tx.gamificationXpEntry,
     gamificationWorkXpEvent: tx.gamificationWorkXpEvent,
+    gamificationXpReconciliation: tx.gamificationXpReconciliation,
     gamificationRewardPointEntry: tx.gamificationRewardPointEntry,
     gamificationRewardDefinition: tx.gamificationRewardDefinition,
     gamificationRewardRedemption: tx.gamificationRewardRedemption,
@@ -3899,6 +4342,7 @@ function makeService(options?: {
     entries,
     rewardPointEntries,
     workXpEvents,
+    reconciliations,
     pointRules,
     creationPointRules,
     rewards,

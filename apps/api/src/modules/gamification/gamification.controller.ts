@@ -62,6 +62,12 @@ import {
 } from './dto/gamification-streak.dto';
 import { GamificationXpHistoryQueryDto } from './dto/gamification-xp-query.dto';
 import {
+  GamificationXpControlQueryDto,
+  GamificationXpLogQueryDto,
+  GamificationXpReconciliationApplyDto,
+  GamificationXpReconciliationPreviewDto,
+} from './dto/gamification-xp-control.dto';
+import {
   GamificationPointPreviewDto,
   GamificationPointRulesQueryDto,
   RemoveGamificationPointRuleOverrideDto,
@@ -463,6 +469,52 @@ export class GamificationController {
   @Get('admin/actions')
   listRecentAdminActions(@CurrentWorkspaceTenant() tenant: WorkspaceTenantContext) {
     return this.gamification.listRecentAdminActions(tenant);
+  }
+
+  @Get('xp-control/analyzer')
+  @RequirePermissions(PermissionKeys.gamificationXpControlView)
+  getXpControlAnalyzer(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: GamificationXpControlQueryDto,
+  ) {
+    return this.gamification.getXpControlAnalyzer(tenant, query);
+  }
+
+  @Get('xp-control/members/:membershipId')
+  @RequirePermissions(PermissionKeys.gamificationXpControlView)
+  getXpControlMemberDetail(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this.gamification.getXpControlMemberDetail(tenant, membershipId);
+  }
+
+  @Get('xp-control/members/:membershipId/log')
+  @RequirePermissions(PermissionKeys.gamificationXpControlView)
+  getXpControlMemberLog(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param('membershipId') membershipId: string,
+    @Query() query: GamificationXpLogQueryDto,
+  ) {
+    return this.gamification.getXpControlMemberLog(tenant, membershipId, query);
+  }
+
+  @Post('xp-control/reconciliation/preview')
+  @RequirePermissions(PermissionKeys.gamificationXpControlReconcile)
+  previewXpReconciliation(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: GamificationXpReconciliationPreviewDto,
+  ) {
+    return this.gamification.previewXpReconciliation(tenant, dto);
+  }
+
+  @Post('xp-control/reconciliation/apply')
+  @RequirePermissions(PermissionKeys.gamificationXpControlReconcile)
+  applyXpReconciliation(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: GamificationXpReconciliationApplyDto,
+  ) {
+    return this.gamification.applyXpReconciliation(tenant, dto);
   }
 }
 

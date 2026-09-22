@@ -200,6 +200,22 @@ export type GamificationPointWorkType = 'TASK' | 'PROJECT' | 'TICKET';
 export type GamificationPointCategory = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' | 'LONG_TERM';
 export type GamificationPointRuleSource =
   'WORKSPACE_DEFAULT' | 'DEPARTMENT_OVERRIDE' | 'NOT_CONFIGURED';
+export type GamificationXpControlStatus = 'BALANCED' | 'MISMATCH' | 'NEEDS_REVIEW' | 'RECONCILED';
+export type GamificationXpLogCategory =
+  | 'ALL'
+  | 'TASKS'
+  | 'PROJECTS'
+  | 'TICKETS'
+  | 'CREATION_XP'
+  | 'BONUS_XP'
+  | 'PENALTY_XP'
+  | 'REVERSALS'
+  | 'ACHIEVEMENTS'
+  | 'STREAKS'
+  | 'MANUAL_ADJUSTMENTS'
+  | 'RESETS'
+  | 'RECONCILIATION'
+  | 'LEGACY';
 
 export interface GamificationRewardPointSummary {
   currentRewardPoints: number;
@@ -420,6 +436,117 @@ export interface GamificationAdminAction {
   };
 }
 
+export interface GamificationXpControlRow {
+  membershipId: string;
+  displayName: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  memberStatus: string;
+  claimedXp: number;
+  storedXp: number;
+  currentXp: number;
+  delta: number;
+  status: GamificationXpControlStatus;
+  sourceAnomalyCount: number;
+  lastActivityAt: string | null;
+  currentLevel: GamificationLevel | null;
+}
+
+export interface GamificationXpControlParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  departmentId?: string;
+  status?: GamificationXpControlStatus;
+  hasDelta?: boolean;
+  sortBy?: 'user' | 'claimedXp' | 'storedXp' | 'currentXp' | 'delta' | 'status' | 'lastActivityAt';
+  sortDirection?: 'asc' | 'desc';
+}
+
+export interface GamificationXpSourceBreakdown {
+  taskXp: number;
+  projectXp: number;
+  ticketXp: number;
+  achievementXp: number;
+  streakXp: number;
+  manualXp: number;
+  resetXp: number;
+  reconciliationXp: number;
+  legacyXp: number;
+  currentXp: number;
+}
+
+export interface GamificationXpControlLogEntry {
+  id: string;
+  timestamp: string;
+  amount: number;
+  entryType: GamificationXpEntryType;
+  sourceType: GamificationXpSourceType;
+  sourceEvent: string;
+  sourceEntityId: string | null;
+  category: GamificationXpLogCategory;
+  reason: string | null;
+  actor: GamificationAdminMember | null;
+  work: null | {
+    workType: GamificationPointWorkType;
+    sourceLabel: string | null;
+    departmentName: string | null;
+    category: GamificationPointCategory | null;
+    ruleSource: string;
+    baseXp: number;
+    bonusXp: number;
+    penaltyXp: number;
+    netXp: number;
+    dueAt: string | null;
+    completedAt: string | null;
+    completionCycle: number | null;
+    eventType: string;
+    outcome: string;
+    skipReason: string | null;
+    reversalOfEventId: string | null;
+  };
+  reconciliation: null | {
+    id: string;
+    claimedXp: number;
+    storedXp: number;
+    delta: number;
+    currentXpBefore: number;
+    currentXpAfter: number;
+    reason: string;
+    createdAt: string;
+  };
+}
+
+export interface GamificationXpControlDetail {
+  member: GamificationXpControlRow;
+  breakdown: GamificationXpSourceBreakdown;
+}
+
+export interface GamificationXpReconciliationPreview {
+  targetMembershipId: string;
+  displayName: string;
+  claimedXp: number;
+  storedXp: number;
+  currentXp: number;
+  delta: number;
+  proposedDirection: 'ADD' | 'DEDUCT';
+  proposedCorrectionAmount: number;
+  expectedStoredXp: number;
+  expectedCurrentXp: number;
+  sourceAnomalyCount: number;
+  analysisVersion: string;
+  previewToken: string;
+  evidenceReferences: string[];
+}
+
+export interface ApplyGamificationXpReconciliationInput {
+  targetMembershipId: string;
+  previewToken: string;
+  reason: string;
+  confirmation: string;
+  idempotencyKey: string;
+}
+
 export interface GamificationPointRule {
   id: string;
   workspaceId: string;
@@ -572,6 +699,17 @@ export const gamificationKeys = {
     [...gamificationKeys.all(workspaceId), 'admin-balance', membershipId] as const,
   adminActions: (workspaceId: string | null) =>
     [...gamificationKeys.all(workspaceId), 'admin-actions'] as const,
+  xpControl: (workspaceId: string | null, params: GamificationXpControlParams) =>
+    [...gamificationKeys.all(workspaceId), 'xp-control', params] as const,
+  xpControlDetail: (workspaceId: string | null, membershipId: string | null) =>
+    [...gamificationKeys.all(workspaceId), 'xp-control-detail', membershipId] as const,
+  xpControlLog: (
+    workspaceId: string | null,
+    membershipId: string | null,
+    category: GamificationXpLogCategory,
+    page: number,
+  ) =>
+    [...gamificationKeys.all(workspaceId), 'xp-control-log', membershipId, category, page] as const,
   pointRules: (workspaceId: string | null, departmentId: string | null) =>
     [...gamificationKeys.all(workspaceId), 'point-rules', departmentId] as const,
   pointRulesForWorkspace: (workspaceId: string | null) =>
@@ -1061,6 +1199,70 @@ export async function resetGamificationAdminBalance(
 export async function listGamificationAdminActions(workspaceId: string) {
   const response = await apiClient.request<{ items: GamificationAdminAction[] }>(
     `/workspaces/${workspaceId}/gamification/admin/actions`,
+  );
+  return response.data;
+}
+
+export async function listGamificationXpControl(
+  workspaceId: string,
+  params: GamificationXpControlParams,
+) {
+  const search = new URLSearchParams();
+  if (params.page) search.set('page', String(params.page));
+  if (params.pageSize) search.set('pageSize', String(params.pageSize));
+  if (params.search) search.set('search', params.search);
+  if (params.departmentId) search.set('departmentId', params.departmentId);
+  if (params.status) search.set('status', params.status);
+  if (params.hasDelta !== undefined) search.set('hasDelta', String(params.hasDelta));
+  if (params.sortBy) search.set('sortBy', params.sortBy);
+  if (params.sortDirection) search.set('sortDirection', params.sortDirection);
+  const suffix = search.toString();
+  const response = await apiClient.request<PageResult<GamificationXpControlRow>>(
+    `/workspaces/${workspaceId}/gamification/xp-control/analyzer${suffix ? `?${suffix}` : ''}`,
+  );
+  return response.data;
+}
+
+export async function getGamificationXpControlDetail(workspaceId: string, membershipId: string) {
+  const response = await apiClient.request<GamificationXpControlDetail>(
+    `/workspaces/${workspaceId}/gamification/xp-control/members/${membershipId}`,
+  );
+  return response.data;
+}
+
+export async function listGamificationXpControlLog(
+  workspaceId: string,
+  membershipId: string,
+  params: { category: GamificationXpLogCategory; page?: number; pageSize?: number },
+) {
+  const search = new URLSearchParams();
+  search.set('category', params.category);
+  if (params.page) search.set('page', String(params.page));
+  if (params.pageSize) search.set('pageSize', String(params.pageSize));
+  const response = await apiClient.request<PageResult<GamificationXpControlLogEntry>>(
+    `/workspaces/${workspaceId}/gamification/xp-control/members/${membershipId}/log?${search.toString()}`,
+  );
+  return response.data;
+}
+
+export async function previewGamificationXpReconciliation(
+  workspaceId: string,
+  targetMembershipId: string,
+) {
+  const response = await apiClient.request<GamificationXpReconciliationPreview>(
+    `/workspaces/${workspaceId}/gamification/xp-control/reconciliation/preview`,
+    { method: 'POST', body: JSON.stringify({ targetMembershipId }) },
+  );
+  return response.data;
+}
+
+export async function applyGamificationXpReconciliation(
+  workspaceId: string,
+  input: ApplyGamificationXpReconciliationInput,
+) {
+  const response = await apiClient.request<unknown>(
+    `/workspaces/${workspaceId}/gamification/xp-control/reconciliation/apply`,
+    { method: 'POST', body: JSON.stringify(input) },
   );
   return response.data;
 }
