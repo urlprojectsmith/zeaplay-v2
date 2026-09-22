@@ -6,6 +6,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -15,6 +16,9 @@ import {
   AssetStatus,
   AttachmentType,
   DepartmentStatus,
+  GamificationPointWorkType,
+  GamificationWorkXpEventOutcome,
+  GamificationWorkXpEventType,
   MembershipStatus,
   Prisma,
   ProcessingJobStatus,
@@ -40,6 +44,7 @@ import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { AuditService } from '../audit/audit.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
+import { GamificationService } from '../gamification/gamification.service';
 import { CreateTicketDto, TicketRequesterDto } from './dto/create-ticket.dto';
 import {
   CreateTicketUrlAttachmentDto,
@@ -163,6 +168,20 @@ const missingQueue = {
     );
   },
 } as unknown as Queue;
+const missingGamificationService = {
+  evaluateTicketResolutionAchievements: () => Promise.resolve(undefined),
+  handleTicketCreationXp: () => Promise.resolve(undefined),
+  handleTicketCompletionXp: () => Promise.resolve(undefined),
+  handleWorkCreationVoid: () => Promise.resolve(undefined),
+  handleWorkReopen: () => Promise.resolve(undefined),
+} as Pick<
+  GamificationService,
+  | 'evaluateTicketResolutionAchievements'
+  | 'handleTicketCreationXp'
+  | 'handleTicketCompletionXp'
+  | 'handleWorkCreationVoid'
+  | 'handleWorkReopen'
+> as GamificationService;
 
 @Injectable()
 export class TicketsService {
@@ -179,6 +198,7 @@ export class TicketsService {
     private readonly ticketSla: TicketSlaService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter = missingStorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue = missingQueue,
+    @Optional() private readonly gamification: GamificationService = missingGamificationService,
   ) {}
 
   async create(tenant: WorkspaceTenantContext, dto: CreateTicketDto) {
@@ -249,6 +269,11 @@ export class TicketsService {
         assignedToMembershipId: assignment.assignedToMembershipId,
       },
     });
+    await this.gamification.handleTicketCreationXp(
+      tenant.workspaceId,
+      ticket.id,
+      tenant.workspaceMembershipId ?? null,
+    );
     return serializeTicket(ticket);
   }
 
@@ -730,6 +755,7 @@ export class TicketsService {
     const changed: string[] = [];
     let statusChanged: { fromStatusDefinitionId: string; toStatusDefinitionId: string } | null =
       null;
+    let nextStatus: { id: string; isTerminal: boolean } | null = null;
 
     if (dto.subject !== undefined) {
       const subject = normalizeSubject(dto.subject);
@@ -754,12 +780,31 @@ export class TicketsService {
       dto.statusDefinitionId !== existing.statusDefinitionId
     ) {
       const status = await this.ticketStatus(tenant.workspaceId, dto.statusDefinitionId);
+      nextStatus = status;
       data.statusDefinitionId = status.id;
       changed.push('statusDefinitionId');
       statusChanged = {
         fromStatusDefinitionId: existing.statusDefinitionId,
         toStatusDefinitionId: status.id,
       };
+    }
+    const reopensTicket =
+      Boolean(nextStatus) && existing.statusDefinition.isTerminal && !nextStatus!.isTerminal;
+    const reopensAwardedCompletion =
+      reopensTicket &&
+      (await this.hasActiveCompletionXpAward(
+        tenant.workspaceId,
+        GamificationPointWorkType.TICKET,
+        id,
+      ));
+    if (reopensAwardedCompletion) {
+      data.gamificationResolutionTargetAt = requireFutureReopenTarget(
+        parseOptionalDate(dto.gamificationResolutionTargetAt),
+        'TICKET_REOPEN_REQUIRES_NEW_FUTURE_GAMIFICATION_TARGET',
+      );
+      changed.push('gamificationResolutionTargetAt');
+    } else if (dto.gamificationResolutionTargetAt !== undefined) {
+      throw new BadRequestException('TICKET_GAMIFICATION_TARGET_REOPEN_ONLY');
     }
     if (changed.length === 0) return serializeTicket(existing);
 
@@ -786,6 +831,7 @@ export class TicketsService {
     });
 
     if (statusChanged) {
+      const terminalResolution = updated.statusDefinition.isTerminal;
       await this.audit.record({
         agencyId: tenant.agencyId,
         workspaceId: tenant.workspaceId,
@@ -793,8 +839,32 @@ export class TicketsService {
         action: 'ticket.status_changed',
         entityType: 'Ticket',
         entityId: id,
-        metadata: { ticketId: id, ...statusChanged },
+        metadata: {
+          ticketId: id,
+          ...statusChanged,
+          ...(terminalResolution ? { assignedToMembershipId: updated.assignedToMembershipId } : {}),
+        },
       });
+      if (terminalResolution) {
+        await this.gamification.evaluateTicketResolutionAchievements(
+          tenant.workspaceId,
+          id,
+          updated.assignedToMembershipId,
+        );
+        await this.gamification.handleTicketCompletionXp(
+          tenant.workspaceId,
+          id,
+          updated.assignedToMembershipId,
+          tenant.workspaceMembershipId ?? null,
+        );
+      } else if (reopensAwardedCompletion) {
+        await this.gamification.handleWorkReopen(
+          tenant.workspaceId,
+          GamificationPointWorkType.TICKET,
+          id,
+          tenant.workspaceMembershipId ?? null,
+        );
+      }
     }
     const nonStatusChanged = changed.filter((field) => field !== 'statusDefinitionId');
     if (nonStatusChanged.length > 0) {
@@ -822,8 +892,13 @@ export class TicketsService {
     return serializeTicket(updated);
   }
 
-  async updateStatus(tenant: WorkspaceTenantContext, id: string, statusDefinitionId: string) {
-    return this.update(tenant, id, { statusDefinitionId });
+  async updateStatus(
+    tenant: WorkspaceTenantContext,
+    id: string,
+    statusDefinitionId: string,
+    gamificationResolutionTargetAt?: string | null,
+  ) {
+    return this.update(tenant, id, { statusDefinitionId, gamificationResolutionTargetAt });
   }
 
   async updateRequester(tenant: WorkspaceTenantContext, id: string, dto: TicketRequesterDto) {
@@ -1052,6 +1127,12 @@ export class TicketsService {
       entityId: id,
       metadata: { ticketId: id, ticketNumber: existing.ticketNumber },
     });
+    await this.gamification.handleWorkCreationVoid(
+      tenant.workspaceId,
+      GamificationPointWorkType.TICKET,
+      id,
+      tenant.workspaceMembershipId ?? null,
+    );
     return { id, deleted: true };
   }
 
@@ -1764,13 +1845,39 @@ export class TicketsService {
       : { workspaceId, entityType: StatusEntityType.TICKET, isDefault: true };
     const status = await this.prisma.statusDefinition.findFirst({
       where: { ...where, isActive: true },
-      select: { id: true, workspaceId: true, entityType: true, isActive: true, isDefault: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        entityType: true,
+        isActive: true,
+        isDefault: true,
+        isTerminal: true,
+      },
     });
     if (!status) {
       if (statusDefinitionId) throw new BadRequestException('INVALID_TICKET_STATUS');
       throw new ConflictException('NO_ACTIVE_TICKET_DEFAULT_STATUS');
     }
     return status;
+  }
+
+  private async hasActiveCompletionXpAward(
+    workspaceId: string,
+    workType: GamificationPointWorkType,
+    sourceEntityId: string,
+  ) {
+    const award = await this.prisma.gamificationWorkXpEvent.findFirst({
+      where: {
+        workspaceId,
+        workType,
+        sourceEntityId,
+        eventType: GamificationWorkXpEventType.COMPLETION_AWARD,
+        outcome: GamificationWorkXpEventOutcome.APPLIED,
+        reversalEvents: { none: {} },
+      },
+      select: { id: true },
+    });
+    return Boolean(award);
   }
 
   private async ticketWhere(
@@ -2757,6 +2864,20 @@ function dateRange(from: string | undefined, to: string | undefined, timezone: s
     ...(gte ? { gte } : {}),
     ...(lte ? { lte } : {}),
   };
+}
+
+function parseOptionalDate(value: string | Date | null | undefined) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (value instanceof Date) return value;
+  return new Date(value);
+}
+
+function requireFutureReopenTarget(value: Date | null | undefined, errorCode: string) {
+  if (!value || Number.isNaN(value.getTime()) || value <= new Date()) {
+    throw new BadRequestException(errorCode);
+  }
+  return value;
 }
 
 function parseBoundary(value: string | undefined, timezone: string, boundary: 'start' | 'end') {

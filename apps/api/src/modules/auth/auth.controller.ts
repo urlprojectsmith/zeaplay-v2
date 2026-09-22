@@ -13,9 +13,15 @@ import type { Request, Response } from 'express';
 import { validateEnvironment, type Environment } from '@zea-play/config';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import type { AuthenticatedUser } from '../../common/auth/auth.types';
+import type { AuthenticatedUser, WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { PermissionGuard } from '../../common/authorization/permission.guard';
+import { PermissionKeys } from '../../common/authorization/permissions';
+import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
+import { CurrentWorkspaceTenant } from '../../common/tenant/tenant-context.decorator';
+import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { StartEmailOtpStepUpDto, VerifyEmailOtpStepUpDto } from './dto/step-up.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -69,6 +75,56 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.auth.me(user.id);
+  }
+
+  @Post('step-up/email-otp/start')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, WorkspaceTenantGuard, PermissionGuard)
+  @RequirePermissions(PermissionKeys.gamificationReset)
+  startEmailOtpStepUp(
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: StartEmailOtpStepUpDto,
+    @Req() request: Request,
+  ) {
+    const refreshToken = readCookie(request, this.env.REFRESH_TOKEN_COOKIE_NAME);
+    if (!refreshToken) throw new UnauthorizedException('STEP_UP_SESSION_INVALID');
+    if (dto.workspaceId !== tenant.workspaceId) {
+      throw new UnauthorizedException('STEP_UP_WORKSPACE_INVALID');
+    }
+    return this.auth.startEmailOtpStepUp({
+      tenant,
+      userId: user.id,
+      refreshToken,
+      workspaceId: tenant.workspaceId,
+      targetMembershipId: dto.targetMembershipId,
+      economy: dto.economy,
+      purpose: dto.purpose,
+      password: dto.password,
+      meta: requestMeta(request),
+    });
+  }
+
+  @Post('step-up/email-otp/verify')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, WorkspaceTenantGuard, PermissionGuard)
+  @RequirePermissions(PermissionKeys.gamificationReset)
+  verifyEmailOtpStepUp(
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: VerifyEmailOtpStepUpDto,
+    @Req() request: Request,
+  ) {
+    const refreshToken = readCookie(request, this.env.REFRESH_TOKEN_COOKIE_NAME);
+    if (!refreshToken) throw new UnauthorizedException('STEP_UP_SESSION_INVALID');
+    return this.auth.verifyEmailOtpStepUp({
+      tenant,
+      userId: user.id,
+      refreshToken,
+      challengeId: dto.challengeId,
+      code: dto.code,
+      meta: requestMeta(request),
+    });
   }
 }
 

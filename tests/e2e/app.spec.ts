@@ -3284,7 +3284,12 @@ test('authenticated gamification page shows server XP summary and lazy history',
         isSystem: true,
         isActive: true,
         workspaceId: null,
-        permissions: [{ id: 'permission-gamification-view', key: 'gamification.view' }],
+        permissions: [
+          { id: 'permission-gamification-view', key: 'gamification.view' },
+          { id: 'permission-gamification-levels-manage', key: 'gamification.levels.manage' },
+          { id: 'permission-gamification-streaks-manage', key: 'gamification.streaks.manage' },
+          { id: 'permission-gamification-rewards-redeem', key: 'gamification.rewards.redeem' },
+        ],
         createdAt: '',
         updatedAt: '',
       },
@@ -3297,6 +3302,134 @@ test('authenticated gamification page shows server XP summary and lazy history',
       lifetimeDeductedXp: 25,
       entryCount: 3,
       lastXpChangeAt: '2026-01-01T00:00:00.000Z',
+      levelsConfigured: true,
+      currentLevel: {
+        id: 'level-2',
+        workspaceId: 'workspace-1',
+        name: 'Builder',
+        description: null,
+        levelNumber: 2,
+        xpThreshold: 100,
+        isActive: true,
+        createdAt: '',
+        updatedAt: '',
+      },
+      nextLevel: {
+        id: 'level-3',
+        workspaceId: 'workspace-1',
+        name: 'Expert',
+        description: null,
+        levelNumber: 3,
+        xpThreshold: 250,
+        isActive: true,
+        createdAt: '',
+        updatedAt: '',
+      },
+      xpIntoCurrentLevel: 25,
+      xpToNextLevel: 125,
+      progressPercent: 16,
+      isMaxLevel: false,
+      earnedAchievementCount: 0,
+      earnedBadgeCount: 0,
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/gamification\/me\/reward-points$/,
+    async (route) => {
+      await fulfillApi(route, {
+        currentRewardPoints: 50,
+        lifetimeEarnedRewardPoints: 75,
+        lifetimeSpentRewardPoints: 25,
+        lifetimeRefundedRewardPoints: 0,
+        entryCount: 2,
+        lastRewardPointChangeAt: '2026-01-01T00:00:00.000Z',
+      });
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/gamification\/streaks\/me$/, async (route) => {
+    await fulfillApi(route, {
+      config: {
+        id: 'streak-config-1',
+        workspaceId: 'workspace-1',
+        enabled: true,
+        dailyXpReward: 25,
+        dailyRewardPoints: 5,
+        enabledAt: '2026-01-01T00:00:00.000Z',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      timezone: 'UTC',
+      currentStreak: 2,
+      longestStreak: 5,
+      qualifiedToday: false,
+      needsActionToday: true,
+      lastQualifiedDate: '2026-01-02',
+      recentDays: [],
+    });
+  });
+  await page.route(/.*\/workspaces\/workspace-1\/gamification\/streaks\/config$/, async (route) => {
+    await fulfillApi(route, {
+      id: 'streak-config-1',
+      workspaceId: 'workspace-1',
+      enabled: true,
+      dailyXpReward: 25,
+      dailyRewardPoints: 5,
+      enabledAt: '2026-01-01T00:00:00.000Z',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
+  await page.route(
+    /.*\/workspaces\/workspace-1\/gamification\/streaks\/me\/history.*/,
+    async (route) => {
+      await fulfillApi(route, {
+        items: [
+          {
+            id: 'streak-day-1',
+            workspaceId: 'workspace-1',
+            membershipId: 'workspace-membership-1',
+            localDate: '2026-01-02',
+            qualificationType: 'TASK_COMPLETED',
+            sourceEntityId: 'task-1',
+            qualifiedAt: '2026-01-02T10:00:00.000Z',
+            timezoneSnapshot: 'UTC',
+            dailyXpRewardSnapshot: 25,
+            dailyRewardPointsSnapshot: 5,
+            createdAt: '2026-01-02T10:00:00.000Z',
+          },
+        ],
+        page: 1,
+        pageSize: 10,
+        total: 1,
+      });
+    },
+  );
+  await page.route(/.*\/workspaces\/workspace-1\/gamification\/levels.*/, async (route) => {
+    await fulfillApi(route, {
+      items: [
+        {
+          id: 'level-1',
+          workspaceId: 'workspace-1',
+          name: 'Starter',
+          description: null,
+          levelNumber: 1,
+          xpThreshold: 0,
+          isActive: true,
+          createdAt: '',
+          updatedAt: '',
+        },
+        {
+          id: 'level-2',
+          workspaceId: 'workspace-1',
+          name: 'Builder',
+          description: null,
+          levelNumber: 2,
+          xpThreshold: 100,
+          isActive: true,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
     });
   });
   await page.route(
@@ -3325,11 +3458,20 @@ test('authenticated gamification page shows server XP summary and lazy history',
 
   await page.goto('/workspace/gamification');
   await expect(page.getByRole('heading', { name: 'Gamification' })).toBeVisible();
-  await expect(page.getByText('125 XP')).toBeVisible();
+  await expect(page.getByText('125 XP', { exact: true })).toBeVisible();
+  await expect(page.getByText('Level 2 - Builder')).toBeVisible();
   expect(historyRequests).toBe(0);
 
+  await page.getByRole('tab', { name: 'Levels' }).click();
+  await expect(page.getByText('Level 1 - Starter')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Streaks' }).click();
+  await expect(page.getByText('Streaks Enabled')).toBeVisible();
+  await expect(page.getByText('Action Needed Today')).toBeVisible();
+  await expect(page.getByText('+25 XP', { exact: true }).first()).toBeVisible();
+
   await page.getByRole('tab', { name: 'History' }).click();
-  await expect(page.getByText('+25 XP')).toBeVisible();
+  await expect(page.getByText('+25 XP', { exact: true })).toBeVisible();
   expect(historyRequests).toBe(1);
 });
 

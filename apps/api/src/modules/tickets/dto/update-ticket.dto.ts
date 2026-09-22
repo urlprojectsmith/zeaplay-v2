@@ -3,6 +3,7 @@ import { TaskPriority, TicketEscalationLevel } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsDateString,
   IsIn,
   IsOptional,
   IsString,
@@ -36,12 +37,22 @@ export class UpdateTicketDto {
   @IsOptional()
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsDateString()
+  gamificationResolutionTargetAt?: string | null;
 }
 
 export class UpdateTicketStatusDto {
   @ApiPropertyOptional()
   @IsUUID()
   statusDefinitionId!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsDateString()
+  gamificationResolutionTargetAt?: string | null;
 }
 
 export class UpdateTicketRequesterDto {

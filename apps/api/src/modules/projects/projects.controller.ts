@@ -107,7 +107,7 @@ export class ProjectsController {
     @Param() params: WorkspaceProjectParamDto,
     @Body() dto: UpdateProjectStatusDto,
   ) {
-    return this.projects.updateStatus(tenant, params.id, dto.statusDefinitionId);
+    return this.projects.updateStatus(tenant, params.id, dto.statusDefinitionId, dto.dueAt);
   }
 
   @Patch(':id/progress')
@@ -380,7 +380,7 @@ export class LegacyProjectsController {
     @Param() params: UuidParamDto,
     @Body() dto: UpdateProjectStatusDto,
   ) {
-    return this.projects.updateStatus(tenant, params.id, dto.statusDefinitionId);
+    return this.projects.updateStatus(tenant, params.id, dto.statusDefinitionId, dto.dueAt);
   }
 
   @Delete(':id')

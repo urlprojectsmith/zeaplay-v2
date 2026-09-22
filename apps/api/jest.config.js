@@ -8,5 +8,6 @@ module.exports = {
   moduleNameMapper: {
     '^minio$': '<rootDir>/test/mocks/minio.ts',
   },
+  setupFiles: ['<rootDir>/test/setup-env.ts'],
   testEnvironment: 'node',
 };

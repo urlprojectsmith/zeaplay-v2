@@ -6,6 +6,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -15,6 +16,9 @@ import {
   AssetStatus,
   AttachmentType,
   DepartmentStatus,
+  GamificationPointWorkType,
+  GamificationWorkXpEventOutcome,
+  GamificationWorkXpEventType,
   MembershipStatus,
   Prisma,
   ProcessingJobStatus,
@@ -53,6 +57,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
+import { GamificationService } from '../gamification/gamification.service';
 import {
   BulkTaskIdsDto,
   BulkTaskMembershipsDto,
@@ -112,6 +117,20 @@ const KANBAN_RANK_SCALE = 12;
 const COMPLETION_TEXT_MAX_LENGTH = 4000;
 const COMPLETION_REASON_MAX_LENGTH = 1000;
 const TASK_CSV_EXPORT_MAX_ROWS = 10_000;
+const missingGamificationService = {
+  evaluateTaskCompletionAchievements: () => Promise.resolve(undefined),
+  handleTaskCreationXp: () => Promise.resolve(undefined),
+  handleTaskCompletionXp: () => Promise.resolve(undefined),
+  handleWorkCreationVoid: () => Promise.resolve(undefined),
+  handleWorkReopen: () => Promise.resolve(undefined),
+} as Pick<
+  GamificationService,
+  | 'evaluateTaskCompletionAchievements'
+  | 'handleTaskCreationXp'
+  | 'handleTaskCompletionXp'
+  | 'handleWorkCreationVoid'
+  | 'handleWorkReopen'
+> as GamificationService;
 
 @Injectable()
 export class TasksService {
@@ -127,6 +146,7 @@ export class TasksService {
     private readonly audit: AuditService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue,
+    @Optional() private readonly gamification: GamificationService = missingGamificationService,
   ) {}
 
   async create(tenant: WorkspaceTenantContext, dto: CreateTaskDto) {
@@ -315,6 +335,11 @@ export class TasksService {
         recurring: Boolean(recurrence),
       },
     });
+    await this.gamification.handleTaskCreationXp(
+      tenant.workspaceId,
+      task.id,
+      tenant.workspaceMembershipId ?? null,
+    );
     return serializeTaskDetail(task, tenant);
   }
 
@@ -1968,6 +1993,14 @@ export class TasksService {
       entityId: submissionId,
       metadata: { taskId, completed: result.completed },
     });
+    if (result.completed) {
+      await this.gamification.evaluateTaskCompletionAchievements(tenant.workspaceId, taskId);
+      await this.gamification.handleTaskCompletionXp(
+        tenant.workspaceId,
+        taskId,
+        tenant.workspaceMembershipId ?? null,
+      );
+    }
     return serializeCompletionSubmission(result.submission);
   }
 
@@ -2063,6 +2096,7 @@ export class TasksService {
             statusDefinitionId: true,
             kanbanRank: true,
             pendingCompletionSubmissionId: true,
+            statusDefinition: { select: { isTerminal: true } },
           },
         });
         if (!task) throw new NotFoundException('Task not found.');
@@ -2085,6 +2119,18 @@ export class TasksService {
         }
         await this.ensureKanbanRanksForColumn(tx, tenant.workspaceId, dto.statusDefinitionId);
         if (task.statusDefinitionId !== dto.statusDefinitionId) {
+          if (
+            task.statusDefinition.isTerminal &&
+            !destinationStatus.isTerminal &&
+            (await this.hasActiveCompletionXpAward(
+              tenant.workspaceId,
+              GamificationPointWorkType.TASK,
+              taskId,
+              tx,
+            ))
+          ) {
+            throw new BadRequestException('TASK_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT');
+          }
           await this.assertStatusTransition(
             tenant.workspaceId,
             [taskId],
@@ -2162,6 +2208,23 @@ export class TasksService {
   async bulkUpdateStatus(tenant: WorkspaceTenantContext, dto: BulkTaskStatusDto) {
     const status = await this.taskStatus(tenant.workspaceId, dto.statusDefinitionId);
     const tasks = await this.assertBulkTasks(tenant.workspaceId, dto.taskIds);
+    if (
+      !status.isTerminal &&
+      tasks.some((task) => task.statusDefinition.isTerminal) &&
+      (
+        await Promise.all(
+          tasks.map((task) =>
+            this.hasActiveCompletionXpAward(
+              tenant.workspaceId,
+              GamificationPointWorkType.TASK,
+              task.id,
+            ),
+          ),
+        )
+      ).some(Boolean)
+    ) {
+      throw new BadRequestException('TASK_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT');
+    }
     const changedTaskIds = tasks
       .filter((task) => task.statusDefinitionId !== status.id)
       .map((task) => task.id);
@@ -2231,6 +2294,16 @@ export class TasksService {
         });
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
+    if (status.isTerminal) {
+      for (const taskId of changedTaskIds) {
+        await this.gamification.evaluateTaskCompletionAchievements(tenant.workspaceId, taskId);
+        await this.gamification.handleTaskCompletionXp(
+          tenant.workspaceId,
+          taskId,
+          tenant.workspaceMembershipId ?? null,
+        );
+      }
+    }
     return bulkResult(dto.taskIds.length, changedTaskIds.length);
   }
 
@@ -3371,6 +3444,24 @@ export class TasksService {
         : (data.plannedStartAt as Date | null),
       data.dueAt === undefined ? existing.dueAt : (data.dueAt as Date | null),
     );
+    const reopensTask =
+      Boolean(status) &&
+      status!.id !== existing.statusDefinitionId &&
+      existing.statusDefinition.isTerminal &&
+      !status!.isTerminal;
+    const reopensAwardedCompletion =
+      reopensTask &&
+      (await this.hasActiveCompletionXpAward(
+        tenant.workspaceId,
+        GamificationPointWorkType.TASK,
+        taskId,
+      ));
+    if (reopensAwardedCompletion) {
+      requireFutureReopenTarget(
+        data.dueAt as Date | null | undefined,
+        'TASK_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT',
+      );
+    }
     const seriesUpdateData: Prisma.TaskRecurrenceSeriesUncheckedUpdateInput = {
       title: data.title,
       description: data.description,
@@ -3477,6 +3568,21 @@ export class TasksService {
       entityId: taskId,
       metadata: { changed: changedFields, recurrenceEditScope },
     });
+    if (status?.isTerminal && status.id !== existing.statusDefinitionId) {
+      await this.gamification.evaluateTaskCompletionAchievements(tenant.workspaceId, taskId);
+      await this.gamification.handleTaskCompletionXp(
+        tenant.workspaceId,
+        taskId,
+        tenant.workspaceMembershipId ?? null,
+      );
+    } else if (reopensAwardedCompletion) {
+      await this.gamification.handleWorkReopen(
+        tenant.workspaceId,
+        GamificationPointWorkType.TASK,
+        taskId,
+        tenant.workspaceMembershipId ?? null,
+      );
+    }
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3485,12 +3591,27 @@ export class TasksService {
     taskId: string,
     statusDefinitionId: string,
     completion?: SubmitTaskCompletionDto,
+    reopenDueAtInput?: string | Date | null,
   ) {
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     if (existing.statusDefinitionId === statusDefinitionId) {
       return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId), tenant);
     }
     const status = await this.taskStatus(tenant.workspaceId, statusDefinitionId);
+    const reopensTask = existing.statusDefinition.isTerminal && !status.isTerminal;
+    const reopensAwardedCompletion =
+      reopensTask &&
+      (await this.hasActiveCompletionXpAward(
+        tenant.workspaceId,
+        GamificationPointWorkType.TASK,
+        taskId,
+      ));
+    const reopenDueAt = reopensAwardedCompletion
+      ? requireFutureReopenTarget(
+          parseOptionalDate(reopenDueAtInput),
+          'TASK_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT',
+        )
+      : null;
     if (status.isTerminal) {
       const gate = await this.completionGate(tenant.workspaceId, taskId);
       if (gate.required) {
@@ -3506,7 +3627,19 @@ export class TasksService {
     await this.assertNoPendingCompletion(tenant.workspaceId, taskId);
     const task = await this.prisma
       .$transaction(async (tx) => {
-        return this.applyTaskStatusTransition(tx, tenant, taskId, status.id, status.isTerminal);
+        const transitioned = await this.applyTaskStatusTransition(
+          tx,
+          tenant,
+          taskId,
+          status.id,
+          status.isTerminal,
+        );
+        if (!reopensAwardedCompletion) return transitioned;
+        return tx.task.update({
+          where: { id: taskId },
+          data: { dueAt: reopenDueAt, updatedById: tenant.userId },
+          select: taskDetailSelect,
+        });
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
     await this.audit.record({
@@ -3521,6 +3654,21 @@ export class TasksService {
         toStatusDefinitionId: status.id,
       },
     });
+    if (status.isTerminal) {
+      await this.gamification.evaluateTaskCompletionAchievements(tenant.workspaceId, taskId);
+      await this.gamification.handleTaskCompletionXp(
+        tenant.workspaceId,
+        taskId,
+        tenant.workspaceMembershipId ?? null,
+      );
+    } else if (reopensAwardedCompletion) {
+      await this.gamification.handleWorkReopen(
+        tenant.workspaceId,
+        GamificationPointWorkType.TASK,
+        taskId,
+        tenant.workspaceMembershipId ?? null,
+      );
+    }
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3663,6 +3811,12 @@ export class TasksService {
         return deletedTask;
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
+    await this.gamification.handleWorkCreationVoid(
+      tenant.workspaceId,
+      GamificationPointWorkType.TASK,
+      taskId,
+      tenant.workspaceMembershipId ?? null,
+    );
     return serializeTaskDetail(task, tenant);
   }
 
@@ -4303,6 +4457,14 @@ export class TasksService {
       entityId: result.submission.id,
       metadata: { taskId, version: result.submission.version },
     });
+    if (result.submission.status === TaskCompletionSubmissionStatus.ACCEPTED) {
+      await this.gamification.evaluateTaskCompletionAchievements(tenant.workspaceId, taskId);
+      await this.gamification.handleTaskCompletionXp(
+        tenant.workspaceId,
+        taskId,
+        tenant.workspaceMembershipId ?? null,
+      );
+    }
     return serializeTaskDetail(result.task, tenant);
   }
 
@@ -4814,6 +4976,26 @@ export class TasksService {
       );
     }
     return status;
+  }
+
+  private async hasActiveCompletionXpAward(
+    workspaceId: string,
+    workType: GamificationPointWorkType,
+    sourceEntityId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const award = await tx.gamificationWorkXpEvent.findFirst({
+      where: {
+        workspaceId,
+        workType,
+        sourceEntityId,
+        eventType: GamificationWorkXpEventType.COMPLETION_AWARD,
+        outcome: GamificationWorkXpEventOutcome.APPLIED,
+        reversalEvents: { none: {} },
+      },
+      select: { id: true },
+    });
+    return Boolean(award);
   }
 
   private async nextKanbanRank(
@@ -6746,10 +6928,18 @@ function withoutUndefined(value: Record<string, unknown>) {
   );
 }
 
-function parseOptionalDate(value: string | null | undefined) {
+function parseOptionalDate(value: string | Date | null | undefined) {
   if (value === undefined) return undefined;
   if (value === null) return null;
+  if (value instanceof Date) return value;
   return new Date(value);
+}
+
+function requireFutureReopenTarget(value: Date | null | undefined, errorCode: string) {
+  if (!value || Number.isNaN(value.getTime()) || value <= new Date()) {
+    throw new BadRequestException(errorCode);
+  }
+  return value;
 }
 
 function parseRequiredDate(value: string, errorCode: string) {

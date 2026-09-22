@@ -321,7 +321,12 @@ export class TicketsController {
     @Param() params: WorkspaceTicketParamDto,
     @Body() dto: UpdateTicketStatusDto,
   ) {
-    return this.tickets.updateStatus(tenant, params.id, dto.statusDefinitionId);
+    return this.tickets.updateStatus(
+      tenant,
+      params.id,
+      dto.statusDefinitionId,
+      dto.gamificationResolutionTargetAt,
+    );
   }
 
   @Patch(':id/requester')

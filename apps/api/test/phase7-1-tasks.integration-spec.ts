@@ -5920,6 +5920,9 @@ describe('Phase 7.1 task core backend integration', () => {
 });
 
 async function resetDatabase() {
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "gamification_work_xp_events", "gamification_xp_entries" CASCADE',
+  );
   await prisma.$transaction([
     prisma.taskCommentReaction.deleteMany(),
     prisma.taskCommentMention.deleteMany(),

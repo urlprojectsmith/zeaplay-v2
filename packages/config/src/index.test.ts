@@ -17,7 +17,10 @@ const validEnv = {
   MINIO_ACCESS_KEY: 'minio',
   MINIO_SECRET_KEY: 'minio',
   MINIO_BUCKET: 'zea',
-  SMTP_HOST: 'localhost',
+  EMAIL_PROVIDER: 'resend',
+  EMAIL_FROM: 'no-reply@example.com',
+  RESEND_API_KEY: 'test-resend-api-key',
+  OTP_PEPPER: 'test-otp-pepper-at-least-32-characters',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
 };
 
@@ -33,6 +36,30 @@ describe('validateEnvironment', () => {
 
   it('rejects missing required variables', () => {
     expect(() => validateEnvironment({})).toThrow();
+  });
+
+  it('conditionally validates the selected email provider', () => {
+    expect(() =>
+      validateEnvironment({ ...validEnv, EMAIL_PROVIDER: 'resend', RESEND_API_KEY: '' }),
+    ).toThrow();
+    expect(
+      validateEnvironment({
+        ...validEnv,
+        EMAIL_PROVIDER: 'smtp',
+        RESEND_API_KEY: '',
+        SMTP_HOST: 'smtp.example.com',
+        SMTP_USER: 'smtp-user',
+        SMTP_PASSWORD: 'smtp-password',
+      }).EMAIL_PROVIDER,
+    ).toBe('smtp');
+    expect(() =>
+      validateEnvironment({
+        ...validEnv,
+        EMAIL_PROVIDER: 'smtp',
+        RESEND_API_KEY: '',
+        SMTP_HOST: '',
+      }),
+    ).toThrow();
   });
 
   it('rejects unsafe production secrets', () => {

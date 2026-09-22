@@ -16,7 +16,10 @@ const env = {
   MINIO_ACCESS_KEY: 'zea-play-dev-minio-access',
   MINIO_SECRET_KEY: 'zea-play-dev-minio-secret-at-least-32-chars',
   MINIO_BUCKET: 'zea-play-dev',
-  SMTP_HOST: 'localhost',
+  EMAIL_PROVIDER: 'resend',
+  EMAIL_FROM: 'no-reply@example.com',
+  RESEND_API_KEY: 'test-resend-api-key',
+  OTP_PEPPER: 'test-otp-pepper-at-least-32-characters',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
 };
 

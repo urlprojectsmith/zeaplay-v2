@@ -43,8 +43,26 @@ const environmentSchema = z.object({
   MINIO_ACCESS_KEY: z.string().min(1),
   MINIO_SECRET_KEY: z.string().min(1),
   MINIO_BUCKET: z.string().min(1),
-  SMTP_HOST: z.string().min(1),
+  EMAIL_PROVIDER: z.enum(['resend', 'smtp']).default('resend'),
+  EMAIL_FROM: z.string().email(),
+  EMAIL_FROM_NAME: z.string().min(1).default('ZeaPlay'),
+  RESEND_API_KEY: z.string().optional().default(''),
+  SMTP_HOST: z.string().optional().default(''),
   SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASSWORD: z.string().optional().default(''),
+  OTP_PEPPER: z.string().min(32),
+  OTP_TTL_SECONDS: z.coerce.number().int().positive().max(300).default(300),
+  OTP_MAX_VERIFY_ATTEMPTS: z.coerce.number().int().positive().max(5).default(5),
+  OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().min(60).default(60),
+  OTP_SEND_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  OTP_SEND_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(3),
+  OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
+  OTP_VERIFY_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   SENTRY_DSN: z.string().optional().default(''),
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional().default(''),
   OTEL_SERVICE_NAME: z.string().min(1).default('zea-play'),
@@ -57,6 +75,7 @@ export type Environment = z.infer<typeof environmentSchema>;
 
 export function validateEnvironment(source: NodeJS.ProcessEnv): Environment {
   const env = environmentSchema.parse(source);
+  assertEmailProviderConfig(env);
   if (env.APP_ENV === 'production' || env.NODE_ENV === 'production') {
     assertProductionSafe(env);
   }
@@ -77,7 +96,14 @@ export function parseCorsOrigins(value: string): string[] {
 }
 
 function assertProductionSafe(env: Environment) {
-  const secretValues = [env.JWT_ACCESS_SECRET, env.MINIO_ACCESS_KEY, env.MINIO_SECRET_KEY];
+  const secretValues = [
+    env.JWT_ACCESS_SECRET,
+    env.MINIO_ACCESS_KEY,
+    env.MINIO_SECRET_KEY,
+    env.OTP_PEPPER,
+    env.EMAIL_PROVIDER === 'resend' ? env.RESEND_API_KEY : '',
+    env.EMAIL_PROVIDER === 'smtp' ? env.SMTP_PASSWORD : '',
+  ].filter(Boolean);
 
   for (const value of secretValues) {
     if (value.length < 32 || unsafeProductionValues.has(value)) {
@@ -87,5 +113,20 @@ function assertProductionSafe(env: Environment) {
 
   if (env.CORS_ORIGINS.includes('*')) {
     throw new Error('Production CORS origins must be explicit.');
+  }
+}
+
+function assertEmailProviderConfig(env: Environment) {
+  if (env.EMAIL_PROVIDER === 'resend' && !env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY is required when EMAIL_PROVIDER=resend.');
+  }
+
+  if (env.EMAIL_PROVIDER === 'smtp') {
+    if (!env.SMTP_HOST) {
+      throw new Error('SMTP_HOST is required when EMAIL_PROVIDER=smtp.');
+    }
+    if (Boolean(env.SMTP_USER) !== Boolean(env.SMTP_PASSWORD)) {
+      throw new Error('SMTP_USER and SMTP_PASSWORD must be provided together.');
+    }
   }
 }

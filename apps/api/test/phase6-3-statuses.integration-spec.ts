@@ -4745,6 +4745,9 @@ async function seedRoles() {
 }
 
 async function resetDatabase() {
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "gamification_work_xp_events", "gamification_xp_entries" CASCADE',
+  );
   await prisma.$transaction([
     prisma.taskCommentReaction.deleteMany(),
     prisma.taskCommentMention.deleteMany(),

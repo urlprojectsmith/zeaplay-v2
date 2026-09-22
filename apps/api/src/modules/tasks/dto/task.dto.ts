@@ -772,6 +772,11 @@ export class UpdateTaskStatusDto {
   @IsUUID()
   statusDefinitionId!: string;
 
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsDateString()
+  dueAt?: string | null;
+
   @ApiPropertyOptional({ type: () => SubmitTaskCompletionDto })
   @IsOptional()
   @ValidateNested()

@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { ProjectVisibility, TaskPriority } from '@prisma/client';
+import { ProjectVisibility, ProjectXpCategory, TaskPriority } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -43,6 +43,11 @@ export class UpdateProjectDto {
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
 
+  @ApiPropertyOptional({ enum: ProjectXpCategory, nullable: true })
+  @IsOptional()
+  @IsEnum(ProjectXpCategory)
+  xpCategory?: ProjectXpCategory | null;
+
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsDateString()
@@ -68,6 +73,11 @@ export class UpdateProjectStatusDto {
   @ApiPropertyOptional()
   @IsUUID()
   statusDefinitionId!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsDateString()
+  dueAt?: string | null;
 }
 
 export class ProjectMembersDto {

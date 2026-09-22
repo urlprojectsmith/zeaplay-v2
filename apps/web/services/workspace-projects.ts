@@ -2,6 +2,7 @@ import { apiClient } from './api';
 import type { Department, PageResult } from './workspace-management';
 
 export type ProjectPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+export type ProjectXpCategory = 'HIGH' | 'MEDIUM' | 'LONG_TERM';
 export type ProjectVisibility = 'WORKSPACE' | 'RESTRICTED';
 export type ProjectSortBy =
   'createdAt' | 'updatedAt' | 'name' | 'dueAt' | 'plannedStartAt' | 'priority';
@@ -15,6 +16,7 @@ export interface WorkspaceProjectSummary {
   statusDefinitionId: string | null;
   status: { id: string; name: string; color: string; terminal: boolean } | null;
   priority: ProjectPriority;
+  xpCategory: ProjectXpCategory | null;
   visibility: ProjectVisibility;
   calculatedProgress: number;
   manualProgressPercent: number | null;
@@ -182,6 +184,7 @@ export interface ProjectPayload {
   description?: string | null;
   statusDefinitionId?: string;
   priority?: ProjectPriority;
+  xpCategory?: ProjectXpCategory | null;
   plannedStartAt?: string | null;
   dueAt?: string | null;
   departmentId?: string | null;
@@ -566,6 +569,7 @@ function compactProjectPayload(body: ProjectPayload) {
     ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}),
     ...(body.statusDefinitionId ? { statusDefinitionId: body.statusDefinitionId } : {}),
     ...(body.priority ? { priority: body.priority } : {}),
+    ...(body.xpCategory !== undefined ? { xpCategory: body.xpCategory } : {}),
     ...(body.plannedStartAt !== undefined ? { plannedStartAt: body.plannedStartAt } : {}),
     ...(body.dueAt !== undefined ? { dueAt: body.dueAt } : {}),
     ...(body.departmentId !== undefined ? { departmentId: body.departmentId || null } : {}),

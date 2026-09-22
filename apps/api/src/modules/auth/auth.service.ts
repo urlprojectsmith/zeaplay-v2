@@ -1,8 +1,26 @@
-import { HttpException, HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
-import { AgencyStatus, MembershipStatus, UserStatus, WorkspaceStatus } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import {
+  AgencyStatus,
+  GamificationAdminEconomy,
+  MembershipStatus,
+  Prisma,
+  SecurityStepUpPurpose,
+  UserStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
+import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { PermissionKeys } from '../../common/authorization/permissions';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
+import { MailService } from '../../infrastructure/mail/mail.service';
 import { RedisService } from '../../infrastructure/redis/redis.service';
 import { AuditService } from '../audit/audit.service';
 import { JwtTokenService } from '../../common/auth/jwt.service';
@@ -12,6 +30,32 @@ interface RequestMeta {
   ipAddress?: string;
   userAgent?: string;
 }
+
+interface CreateGamificationResetStepUpGrantInput {
+  userId: string;
+  refreshToken: string;
+  workspaceId: string;
+  targetMembershipId: string;
+  economy: GamificationAdminEconomy;
+  password: string;
+  meta?: RequestMeta;
+}
+
+interface StartEmailOtpStepUpInput extends CreateGamificationResetStepUpGrantInput {
+  tenant: WorkspaceTenantContext;
+  purpose: SecurityStepUpPurpose;
+}
+
+interface VerifyEmailOtpStepUpInput {
+  tenant: WorkspaceTenantContext;
+  userId: string;
+  refreshToken: string;
+  challengeId: string;
+  code: string;
+  meta?: RequestMeta;
+}
+
+const STEP_UP_TTL_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
@@ -23,6 +67,7 @@ export class AuthService {
     private readonly tokens: JwtTokenService,
     private readonly passwords: PasswordService,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
   ) {}
 
   async login(emailInput: string, password: string, meta: RequestMeta = {}) {
@@ -251,6 +296,264 @@ export class AuthService {
     };
   }
 
+  async createGamificationResetStepUpGrant(input: CreateGamificationResetStepUpGrantInput) {
+    await this.verifyGamificationResetPassword(input);
+    return {
+      passwordVerified: true,
+      purpose: SecurityStepUpPurpose.GAMIFICATION_RESET,
+      economy: input.economy,
+      targetMembershipId: input.targetMembershipId,
+    };
+  }
+
+  async startEmailOtpStepUp(input: StartEmailOtpStepUpInput) {
+    assertTenantPermission(input.tenant, PermissionKeys.gamificationReset);
+    if (input.purpose !== SecurityStepUpPurpose.GAMIFICATION_RESET)
+      throw new BadRequestException('OTP_PURPOSE_INVALID');
+    const { session, user } = await this.verifyGamificationResetPassword(input);
+    await this.assertOtpSendAllowed(input.userId, session.id, input.meta?.ipAddress);
+    const recent = await this.prisma.securityOtpChallenge.findFirst({
+      where: this.activeOtpContextWhere(input.userId, session.id, input),
+      orderBy: { lastSentAt: 'desc' },
+      select: { lastSentAt: true },
+    });
+    const now = new Date();
+    if (
+      recent &&
+      recent.lastSentAt.getTime() + this.env.OTP_RESEND_COOLDOWN_SECONDS * 1000 > now.getTime()
+    ) {
+      throw new HttpException('OTP_RESEND_COOLDOWN', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const challengeId = randomUUID();
+    const code = generateOtpCode();
+    const expiresAt = new Date(
+      now.getTime() + Math.min(this.env.OTP_TTL_SECONDS, STEP_UP_TTL_MS / 1000) * 1000,
+    );
+    const resendAvailableAt = new Date(now.getTime() + this.env.OTP_RESEND_COOLDOWN_SECONDS * 1000);
+    const otpDigest = this.createOtpDigest({
+      challengeId,
+      userId: input.userId,
+      refreshTokenId: session.id,
+      purpose: input.purpose,
+      code,
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.securityOtpChallenge.updateMany({
+        where: this.activeOtpContextWhere(input.userId, session.id, input),
+        data: { invalidatedAt: now },
+      });
+      await tx.securityOtpChallenge.create({
+        data: {
+          id: challengeId,
+          userId: input.userId,
+          refreshTokenId: session.id,
+          workspaceId: input.workspaceId,
+          targetMembershipId: input.targetMembershipId,
+          purpose: input.purpose,
+          economy: input.economy,
+          otpDigest,
+          maxAttempts: this.env.OTP_MAX_VERIFY_ATTEMPTS,
+          lastSentAt: now,
+          expiresAt,
+        },
+      });
+    });
+
+    try {
+      await this.mail.sendSecurityOtp({
+        to: user.email,
+        code,
+        expiresInMinutes: Math.ceil((expiresAt.getTime() - now.getTime()) / 60_000),
+      });
+    } catch {
+      await this.prisma.securityOtpChallenge.updateMany({
+        where: { id: challengeId, consumedAt: null },
+        data: { invalidatedAt: new Date() },
+      });
+      throw new HttpException('OTP_DELIVERY_FAILED', HttpStatus.BAD_GATEWAY);
+    }
+
+    await this.registerOtpSend(input.userId, session.id, input.meta?.ipAddress);
+    await this.audit.record({
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      action: 'security.step_up_otp_requested',
+      entityType: 'SecurityOtpChallenge',
+      entityId: challengeId,
+      ipAddress: input.meta?.ipAddress,
+      userAgent: input.meta?.userAgent,
+      metadata: {
+        purpose: input.purpose,
+        economy: input.economy,
+        targetMembershipId: input.targetMembershipId,
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
+
+    return {
+      challengeId,
+      expiresAt,
+      resendAvailableAt,
+      maskedDestination: maskEmail(user.email),
+      purpose: input.purpose,
+      economy: input.economy,
+      targetMembershipId: input.targetMembershipId,
+    };
+  }
+
+  async verifyEmailOtpStepUp(input: VerifyEmailOtpStepUpInput) {
+    assertTenantPermission(input.tenant, PermissionKeys.gamificationReset);
+    await this.assertOtpVerifyAllowed(input.userId, input.challengeId, input.meta?.ipAddress);
+    const session = await this.getActiveRefreshSession(input.userId, input.refreshToken);
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id
+        FROM security_otp_challenges
+        WHERE id = ${input.challengeId}::uuid
+        FOR UPDATE
+      `);
+      const challenge = await tx.securityOtpChallenge.findUnique({
+        where: { id: input.challengeId },
+      });
+      if (
+        !challenge ||
+        challenge.userId !== input.userId ||
+        challenge.refreshTokenId !== session.id ||
+        challenge.workspaceId !== input.tenant.workspaceId ||
+        challenge.purpose !== SecurityStepUpPurpose.GAMIFICATION_RESET ||
+        challenge.consumedAt ||
+        challenge.invalidatedAt
+      ) {
+        throw new UnauthorizedException('OTP_CHALLENGE_INVALID');
+      }
+      if (challenge.expiresAt <= now) {
+        await tx.securityOtpChallenge.update({
+          where: { id: challenge.id },
+          data: { invalidatedAt: now },
+        });
+        throw new UnauthorizedException('OTP_EXPIRED');
+      }
+      if (challenge.attemptCount >= challenge.maxAttempts) {
+        throw new UnauthorizedException('OTP_ATTEMPTS_EXCEEDED');
+      }
+      const expectedDigest = this.createOtpDigest({
+        challengeId: challenge.id,
+        userId: challenge.userId,
+        refreshTokenId: challenge.refreshTokenId,
+        purpose: challenge.purpose,
+        code: input.code,
+      });
+      if (!timingSafeDigestEqual(challenge.otpDigest, expectedDigest)) {
+        const attemptCount = challenge.attemptCount + 1;
+        await tx.securityOtpChallenge.update({
+          where: { id: challenge.id },
+          data: {
+            attemptCount,
+            ...(attemptCount >= challenge.maxAttempts ? { invalidatedAt: now } : {}),
+          },
+        });
+        await this.registerOtpVerifyFailure(input.userId, input.challengeId, input.meta?.ipAddress);
+        await this.audit.record({
+          userId: input.userId,
+          workspaceId: challenge.workspaceId,
+          action: 'security.step_up_otp_failed',
+          entityType: 'SecurityOtpChallenge',
+          entityId: challenge.id,
+          ipAddress: input.meta?.ipAddress,
+          userAgent: input.meta?.userAgent,
+          metadata: {
+            purpose: challenge.purpose,
+            economy: challenge.economy,
+            targetMembershipId: challenge.targetMembershipId,
+            attemptCount,
+          },
+        });
+        throw new UnauthorizedException('OTP_INVALID');
+      }
+      const grant = await tx.securityStepUpGrant.create({
+        data: {
+          userId: input.userId,
+          refreshTokenId: session.id,
+          workspaceId: challenge.workspaceId,
+          targetMembershipId: challenge.targetMembershipId,
+          purpose: SecurityStepUpPurpose.GAMIFICATION_RESET,
+          economy: challenge.economy,
+          expiresAt: new Date(now.getTime() + STEP_UP_TTL_MS),
+        },
+        select: {
+          id: true,
+          expiresAt: true,
+          purpose: true,
+          economy: true,
+          targetMembershipId: true,
+        },
+      });
+      await tx.securityOtpChallenge.update({
+        where: { id: challenge.id },
+        data: { consumedAt: now },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: input.userId,
+          workspaceId: challenge.workspaceId,
+          action: 'security.step_up_otp_verified',
+          entityType: 'SecurityOtpChallenge',
+          entityId: challenge.id,
+          metadata: {
+            purpose: challenge.purpose,
+            economy: challenge.economy,
+            targetMembershipId: challenge.targetMembershipId,
+          },
+        },
+      });
+      return grant;
+    });
+  }
+
+  private async verifyGamificationResetPassword(input: CreateGamificationResetStepUpGrantInput) {
+    await this.assertStepUpAllowed(input.userId, input.meta?.ipAddress);
+    const session = await this.getActiveRefreshSession(input.userId, input.refreshToken);
+    const user = await this.prisma.user.findUnique({
+      where: { id: input.userId },
+      select: { id: true, email: true, passwordHash: true, status: true },
+    });
+    if (
+      !user ||
+      user.status !== UserStatus.ACTIVE ||
+      !this.passwords.verify(user.passwordHash, input.password)
+    ) {
+      await this.registerStepUpFailure(input.userId, input.meta?.ipAddress);
+      throw new UnauthorizedException('STEP_UP_VERIFICATION_FAILED');
+    }
+    await this.clearStepUpFailures(input.userId, input.meta?.ipAddress);
+    const target = await this.prisma.workspaceMembership.findFirst({
+      where: {
+        id: input.targetMembershipId,
+        workspaceId: input.workspaceId,
+        status: MembershipStatus.ACTIVE,
+      },
+      select: { id: true },
+    });
+    if (!target) throw new ForbiddenException('TARGET_MEMBERSHIP_NOT_FOUND');
+    await this.audit.record({
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+      action: 'auth.step_up.password_verified',
+      entityType: 'User',
+      entityId: input.userId,
+      ipAddress: input.meta?.ipAddress,
+      userAgent: input.meta?.userAgent,
+      metadata: {
+        purpose: SecurityStepUpPurpose.GAMIFICATION_RESET,
+        economy: input.economy,
+        targetMembershipId: input.targetMembershipId,
+      },
+    });
+    return { session, user };
+  }
+
   private async issueTokenPair(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
@@ -272,6 +575,22 @@ export class AuthService {
       refreshToken,
       csrfToken,
     };
+  }
+
+  private async getActiveRefreshSession(userId: string, refreshToken: string) {
+    const session = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash: this.tokens.createTokenHash(refreshToken) },
+      select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+    });
+    if (
+      !session ||
+      session.userId !== userId ||
+      session.revokedAt ||
+      session.expiresAt <= new Date()
+    ) {
+      throw new UnauthorizedException('STEP_UP_SESSION_INVALID');
+    }
+    return session;
   }
 
   private async assertLoginAllowed(email: string, ipAddress?: string) {
@@ -298,6 +617,131 @@ export class AuthService {
 
   private loginFailureKey(email: string, ipAddress = 'unknown') {
     return `auth:login:${ipAddress}:${email}`;
+  }
+
+  private async assertStepUpAllowed(userId: string, ipAddress?: string) {
+    const key = this.stepUpFailureKey(userId, ipAddress);
+    const attempts = Number((await this.redis.rateLimit.get(key)) ?? 0);
+    if (attempts >= this.env.LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
+      throw new HttpException(
+        'Too many verification attempts. Try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async registerStepUpFailure(userId: string, ipAddress?: string) {
+    const key = this.stepUpFailureKey(userId, ipAddress);
+    const count = await this.redis.rateLimit.incr(key);
+    if (count === 1)
+      await this.redis.rateLimit.expire(key, this.env.LOGIN_RATE_LIMIT_WINDOW_SECONDS);
+  }
+
+  private async clearStepUpFailures(userId: string, ipAddress?: string) {
+    await this.redis.rateLimit.del(this.stepUpFailureKey(userId, ipAddress));
+  }
+
+  private stepUpFailureKey(userId: string, ipAddress = 'unknown') {
+    return `auth:step-up:${ipAddress}:${userId}`;
+  }
+
+  private activeOtpContextWhere(
+    userId: string,
+    refreshTokenId: string,
+    input: {
+      workspaceId: string;
+      targetMembershipId: string;
+      purpose: SecurityStepUpPurpose;
+      economy: GamificationAdminEconomy;
+    },
+  ) {
+    return {
+      userId,
+      refreshTokenId,
+      workspaceId: input.workspaceId,
+      targetMembershipId: input.targetMembershipId,
+      purpose: input.purpose,
+      economy: input.economy,
+      consumedAt: null,
+      invalidatedAt: null,
+      expiresAt: { gt: new Date() },
+    };
+  }
+
+  private createOtpDigest(input: {
+    challengeId: string;
+    userId: string;
+    refreshTokenId: string;
+    purpose: SecurityStepUpPurpose;
+    code: string;
+  }) {
+    return createHmac('sha256', this.env.OTP_PEPPER)
+      .update(
+        [input.challengeId, input.userId, input.refreshTokenId, input.purpose, input.code].join(
+          ':',
+        ),
+      )
+      .digest('hex');
+  }
+
+  private async assertOtpSendAllowed(userId: string, refreshTokenId: string, ipAddress?: string) {
+    const key = this.otpSendRateKey(userId, refreshTokenId, ipAddress);
+    const attempts = Number((await this.redis.rateLimit.get(key)) ?? 0);
+    if (attempts >= this.env.OTP_SEND_RATE_LIMIT_MAX) {
+      throw new HttpException('OTP_SEND_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+    }
+  }
+
+  private async registerOtpSend(userId: string, refreshTokenId: string, ipAddress?: string) {
+    const key = this.otpSendRateKey(userId, refreshTokenId, ipAddress);
+    const count = await this.redis.rateLimit.incr(key);
+    if (count === 1)
+      await this.redis.rateLimit.expire(key, this.env.OTP_SEND_RATE_LIMIT_WINDOW_SECONDS);
+  }
+
+  private otpSendRateKey(userId: string, refreshTokenId: string, ipAddress = 'unknown') {
+    return `auth:otp-send:${ipAddress}:${userId}:${refreshTokenId}`;
+  }
+
+  private async assertOtpVerifyAllowed(userId: string, challengeId: string, ipAddress?: string) {
+    const key = this.otpVerifyRateKey(userId, challengeId, ipAddress);
+    const attempts = Number((await this.redis.rateLimit.get(key)) ?? 0);
+    if (attempts >= this.env.OTP_VERIFY_RATE_LIMIT_MAX) {
+      throw new HttpException('OTP_VERIFY_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+    }
+  }
+
+  private async registerOtpVerifyFailure(userId: string, challengeId: string, ipAddress?: string) {
+    const key = this.otpVerifyRateKey(userId, challengeId, ipAddress);
+    const count = await this.redis.rateLimit.incr(key);
+    if (count === 1)
+      await this.redis.rateLimit.expire(key, this.env.OTP_VERIFY_RATE_LIMIT_WINDOW_SECONDS);
+  }
+
+  private otpVerifyRateKey(userId: string, challengeId: string, ipAddress = 'unknown') {
+    return `auth:otp-verify:${ipAddress}:${userId}:${challengeId}`;
+  }
+}
+
+function generateOtpCode() {
+  return String(randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+function timingSafeDigestEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left, 'hex');
+  const rightBuffer = Buffer.from(right, 'hex');
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function maskEmail(email: string) {
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return '***';
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
+function assertTenantPermission(tenant: WorkspaceTenantContext, permission: string) {
+  if (!tenant.permissions.includes('*') && !tenant.permissions.includes(permission)) {
+    throw new ForbiddenException('PERMISSION_DENIED');
   }
 }
 

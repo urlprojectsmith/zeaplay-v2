@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 10.1 — GAMIFICATION CORE + XP LEDGER — COMPLETE / PASS
-Next: Phase 10.2 — Levels + Progression
+Current: Phase 10.9 — XP ENGINE + TASK / PROJECT / TICKET INTEGRATION COMPLETE / PASS
+Next: Phase 10.10 — XP Control Center + Analyzer + Reconciliation
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -2774,6 +2774,765 @@ Final verification:
 
 Phase 10.1 is complete/pass. The next step is Phase 10.2 — Levels + Progression, and it must not start automatically.
 
+### Phase 10.2 — LEVELS + PROGRESSION Implementation — PASS
+
+Implemented:
+
+- Added Workspace-scoped `GamificationLevel` configuration with name, normalized name, description, level number, XP threshold, active flag, timestamps, tenant FK, uniqueness, indexes, and bounded database checks.
+- Added migration `0040_phase10_2_gamification_levels`, including `gamification.levels.manage` permission and system-role grants for OWNER, ADMIN, and MANAGER.
+- Extended `GamificationService.getMyXpSummary` to derive current level, next level, XP into current level, XP to next level, progress percent, max-level state, and no-config state from current ledger XP plus active Workspace thresholds.
+- Added Workspace-scoped level list/create/update endpoints under `/workspaces/:workspaceId/gamification/levels`.
+- Added `/workspace/gamification` Levels tab while keeping the single Gamification route with Overview, Levels, and History only.
+- Added viewer active-path display and manager create/archive/reactivate controls behind `gamification.levels.manage`.
+- Added English and Tamil labels for level/progression UI.
+
+Phase 10.2 invariants established:
+
+- XP ledger remains the only source of XP truth.
+- No member/user current level is persisted.
+- Levels belong to Workspace configuration, not global users.
+- No default levels are inserted automatically.
+- No configured active levels returns `levelsConfigured=false` and null current/next/progress fields.
+- Active levels are ordered by `levelNumber`; gaps are allowed.
+- Active thresholds must be strictly increasing by active `levelNumber`.
+- A valid active progression requires a zero-threshold base.
+- Inactive levels are retained but excluded from viewer lists and progression derivation.
+- Current and next level are server-derived from current WorkspaceMembership XP.
+- Max-level state returns 100 percent progress and null XP-to-next.
+- `gamification.view` gates own progression and active definitions.
+- `gamification.levels.manage` independently gates configuration mutation and inactive visibility.
+- No role-name authorization exists.
+- Workspace locks serialize level configuration validation.
+- Level config changes are recorded through `AuditLog` with bounded metadata and no per-member audit fanout.
+- Query keys include Workspace and inactive/manage state; Workspace switching resets active tab/page state.
+- No rewards, reward points, badges, achievements, streaks, leaderboards, manual XP, XP reset, notification, Redis authority, level worker, or Phase 10.3 scope was introduced.
+
+Final verification:
+
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- Focused API gamification tests pass 14/14.
+- `pnpm test` passes 71 API unit tests, 121 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase102_clean_20260921035014` with all 40 migrations applied, including `0040_phase10_2_gamification_levels`; no pending migrations remain.
+
+Phase 10.2 implementation is pass. The next step is Phase 10.2 Focused Refinement, and it must not start automatically.
+
+### Phase 10.2 — LEVELS + PROGRESSION Focused Checklist — PASS
+
+Focused refinements:
+
+- Added focused coverage for exact-threshold level selection.
+- Added focused coverage for deduction-driven level-down derivation from ledger XP.
+- Added focused coverage that archiving a level does not modify XP entries.
+- Added focused coverage that cross-Workspace level mutation fails.
+
+Focused checklist reconfirmed:
+
+- Level definitions remain Workspace scoped with configurable XP thresholds.
+- No hardcoded level formula, mutable member/user current level, or per-member progression table exists.
+- Current level, next level, XP-to-next, progress percent, max-level state, and unconfigured state come from the backend.
+- Same user can derive different levels across Workspaces through separate WorkspaceMembership XP totals.
+- Active thresholds remain strictly increasing, deterministic, and require a 0-XP base.
+- Archived levels stop participating in progression and do not change XP.
+- Level configuration operations remain atomic and serialized by Workspace lock.
+- `gamification.levels.manage` remains migration-backed and independent from `gamification.view`.
+- `/workspace/gamification` remains the only route with Overview, Levels, and History tabs only.
+- No reward points, streaks, badges, achievements, leaderboards, pressure-score integration, automatic XP awards, Redis level authority, level worker, or Phase 10.3+ scope was introduced.
+
+Focused verification:
+
+- Focused API gamification tests pass 16/16.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 73 API unit tests, 121 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase102_focused_clean_20260921035833` with all 40 migrations applied, including `0040_phase10_2_gamification_levels`; no pending migrations remain.
+
+Phase 10.2 focused checklist is pass. The next step is Phase 10.2 Final Completion Verification, and it must not start automatically.
+
+### Phase 10.2 — LEVELS + PROGRESSION — COMPLETE / PASS
+
+Final invariants:
+
+- Gamification Levels are Workspace scoped.
+- Current Level is always derived from the Phase 10.1 XP ledger total plus active Workspace Level definitions.
+- No User or WorkspaceMembership current-level field is authoritative.
+- No per-member Level row exists.
+- Level thresholds are explicit configurable values, not a hardcoded formula.
+- Active Level thresholds remain strictly increasing.
+- Level order is deterministic.
+- Valid progression has a zero-XP active base Level.
+- Exact XP threshold resolves to that Level.
+- XP between thresholds resolves to the highest active threshold below or equal to XP.
+- XP deduction can derive a lower current Level.
+- Level config changes never mutate XP.
+- Archived Levels stop participating in progression.
+- Level archival does not update every Workspace membership.
+- No Levels configured returns an explicit unconfigured state.
+- Current Level, next Level, progress, and XP-to-next are calculated server-side.
+- Max-Level behavior is explicit.
+- Level config mutations are atomic and concurrency safe.
+- Cross-Workspace Level mutation is impossible.
+- `gamification.view` remains the progression-read permission.
+- `gamification.levels.manage` independently controls Level configuration.
+- No role-name authorization exists.
+- No member-level recalculation worker exists.
+- No Redis Level authority exists.
+- `/workspace/gamification` remains the one Gamification route.
+- Implemented tabs are Overview, Levels, and History.
+- Normal users see the active progression path.
+- Management controls remain permission-gated in the Levels tab.
+- No Badge, Achievement, Streak, Reward, or Leaderboard implementation exists.
+- Pressure Score remains separate.
+- No automatic Task, Project, or Ticket XP awards exist.
+- Phase 7, Phase 8, Phase 9, and Phase 10.1 remain green.
+
+Final verification:
+
+- Focused API gamification tests pass 16/16.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 73 API unit tests, 121 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase102_focused_clean_20260921035833` with all 40 migrations applied, including `0040_phase10_2_gamification_levels`; no pending migrations remain.
+- Security search found no authoritative member/user current-level state, no per-member Level table, no hardcoded Level formula, no Level worker, no Redis Level authority, no automatic business XP award path, and no Badge/Achievement/Streak/Reward/Leaderboard implementation.
+
+Phase 10.2 is complete/pass. The next step is Phase 10.3 — Badges + Achievements, and it must not start automatically.
+
+### Phase 10.3 — BADGES + ACHIEVEMENTS Implementation — PASS
+
+Implemented:
+
+- Added separate Workspace-scoped `GamificationBadgeDefinition` and `GamificationAchievementDefinition` models.
+- Added strict `GamificationAchievementCriterionType` values for `XP_TOTAL_AT_LEAST`, `TASK_COMPLETED_COUNT`, `PROJECT_COMPLETED_COUNT`, and `TICKET_RESOLVED_COUNT`.
+- Added immutable one-time `GamificationAchievementAward` and `GamificationBadgeAward` models tied to `WorkspaceMembership`, not global User.
+- Added migration `0041_phase10_3_badges_achievements`, including award immutability triggers, Workspace fences, uniqueness, bounded values, and `gamification.achievements.manage` permission grants for OWNER, ADMIN, and MANAGER.
+- Added Badge and Achievement definition APIs under the existing Workspace Gamification route.
+- Added own Badge/Achievement read surfaces and server-derived Achievement progress.
+- Added central Gamification achievement evaluation service methods for XP, Task completion, Project completion, and Ticket resolution events.
+- Wired Task, Project, and Ticket modules to request central evaluation after committed terminal events; those modules do not insert awards directly.
+- Ticket terminal status-change audit metadata now records assigned agent evidence for forward-safe first-resolution credit.
+- Achievement XP rewards use the Phase 10.1 central XP service with stable idempotency.
+- `/workspace/gamification` remains the single Gamification route and now has Overview, Levels, Badges, Achievements, and History tabs.
+- Added English and Tamil labels for Badge and Achievement surfaces.
+
+Phase 10.3 implementation invariants established:
+
+- Badge definitions and Achievement definitions are separate Workspace-scoped concepts.
+- `AchievementDefinition` owns typed qualification criteria.
+- `BadgeDefinition` has no qualification logic.
+- Supported criteria are `XP_TOTAL_AT_LEAST`, `TASK_COMPLETED_COUNT`, `PROJECT_COMPLETED_COUNT`, and `TICKET_RESOLVED_COUNT` only.
+- No arbitrary code, expression, SQL, webhook, or rule-builder criteria exists.
+- `AchievementAward` is immutable and one-time per WorkspaceMembership plus Achievement.
+- `BadgeAward` is immutable and one-time per WorkspaceMembership plus Badge.
+- Awards belong to WorkspaceMembership, not global User.
+- Achievement evaluation goes through one central Gamification achievement service.
+- Task, Project, and Ticket modules never insert awards directly.
+- Automatic historical mass backfill does not occur.
+- Existing qualifiers earn only on a future relevant event in Phase 10.3.
+- Achievement may optionally grant one Badge.
+- Achievement may optionally grant positive XP.
+- Achievement XP reward uses Phase 10.1 central XP service and idempotency.
+- Achievement XP reward cannot duplicate on repeated evaluation.
+- Chained XP achievements are bounded/idempotent and cannot recurse infinitely.
+- No Reward Points are awarded.
+- Task completion count uses distinct qualifying completed Tasks.
+- Task recompletion does not double count distinct completed Task progress.
+- Project completion credit uses Project owner semantic only.
+- Ticket resolution uses distinct first reliable resolution credit from terminal AuditLog evidence with assignment metadata.
+- Ticket reresolution does not double count distinct Ticket progress.
+- `XP_TOTAL_AT_LEAST` criteria use authoritative XP ledger total.
+- Earned Achievements/Badges remain after XP drops or source entity reopens.
+- Archived definitions prevent new awards but retain historical awards.
+- Historical AchievementAward stores immutable criterion/name/reward snapshot data.
+- Normal users can view only their own award/progress context.
+- `gamification.achievements.manage` independently gates Badge/Achievement definition management.
+- No role-name authorization exists.
+- `/workspace/gamification` remains the only Gamification route.
+- Tabs are Overview, Levels, Badges, Achievements, and History only.
+- No Streak, Reward, Reward Point, or Leaderboard implementation exists.
+- No manual award, reset, or backfill UI exists.
+- No Achievement worker or Redis authority exists.
+- No notification side effects exist.
+- Phase 7, Phase 8, Phase 9, Phase 10.1, and Phase 10.2 remain green.
+
+Verification:
+
+- Focused API gamification service tests pass 16/16.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 73 API unit tests, 121 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase103_clean_20260921044435` with all 41 migrations applied, including `0041_phase10_3_badges_achievements`; no pending migrations remain.
+
+Phase 10.3 implementation is pass. The next step is Phase 10.3 Focused Refinement, and it must not start automatically.
+
+### Phase 10.3 — BADGES + ACHIEVEMENTS Focused Checklist — PASS
+
+Focused refinement:
+
+- Fixed Ticket-resolution Achievement progress to select the first reliable terminal Ticket AuditLog transition for each Ticket before applying assigned-membership credit.
+- Reopen/reresolve flows cannot double count a Ticket or credit a later assignee for a Ticket whose first resolution belonged to another membership.
+- Award writes remain centralized in `GamificationService`; Task, Project, and Ticket modules request evaluation only and do not insert awards directly.
+- Badge and Achievement definitions remain separate, Workspace scoped, and criteria remain typed/allowlisted to XP, Task, Project, and Ticket sources only.
+- Achievement and Badge awards remain immutable and one-time per WorkspaceMembership.
+- Achievement XP rewards continue to use the Phase 10.1 XP ledger write path with idempotent event keys.
+- Existing qualifiers still award only on the next relevant event; no historical mass backfill or worker exists.
+- `/workspace/gamification` remains the single UI route with Overview, Levels, Badges, Achievements, and History tabs only.
+- No Reward Points, Streaks, Leaderboards, manual awards, resets, notifications, Redis authority, Achievement worker, or Phase 10.4+ scope was introduced.
+
+Focused verification:
+
+- Focused API gamification service tests pass 16/16.
+- `pnpm typecheck` passes.
+- `pnpm lint` passes.
+- `pnpm format` passes.
+- `pnpm test` passes 73 API unit tests, 121 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Security search confirms direct AchievementAward and BadgeAward writes remain limited to the central Gamification service.
+
+Phase 10.3 focused checklist is pass. The next step is Phase 10.3 Final Completion Verification, and it must not start automatically.
+
+### Phase 10.3 — BADGES + ACHIEVEMENTS — COMPLETE / PASS
+
+Final invariants:
+
+- BadgeDefinition and AchievementDefinition remain separate Workspace-scoped concepts.
+- AchievementDefinition owns typed qualification criteria.
+- BadgeDefinition contains no qualification logic.
+- Supported criteria are `XP_TOTAL_AT_LEAST`, `TASK_COMPLETED_COUNT`, `PROJECT_COMPLETED_COUNT`, and `TICKET_RESOLVED_COUNT` only.
+- No arbitrary executable, expression, SQL, JavaScript, webhook, Streak, or Level criteria exist.
+- AchievementAward is immutable and one-time per WorkspaceMembership plus Achievement.
+- BadgeAward is immutable and one-time per WorkspaceMembership plus Badge.
+- Awards belong to WorkspaceMembership, not global User.
+- The central Gamification Achievement service owns evaluation and awards.
+- Task, Project, and Ticket modules never directly insert award rows.
+- No historical mass backfill, one-job-per-member scanner, or backfill worker exists.
+- Existing qualifiers are evaluated only on future relevant events.
+- Task Achievement progress counts distinct qualifying completed Tasks and Task reopen/recomplete never double counts.
+- Project completion credit uses Project owner semantic and Project reopen/recomplete never double counts.
+- Ticket resolution progress uses the first reliable terminal Ticket AuditLog transition per Ticket.
+- The first terminal Ticket transition is selected before membership credit.
+- Ticket reopen/reresolve never double counts and later assignees cannot receive credit for an earlier first resolution.
+- `XP_TOTAL_AT_LEAST` uses Phase 10.1 XP ledger authority.
+- Achievement may optionally grant one Badge.
+- Achievement may optionally grant positive XP.
+- Achievement XP reward uses the Phase 10.1 central XP service and stable idempotency.
+- Chained XP Achievements are bounded and cannot infinitely recurse.
+- No Reward Points are involved.
+- Historical earned awards remain after XP drop or source reopen.
+- Archived definitions retain historical awards.
+- Historical award snapshots keep award meaning understandable after definition edits.
+- Inactive memberships cannot receive new awards.
+- `gamification.view` controls own Badge/Achievement/progress reads.
+- `gamification.achievements.manage` controls definition management.
+- No role-name authorization exists.
+- Normal users cannot inspect arbitrary other-member awards.
+- Cross-Workspace definition, Badge linkage, award, and membership access are blocked.
+- `/workspace/gamification` remains the single Gamification route.
+- Tabs are Overview, Levels, Badges, Achievements, and History only.
+- No Streak, Reward, Reward Point, Leaderboard, manual award, reset, backfill, notification, Achievement worker, Redis Achievement authority, or Phase 10.4+ functionality exists.
+- Phase 7, Phase 8, Phase 9, Phase 10.1, and Phase 10.2 remain green.
+
+Final verification:
+
+- Focused API gamification service tests pass 17/17, including the first-terminal Ticket resolution regression.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 74 API unit tests, 121 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase103_final_clean_20260921101415` with all 41 migrations applied, including `0041_phase10_3_badges_achievements`; `prisma migrate status` reports the schema is up to date.
+- Security search confirms direct AchievementAward and BadgeAward writes remain limited to the central Gamification service and XP reward writes use the central XP ledger service path.
+- No historical migration file was modified.
+
+Phase 10.3 is complete/pass. The next step is Phase 10.4 — Daily Streaks, and it must not start automatically.
+
+### Phase 10.4 — DAILY STREAKS Implementation — PASS
+
+Implemented:
+
+- Added Workspace-scoped `GamificationStreakConfig` with enable/disable state, bounded daily XP reward configuration, timestamps, and one config row per Workspace.
+- Added immutable `GamificationStreakDay` records scoped to WorkspaceMembership with local Workspace date, qualification type, source entity, qualification timestamp, timezone snapshot, and reward snapshot.
+- Added migration `0042_phase10_4_daily_streaks`, including `gamification.streaks.manage` permission grants for OWNER, ADMIN, and MANAGER system Workspace roles.
+- Added self-scoped Streak summary/history APIs and permission-gated Streak configuration APIs under the existing Workspace Gamification route.
+- Added central Gamification service qualification from Task completion and first reliable Ticket resolution events.
+- Added optional daily XP rewards through the Phase 10.1 central XP ledger service with stable idempotency.
+- Added `/workspace/gamification` Streaks tab while keeping the single Gamification route with Overview, Levels, Badges, Achievements, Streaks, and History tabs.
+- Added Overview Streak summary cards and English/Tamil labels for Streak surfaces.
+
+Phase 10.4 implementation invariants established:
+
+- Daily Streak state belongs to WorkspaceMembership, not global User.
+- Same User can have independent Streaks across Workspaces.
+- Streak days are immutable event records and no mutable member/user current-streak field is authoritative.
+- Current Streak and Longest Streak are derived server-side from StreakDay rows.
+- Workspace timezone is the authority for local Streak dates.
+- Timezone and configured daily XP reward are snapshotted per Streak day.
+- Enabling Streaks starts future qualification only and does not backfill historical activity.
+- Disabling Streaks stops new qualification without deleting historical Streak days.
+- Task qualification is limited to `TASK_COMPLETED`.
+- Ticket qualification is limited to first reliable `TICKET_RESOLVED` terminal evidence.
+- Project qualification, manual check-in, freeze, grace day, vacation mode, leaderboard, reward-point, and notification behavior were not introduced.
+- Duplicate same source events and same-member same-local-date events cannot create duplicate Streak days.
+- Daily XP reward is optional, positive-or-zero, bounded, snapshotted, and paid through central XP ledger idempotency.
+- Inactive memberships cannot receive new Streak days.
+- Cross-Workspace Streak config, summary, history, source, and membership access are blocked.
+- `gamification.view` gates own Streak summary/history/config reads.
+- `gamification.streaks.manage` independently gates Streak config mutation.
+- No role-name authorization exists.
+- Streak config mutation is audited.
+- No Streak worker, Redis Streak authority, or scheduled Streak process exists.
+- Query keys include Workspace and Streak dimensions; Workspace switching cannot reuse tenant-bound Streak state.
+- Phase 7, Phase 8, Phase 9, Phase 10.1, Phase 10.2, and Phase 10.3 remain green.
+
+Implementation verification:
+
+- Focused API gamification service tests pass 20/20.
+- Focused web gamification tests pass as part of 122/122 web tests.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 77 API unit tests, 122 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase104_clean_20260921115135` with all 42 migrations applied, including `0042_phase10_4_daily_streaks`; `prisma migrate status` reports the schema is up to date.
+- No historical migration file was modified.
+
+Phase 10.4 implementation is pass. The next step is Phase 10.4 Focused Refinement, and it must not start automatically.
+
+### Phase 10.4 — DAILY STREAKS Focused Checklist — PASS
+
+Focused refinements:
+
+- Added focused coverage for Workspace-local Streak date authority independent from browser/device timezone.
+- Added focused coverage that current and longest Streak values are derived from immutable StreakDay rows.
+- Added focused coverage for keeping yesterday's chain alive during today, missed-day current-streak reset, `needsActionToday`, and historical longest Streak preservation.
+- Added focused coverage that events before `enabledAt` do not create StreakDays.
+- Added focused coverage that Task completion qualifies active assignees independently while followers and inactive memberships do not qualify.
+- Added focused coverage that Project completion does not create StreakDays.
+- Added focused coverage that unassigned first Ticket resolution does not invent Streak credit.
+- Added focused coverage that same Task/Ticket source reuse cannot create duplicate StreakDays or duplicate daily XP.
+- Added focused coverage that Streak XP flows through the central Phase 10.1 XP service and can trigger existing `XP_TOTAL_AT_LEAST` Achievements without adding a Streak Achievement criterion.
+- Strengthened the Gamification service unit-test harness to model Prisma unique errors, filtered AuditLog lookups, and multi-assignee Task evaluation accurately.
+
+Focused checklist reconfirmed:
+
+- Streaks remain WorkspaceMembership scoped.
+- Workspace timezone remains the calendar authority.
+- Browser/device timezone is not authoritative.
+- StreakDay uses immutable local calendar date.
+- No mutable currentStreak or longestStreak authority exists.
+- One member has at most one StreakDay per local date.
+- Task completion and Ticket first resolution qualify.
+- Project completion does not qualify.
+- Task followers do not qualify.
+- Multi-assignee Tasks handle each qualifying active assignee independently.
+- Task reopen/recomplete cannot reuse the same Task source.
+- Ticket reopen/reresolve cannot reuse the same Ticket source.
+- Ticket later assignee cannot receive earlier-resolution Streak credit.
+- Unassigned first Ticket resolution does not invent Streak credit.
+- Inactive membership receives no new day.
+- Streak feature can be enabled/disabled by Workspace.
+- Enabling/re-enabling does not historical-backfill or disabled-period-backfill.
+- Event before `enabledAt` cannot create a StreakDay.
+- Same-day Task plus Ticket contention creates only one day.
+- Optional daily XP defaults to zero, uses the central Phase 10.1 XP service, occurs at most once per day, and is idempotent/concurrency safe through StreakDay uniqueness plus XP idempotency.
+- Existing XP_TOTAL Achievement integration can react to Streak XP.
+- No Streak Achievement criterion exists.
+- No midnight reset job, Streak worker, Redis Streak authority, grace, freeze, vacation, repair, Reward Points, Rewards, Leaderboard, notification, or Phase 10.5+ scope exists.
+- StreakDay update/delete path does not exist, and database immutability exists consistently with the XP ledger pattern.
+- `gamification.streaks.manage` remains migration-backed.
+- `gamification.view` remains own-read permission.
+- No role-name authorization exists.
+- Cross-Workspace access fails and normal users cannot inspect another member's Streak.
+- `/workspace/gamification` remains one page with Overview, Levels, Badges, Achievements, Streaks, and History tabs only.
+- No separate Streak route exists.
+- Phase 7, Phase 8, Phase 9, Phase 10.1, Phase 10.2, and Phase 10.3 remain green.
+
+Focused verification:
+
+- Focused API gamification service tests pass 30/30.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 87 API unit tests, 122 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase104_focused_clean_20260921120303` with all 42 migrations applied, including `0042_phase10_4_daily_streaks`; `prisma migrate status` reports the schema is up to date.
+- Focused scope search found no Streak worker, Redis Streak authority, manual check-in, Project-to-Streak qualification, grace/freeze/vacation/repair, StreakDay update/delete/upsert/createMany path, dedicated Streak route, or Phase 10.5 functionality.
+
+Phase 10.4 focused checklist is pass. The next step is Phase 10.4 Final Completion Verification, and it must not start automatically.
+
+### Phase 10.4 — DAILY STREAKS — COMPLETE / PASS
+
+Final invariants:
+
+- Daily Streaks are WorkspaceMembership scoped.
+- Same User may have independent Streak histories in different Workspaces.
+- Workspace timezone is the sole Streak calendar authority.
+- Browser/device timezone, server OS timezone, and raw UTC calendar dates are not Streak authority.
+- IANA timezone conversion is used; no fixed-offset shortcut exists.
+- GamificationStreakDay is immutable historical authority.
+- `currentStreak` and `longestStreak` are derived, not stored authority.
+- One membership has at most one StreakDay per Workspace-local date.
+- Qualifying sources are Task completion and first reliable Ticket resolution only.
+- Project completion does not qualify.
+- Task followers do not qualify.
+- Active Task assignees qualify independently.
+- The same Task cannot be reused after reopen/recomplete.
+- Ticket Streak credit uses the first reliable terminal-resolution membership.
+- Ticket reopen/reresolve cannot reuse the Ticket source.
+- Later Ticket assignees cannot receive first-resolution Streak credit.
+- Unassigned first Ticket resolution does not invent credit.
+- Inactive/suspended memberships cannot receive new StreakDays.
+- Existing historical StreakDays remain readable.
+- Streak configuration is Workspace scoped with one config maximum per Workspace.
+- Missing config safely means `enabled=false` and `dailyXpReward=0`.
+- Disabled Streaks create no new days.
+- `enabledAt`/current activation boundary prevents historical replay.
+- Enabling/re-enabling never performs historical backfill or disabled-period backfill.
+- No Workspace-wide historical Task, Ticket, AuditLog, or member scan exists.
+- No Backfill/Recalculate button exists.
+- `dailyXpReward` is configurable, integer, non-negative, bounded, and may be zero.
+- Daily XP is granted once maximum for each successful new StreakDay.
+- Streak XP uses the Phase 10.1 central XP service.
+- Streak XP remains idempotent and concurrency safe.
+- Streak XP may trigger existing `XP_TOTAL_AT_LEAST` Achievements.
+- XP from Streak cannot itself create another StreakDay.
+- No Streak-specific Achievement criterion exists.
+- Historical reward snapshots remain unchanged after reward configuration edits.
+- Yesterday's consecutive chain remains current during today until today is missed.
+- Missing a full calendar day resets `currentStreak` to zero naturally.
+- `longestStreak` remains historical and derived from immutable localDate sequences.
+- Historical localDate values are not recalculated when Workspace timezone changes.
+- Future qualifying events use the current Workspace timezone.
+- No midnight reset cron, delayed per-member reset job, Streak worker, or Redis Streak authority exists.
+- PostgreSQL remains authoritative.
+- No freeze, grace day, skip token, vacation mode, repair, manual edit, manual check-in, or public Streak write endpoint exists.
+- `gamification.view` gates own Streak data.
+- `gamification.streaks.manage` independently gates configuration and is migration-backed.
+- No role-name authorization exists.
+- Normal users cannot inspect another membership's Streak.
+- Cross-Workspace config/read/event/reward access remains blocked.
+- `/workspace/gamification` remains the single Gamification route.
+- Tabs are Overview, Levels, Badges, Achievements, Streaks, and History.
+- No Reward Points, Rewards Store, Leaderboard, notification side effect, automation integration, or Phase 10.5 functionality exists.
+- Phase 7, Phase 8, Phase 9, Phase 10.1, Phase 10.2, and Phase 10.3 remain green.
+
+Final verification:
+
+- Focused API gamification service tests pass 30/30.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes 87 API unit tests, 122 web tests, and 13 worker tests.
+- `pnpm test:integration` passes 103/103 API integration tests and 13/13 worker integration tests.
+- `pnpm test:e2e` passes 21/21 Playwright tests.
+- `pnpm build` passes with the existing Next ESLint-plugin detection warning.
+- `pnpm audit --audit-level high` passes while reporting the existing moderate advisory.
+- `git diff --check` passes with Git line-ending normalization warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase104_focused_clean_20260921120303` with all 42 migrations applied, including `0042_phase10_4_daily_streaks`; `prisma migrate status` reports the schema is up to date.
+- Final migration inspection confirms 42 migration directories, `0042_phase10_4_daily_streaks` exists, Streak permission migration is included, no historical migration file was modified, and no historical StreakDay data is generated by migration.
+- Final security search found no authoritative stored user/member Streak counters, no public/manual Streak write path, no StreakDay write outside the central Gamification service, no direct XP write workaround outside central XP service paths, no Project-to-Streak qualification, no Streak-specific Achievement criterion, no historical backfill, no mass membership scan, no midnight reset cron, no Streak worker, no Redis Streak authority, no role-name Streak authorization, no Reward Points/Rewards/Leaderboard, no freeze/grace/vacation/repair/manual-edit semantics, and no notification side effect.
+
+Phase 10.4 is complete/pass. The next step is Phase 10.5 — Reward Points + Rewards, and it must not start automatically.
+
+### Phase 10.5 — REWARD POINTS + REWARDS — COMPLETE / PASS
+
+Final invariants:
+
+- XP and Reward Points remain completely separate economies.
+- Reward Points are WorkspaceMembership scoped, and the same User may have different Reward Point balances across Workspaces.
+- The immutable Reward Point ledger is the balance source of truth; no mutable User or WorkspaceMembership Reward Point balance is authoritative.
+- Reward Point balance can never become negative, and concurrent spend/redemption cannot overdraw a membership balance.
+- All Reward Point mutations go through one central Reward Point service.
+- System Reward Point changes are idempotent.
+- Reward Point ledger supports EARN, SPEND, REFUND, ADJUSTMENT, and REVERSAL semantics.
+- No public/manual Reward Point adjustment or reset exists in Phase 10.5.
+- Achievement may optionally grant Reward Points.
+- Streak may optionally grant Reward Points.
+- Achievement and Streak Reward Point rewards are idempotent and snapshot-safe.
+- Task, Project, and Ticket events do not directly award Reward Points.
+- Historical Achievements and StreakDays are not retroactively paid.
+- Reward definitions are Workspace scoped.
+- Reward cost is a positive integer.
+- Rewards support UNLIMITED and LIMITED inventory.
+- Limited inventory cannot oversell under concurrency.
+- Successful redemption atomically and retry-safely creates PENDING state, spends points, and reserves limited stock.
+- Redemption requests are idempotent.
+- Insufficient balance cannot create a redemption, spend, or stock mutation.
+- Out-of-stock Reward cannot create a redemption or spend.
+- PENDING may transition only to FULFILLED or CANCELLED.
+- FULFILLED is final in Phase 10.5.
+- Fulfillment does not mutate Reward Point balance or inventory.
+- Cancellation refunds exactly the historical pointsCostSnapshot once.
+- Cancellation restores limited inventory exactly once.
+- Duplicate cancellation cannot double-refund or double-restore stock.
+- Fulfill/cancel races resolve to one valid final state.
+- Reward archive blocks new redemptions while preserving existing pending redemptions.
+- Reward/redemption snapshots protect historical name, cost, and inventory semantics.
+- Inventory mode cannot change while pending redemptions exist.
+- No Reward Point transfers exist.
+- No Reward Point expiration or reset exists.
+- No cash conversion or payment integration exists.
+- No shipping/coupon fulfillment system exists.
+- `gamification.view` gates own Reward Point, catalog, and redemption reads.
+- `gamification.rewards.redeem` independently gates redemption.
+- `gamification.rewards.manage` independently gates Reward and redemption management.
+- No role-name authorization exists.
+- Users cannot inspect another membership's Reward Point ledger/redemptions.
+- Cross-Workspace Reward/redemption access is blocked.
+- `/workspace/gamification` remains the single Gamification route.
+- Tabs are Overview, Levels, Badges, Achievements, Streaks, Rewards, and History.
+- UI clearly distinguishes XP from Reward Points.
+- No Leaderboard implementation exists.
+- No Reward worker exists.
+- No Redis Reward Point authority exists.
+- No notification side effects exist.
+- Phase 7 through Phase 10.4 remain green.
+
+Final verification:
+
+- Focused API gamification service tests pass 38/38.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes: API 95/95, Web 122/122, Worker 13/13.
+- `pnpm test:integration` passes: API 103/103, Worker 13/13.
+- `pnpm test:e2e` passes 21/21.
+- `pnpm build` passes.
+- `pnpm audit --audit-level high` passes with one existing moderate advisory.
+- `git diff --check` passes with existing LF-to-CRLF warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase105_focused_clean_20260921125954` with all 43 migrations applied, including `0043_phase10_5_reward_points_rewards`; `prisma migrate status` reports the schema is up to date.
+
+Phase 10.5 is complete/pass. The next step is Phase 10.6 — Leaderboards, and it must not start automatically.
+
+### Phase 10.6 — LEADERBOARDS Implementation — PASS
+
+Implemented:
+
+- Added Workspace-scoped `GamificationLeaderboardConfig` with disabled-by-default master, Workspace, and Department leaderboard toggles.
+- Added WorkspaceMembership-scoped `GamificationLeaderboardPreference` with `SHOW_NAME`, `SHOW_DISPLAY_NAME`, `ANONYMOUS`, and `OPT_OUT` privacy modes.
+- Added migration-backed `gamification.leaderboards.view` and `gamification.leaderboards.manage` permissions.
+- Added server APIs for Leaderboard configuration, self privacy preference, Workspace leaderboard, My Department leaderboard, and manager Department leaderboard within the existing Workspace Gamification route.
+- Added set-based SQL leaderboard ranking over current XP from the immutable XP ledger with dense/shared ranks, deterministic tie display ordering, Top 100 result bounding, and separate current-user position.
+- Added `/workspace/gamification` Leaderboard tab with privacy controls, manager configuration controls, Workspace leaderboard, and My Department leaderboard.
+- Added focused API service coverage for dense ranking, Top 100 plus self position, opt-out exclusion, anonymous identity redaction, Department scoping, disabled defaults, and self-owned privacy updates.
+
+Final implementation invariants:
+
+- Phase 10.6 supports Workspace and Department individual Leaderboards only.
+- Agency/global/cross-Workspace Leaderboards do not exist.
+- All-Time current XP is the sole ranking authority.
+- Reward Points never affect rank.
+- Level/Streak/Badge/Achievement counts never directly affect rank.
+- Rank is server-derived and never stored as mutable authority.
+- Equal XP uses shared dense ranking.
+- Deterministic tie ordering never changes shared rank.
+- Active WorkspaceMemberships only participate.
+- OPT_OUT members are excluded before ranking.
+- ANONYMOUS members participate but identity is redacted.
+- SHOW_NAME and SHOW_DISPLAY_NAME reuse existing safe identity data.
+- No email/phone fallback is used for Leaderboard identity.
+- Leaderboard privacy is WorkspaceMembership scoped.
+- Users control only their own privacy preference.
+- Managers cannot override another user's privacy in Phase 10.6.
+- Leaderboards are disabled by default/no-config state.
+- Workspace and Department scopes may be enabled independently.
+- Workspace Leaderboard returns bounded Top 100 plus current user position.
+- Current user outside Top 100 does not require fetching all prior rows.
+- Department Leaderboard ranks individuals inside one Department.
+- Normal users view only their own Department scope.
+- Users without a Department receive explicit unavailable state.
+- Department movement changes Department ranking membership without changing XP.
+- `gamification.leaderboards.view` independently gates Leaderboard reads.
+- `gamification.leaderboards.manage` independently gates Workspace configuration.
+- No role-name authorization exists.
+- No Leaderboard snapshot/history table exists.
+- No Rank rewards/XP/Reward Points/Badge/Achievement side effects exist.
+- No Leaderboard notifications exist.
+- No Redis Leaderboard authority exists.
+- No Leaderboard worker exists.
+- `/workspace/gamification` remains the single Gamification route.
+- Tabs are Overview, Levels, Badges, Achievements, Streaks, Rewards, Leaderboard, and History.
+- No Daily/Weekly/Monthly period selector exists.
+- No separate Leaderboard route exists.
+- Phase 7 through Phase 10.5 remain green.
+
+Implementation verification:
+
+- Focused API gamification service tests pass 42/42.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes: API 99/99, Web 122/122, Worker 13/13.
+- `pnpm test:integration` passes: API 103/103, Worker 13/13.
+- `pnpm test:e2e` passes 21/21.
+- `pnpm build` passes.
+- `pnpm audit --audit-level high` passes with one existing moderate advisory.
+- `git diff --check` passes with existing LF-to-CRLF warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase106_clean_20260921203903` with all 44 migrations applied, including `0044_phase10_6_leaderboards`; `prisma migrate status` reports the schema is up to date.
+
+Phase 10.6 implementation is pass. The next step is Phase 10.6 Focused Refinement, and it must not start automatically.
+
+### Phase 10.6 — LEADERBOARDS Focused Checklist — PASS
+
+Focused refinements:
+
+- Hardened Workspace and Department leaderboard Top 100 selection so dense/shared ranks remain correct while entries are capped at 100 even when many members tie at the boundary.
+- Kept deterministic display ordering for ties by rank and membership id without changing the shared dense rank.
+- Preserved separate current-user position lookup so a member outside the Top 100 can see their own rank without fetching all preceding rows.
+- Reconfirmed zero-XP active members participate, inactive memberships do not participate, and OPT_OUT members are excluded before ranking.
+- Reconfirmed privacy defaults and anonymous entries do not leak raw user id, membership id, email, phone, or other contact PII.
+- Added service-level `gamification.leaderboards.view` and `gamification.leaderboards.manage` permission checks as defense in depth; controller RBAC remains independently enforced.
+- Reconfirmed Workspace configuration remains disabled by default, Workspace/Department scopes are independently toggled, and users can mutate only their own leaderboard privacy preference.
+- Reconfirmed Department leaderboards are tenant-scoped, same-Department scoped for normal users, manager-scoped only through the configured Department endpoint, and Workspace bounded.
+- Reconfirmed All-Time current XP from the immutable XP ledger is the only ranking source; Reward Points, Levels, Streaks, Badges, and Achievements do not affect rank.
+- Reconfirmed no leaderboard snapshot/history table, Redis authority, worker, notification, rank reward, period selector, global leaderboard, agency leaderboard, team leaderboard, project/task/ticket leaderboard, or Phase 10.7 scope exists.
+
+Focused verification:
+
+- Focused API gamification service tests pass 49/49.
+- Focused web gamification tests pass inside the web suite; full web unit suite passes 123/123.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes: API 106/106, Web 123/123, Worker 13/13.
+- `pnpm test:integration` passes: API 103/103, Worker 13/13.
+- `pnpm test:e2e` passes 21/21.
+- `pnpm build` passes.
+- `pnpm audit --audit-level high` passes with one existing moderate advisory.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase106_focused_clean_20260921213440` with all 44 migrations applied, including `0044_phase10_6_leaderboards`; `prisma migrate status` reports the schema is up to date.
+- Security search found no `rank <=` boundary query, no row-number ranking, no leaderboard rank cache, no leaderboard snapshot/history table, no leaderboard Redis authority, no leaderboard worker, no leaderboard notification side effect, no role-name leaderboard authorization, and no Reward Point ranking path.
+- No tracked historical migration file was modified.
+
+Phase 10.6 focused checklist is pass. The next step is Phase 10.6 Final Completion Verification, and it must not start automatically.
+
+### Phase 10.6 — LEADERBOARDS — COMPLETE / PASS
+
+Final invariants:
+
+- Phase 10.6 supports Workspace and Department individual Leaderboards only.
+- No Agency, global, or cross-Workspace Leaderboard exists.
+- All-Time current XP is the sole ranking authority.
+- XP comes from the Phase 10.1 immutable XP ledger.
+- Reward Points never affect rank.
+- Level, Streak, Badge, Achievement, and Pressure Score metrics never directly determine rank.
+- Rank is server-derived and never stored as mutable authority.
+- DENSE_RANK shared-rank semantics are authoritative.
+- Deterministic tie ordering never changes shared rank.
+- Rank is computed across the eligible population before the Top-100 limit.
+- Leaderboard result is capped at 100 even across a tie boundary.
+- Self position is computed independently and works outside Top 100.
+- Self outside Top 100 may share rank with a returned boundary member.
+- Active WorkspaceMemberships only participate.
+- Zero-XP active members remain eligible and share dense rank when tied.
+- Inactive or suspended members are excluded before ranking.
+- OPT_OUT is removed before rank calculation and exposes no hidden rank.
+- ANONYMOUS remains in the ranking population with identity fully redacted.
+- Anonymous response exposes no raw identity, contact, member, user, or avatar fields.
+- No preference row resolves to the safe ANONYMOUS default.
+- SHOW_NAME and SHOW_DISPLAY_NAME never fall back to email or phone.
+- Privacy preference is WorkspaceMembership scoped.
+- Users control only their own privacy preference.
+- Managers cannot override another user's privacy in Phase 10.6.
+- No-config Leaderboard state is disabled.
+- Workspace and Department scopes are independently configurable.
+- `gamification.leaderboards.view` independently gates Leaderboard reads.
+- `gamification.leaderboards.manage` independently gates configuration management and manager Department queries.
+- No role-name authorization exists.
+- Normal Department scope is resolved server-side from the authenticated membership.
+- Users without a Department receive explicit unavailable state.
+- Manager Department queries remain same-Workspace only.
+- Department movement changes participation without modifying XP.
+- Set-based XP aggregation remains in place.
+- Ranking SQL remains parameterized and Workspace fenced.
+- Level display creates no per-row Level query fan-out.
+- No leaderboard rank rewards exist.
+- No rank notifications exist.
+- No period Leaderboards exist.
+- No Leaderboard snapshots/history exists.
+- No Redis ranking authority exists.
+- No Leaderboard worker exists.
+- `/workspace/gamification` remains the single Gamification route.
+- Tabs are Overview, Levels, Badges, Achievements, Streaks, Rewards, Leaderboard, and History.
+- Phase 7 through Phase 10.5 remain green.
+
+Final verification:
+
+- Focused API gamification service tests pass 49/49.
+- `pnpm prisma:generate` passes.
+- `pnpm prisma:validate` passes.
+- `pnpm format` passes.
+- `pnpm lint` passes.
+- `pnpm typecheck` passes.
+- `pnpm test` passes: API 106/106, Web 123/123, Worker 13/13.
+- `pnpm test:integration` passes: API 103/103, Worker 13/13.
+- `pnpm test:e2e` passes 21/21.
+- `pnpm build` passes.
+- `pnpm audit --audit-level high` passes with one existing moderate advisory.
+- `git diff --check` passes with existing LF-to-CRLF warnings only.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase106_final_clean_20260921222844` with all 44 migrations applied, including `0044_phase10_6_leaderboards`; `prisma migrate status` reports the schema is up to date.
+- Final security search found no mutable rank authority, no row-number displayed rank, no Reward Point/Level/Streak/Badge/Achievement/Pressure Score ranking authority, no Agency/global/period Leaderboard implementation, no rank reward, no rank notification, no Leaderboard worker, no Redis Leaderboard authority, no role-name Leaderboard authorization, no manager privacy override, no leaderboard membershipId/userId/email/phone/avatar exposure, and no client-side rank authority.
+- No tracked historical migration file was modified.
+
+Phase 10.6 is complete/pass. The next step is Phase 10.7 — Admin Adjustments + Reset Security, and it must not start automatically.
+
 ## Architecture Invariants
 
 - PostgreSQL is source of truth.
@@ -2962,6 +3721,12 @@ Do not infer or invent model fields from this list.
 | Phase 9.10    | PASS   | Complete/pass; not tagged        |
 | Phase 9       | PASS   | Complete/pass; not tagged        |
 | Phase 10.1    | PASS   | Complete/pass; not tagged        |
+| Phase 10.2    | PASS   | Complete/pass; not tagged        |
+| Phase 10.3    | PASS   | Complete/pass; not tagged        |
+| Phase 10.4    | PASS   | Complete/pass; not tagged        |
+| Phase 10.5    | PASS   | Complete/pass; not tagged        |
+| Phase 10.6    | PASS   | Complete/pass; not tagged        |
+| Phase 10.7    | PASS   | Complete/pass; not tagged        |
 
 ## Current Warnings
 
@@ -3032,5 +3797,131 @@ Confirmed current warnings:
 - Phase 9.10 Final Ticket Security + Performance + Integration Audit is complete/pass.
 - Phase 9 Ticket / Service Desk System is complete/pass; the next step is Phase 10 Gamification, XP, Rewards & Leaderboards, and it must not start automatically.
 - Phase 10.1 Gamification Core + XP Ledger is complete/pass; the next step is Phase 10.2 Levels + Progression, and it must not start automatically.
+- Phase 10.2 Levels + Progression implementation is pass; the next step is Phase 10.2 Focused Refinement, and it must not start automatically.
+- Phase 10.2 Levels + Progression focused checklist is pass; the next step is Phase 10.2 Final Completion Verification, and it must not start automatically.
+- Phase 10.2 Levels + Progression is complete/pass; the next step is Phase 10.3 Badges + Achievements, and it must not start automatically.
+- Phase 10.3 Badges + Achievements implementation is pass; the next step is Phase 10.3 Focused Refinement, and it must not start automatically.
+- Phase 10.3 Badges + Achievements focused checklist is pass; the next step is Phase 10.3 Final Completion Verification, and it must not start automatically.
+- Phase 10.3 Badges + Achievements is complete/pass; the next step is Phase 10.4 Daily Streaks, and it must not start automatically.
+- Phase 10.4 Daily Streaks implementation is pass; the next step is Phase 10.4 Focused Refinement, and it must not start automatically.
+- Phase 10.4 Daily Streaks focused checklist is pass; the next step is Phase 10.4 Final Completion Verification, and it must not start automatically.
+- Phase 10.4 Daily Streaks is complete/pass; the next step is Phase 10.5 Reward Points + Rewards, and it must not start automatically.
+- Phase 10.5 Reward Points + Rewards implementation is pass; the next step is Phase 10.5 Focused Refinement, and it must not start automatically.
+- Phase 10.5 adds a WorkspaceMembership-scoped immutable Reward Point ledger, Achievement/Streak reward point hooks, Workspace-scoped reward definitions, pending/fulfilled/cancelled redemptions, spend/refund inventory semantics, independent `gamification.rewards.redeem` and `gamification.rewards.manage` permissions, and a single-route `/workspace/gamification` Rewards tab.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase105_clean_20260921125244` with all 43 migrations applied, including `0043_phase10_5_reward_points_rewards`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.5 verification passed: `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.5 Reward Points + Rewards focused checklist is pass; the next step is Phase 10.5 Final Completion Verification, and it must not start automatically.
+- Focused coverage confirms Reward Points stay separate from XP, balances cannot go negative, idempotency prevents duplicate earnings/redemptions, redemption spend/refund/inventory changes are atomic, reward archive blocks new redemption without rewriting pending snapshots, fulfillment does not mutate balance/stock, double cancel cannot double refund, and Task/Project/Ticket events do not directly award Reward Points.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase105_focused_clean_20260921125954` with all 43 migrations applied, including `0043_phase10_5_reward_points_rewards`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.5 focused verification passed: focused API gamification tests 38/38, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.5 Reward Points + Rewards is complete/pass; the next step is Phase 10.6 Leaderboards, and it must not start automatically.
+- Phase 10.6 Leaderboards implementation is pass; the next step is Phase 10.6 Focused Refinement, and it must not start automatically.
+- Phase 10.6 adds disabled-by-default Workspace and Department individual Leaderboards ranked only by current XP, dense/shared ranks, Top 100 plus self position, WorkspaceMembership-scoped privacy preferences, independent leaderboard view/manage permissions, and the existing single-route `/workspace/gamification` Leaderboard tab.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase106_clean_20260921203903` with all 44 migrations applied, including `0044_phase10_6_leaderboards`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.6 implementation verification passed: focused API gamification tests 42/42, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.6 Leaderboards focused checklist is pass; the next step is Phase 10.6 Final Completion Verification, and it must not start automatically.
+- Focused coverage confirms dense/shared ranks remain gapless, deterministic tie display order does not change rank, Top 100 is capped even at a tied boundary, self position is returned separately when outside the Top 100, zero-XP active members participate, inactive and OPT_OUT memberships are excluded before rank, anonymous entries do not leak raw identity, Reward Points do not affect rank, and leaderboard reads/config updates enforce independent permissions without role-name shortcuts.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase106_focused_clean_20260921213440` with all 44 migrations applied, including `0044_phase10_6_leaderboards`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.6 focused verification passed: focused API gamification tests 49/49, focused web gamification coverage inside the 123/123 web unit suite, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, and `pnpm audit --audit-level high`.
+- Phase 10.6 Leaderboards is complete/pass; the next step is Phase 10.7 Admin Adjustments + Reset Security, and it must not start automatically.
+- Final invariants confirm Workspace and Department individual Leaderboards only, All-Time current XP as sole ranking authority, DENSE_RANK shared-rank semantics, Top-100 cap after full eligible ranking, independent self position, active/non-OPT_OUT participation only, anonymous identity redaction, safe anonymous default privacy, user-owned privacy mutation only, independent leaderboard view/manage permissions, same-Workspace Department scoping, set-based parameterized ranking SQL, no rank rewards, no rank notifications, no period Leaderboards, no snapshots/history, no Redis authority, no Leaderboard worker, and the single `/workspace/gamification` route.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase106_final_clean_20260921222844` with all 44 migrations applied, including `0044_phase10_6_leaderboards`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.6 final verification passed: focused API gamification tests 49/49, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.7 Admin Adjustments + Reset Security implementation is pass; the next step is Phase 10.7 Focused Refinement, and it must not start automatically.
+- Phase 10.7 adds append-only admin XP and Reward Point adjustments, compensating point-in-time resets to zero, reset-specific step-up grants bound to user/session/Workspace/target/economy/purpose, independent `gamification.adjustments.manage` and `gamification.reset` permissions, safe AuditLog projections, and admin-only controls inside the existing single `/workspace/gamification` route.
+- Phase 10.7 invariants confirm XP and Reward Points remain separate WorkspaceMembership-scoped ledgers, adjustment/reset entries preserve history, balances cannot go negative, resets create no zero-amount ledger entry when already zero, resets are idempotent and one-time step-up protected, target memberships must be active in the same Workspace, Levels and Leaderboards stay derived from ledgers, Reward redemptions/history remain intact, and no notification, worker, Redis authority, transfer, expiration, cash conversion, or Phase 10.8 scope was introduced.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase107_clean_20260921230409` with all 45 migrations applied, including `0045_phase10_7_admin_adjustments_reset_security`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.7 implementation verification passed: focused API auth/gamification tests 56/56, focused web gamification suite 125/125, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.7 OTP/2FA blocker fix is pass; the next step is Phase 10.7 Focused Refinement / Final Completion Verification, and Phase 10.8 must not start automatically.
+- Phase 10.7 OTP/2FA blocker fix adds production email OTP step-up for Gamification admin resets, with password plus OTP required before a final `SecurityStepUpGrant` can be created.
+- Email delivery is behind a single backend mail abstraction with explicit `EMAIL_PROVIDER=resend|smtp` selection, Resend API-key validation, SMTP host/auth validation, and no automatic provider failover or frontend-exposed provider secrets.
+- OTP security invariants confirm server-generated six-digit codes use Node crypto randomness, only HMAC digests are persisted with `OTP_PEPPER`, challenges expire, verification attempts and sends are bounded/rate-limited, stale challenges are invalidated on resend, and codes/proofs are not stored in localStorage/sessionStorage.
+- Step-up invariants confirm final grants remain user-bound, refresh-session-bound, Workspace-bound, targetMembership-bound, economy-bound, purpose-bound, five-minute expiring, and one-time reset-consumed.
+- Reset integration confirms admin balance reset still consumes only the final `SecurityStepUpGrant`; raw OTP values never enter Gamification reset APIs, AuditLog metadata, query keys, URLs, or persisted frontend state.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase107_otp_clean_20260921235653` with all 46 migrations applied, including `0045_phase10_7_admin_adjustments_reset_security` and `0046_phase10_7_email_otp_step_up`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.7 OTP/2FA blocker verification passed: focused API auth/mail tests 8/8, focused web gamification suite 125/125, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.7 Admin Adjustments + Reset Security focused checklist is pass; the next step is Phase 10.7 Final Completion Verification, and it must not start automatically.
+- Focused refinements confirm manual XP and Reward Point adjustments use existing central ledger services, old ledger entries remain immutable, adjustment/reset business operations are idempotent, idempotency conflicts are rejected, and exact idempotent retries do not duplicate ledger or AuditLog effects.
+- Focused reset refinements confirm reset remains a point-in-time compensating ledger operation, balance floors remain non-negative under membership locks, reset preserves Gamification history, Achievements, Badges, StreakDays, Reward definitions, Reward redemptions, Reward Point history, Level definitions, Leaderboard privacy/config, and future XP/Reward Point earnings remain possible after reset.
+- Focused idempotency refinements confirm exact reset retries can return the committed result without a second usable grant, while changed target/economy/reason conflicts are rejected as `ADMIN_IDEMPOTENCY_CONFLICT`.
+- Focused OTP refinements confirm protected reset requires exact `RESET` confirmation, password re-verification plus Email OTP, authenticated-actor email delivery only, cryptographic six-digit OTP generation, no plaintext OTP persistence, keyed HMAC verification with `OTP_PEPPER`, backend expiry at five minutes or less, bounded attempts, server-enforced resend cooldown, send/verify rate limits, and user/session/Workspace/target/economy/purpose challenge binding.
+- Focused grant refinements confirm successful OTP verification is the only path to the final `SecurityStepUpGrant`, OTP challenges and final grants are one-time/replay protected, revoked/logout sessions cannot complete reset, and step-up grant proof is absent from OTP AuditLog metadata.
+- Focused provider refinements confirm Resend and SMTP remain behind one mail abstraction, `EMAIL_PROVIDER` selects exactly one provider with no automatic fallback, provider failures leave challenges unusable, SMTP does not disable TLS verification, and provider internals/secrets are not exposed to browser responses.
+- Focused frontend refinements confirm Admin Controls remain permission-gated, reset requires password and OTP state before submit, Workspace/target/economy changes clear reset security state, successful reset clears transient OTP/proof state, and `/verify-otp` is connected to the real backend verification endpoint without storing OTP/proof in localStorage/sessionStorage.
+- Focused security search confirms no role-name authorization, no bulk adjustment/reset, no full Gamification reset, no TOTP/SMS/magic-link scope, no notification/automation side effects, no new Redis authority, and no worker was introduced.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase107_focused_clean_20260922013111` with all 46 migrations applied, including `0045_phase10_7_admin_adjustments_reset_security` and `0046_phase10_7_email_otp_step_up`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.7 focused verification passed: focused API auth/gamification/mail tests 67/67, API unit 123/123, Web unit 125/125, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.7 Admin Adjustments + Reset Security is complete/pass; the next step is Phase 10.8 Gamification UI Integration, and it must not start automatically.
+- Final Phase 10.7 invariants confirm manual XP and Reward Point adjustments remain WorkspaceMembership scoped, all manual ledger changes use existing central ledger services, historical ledger rows remain immutable, adjustment/reset operations remain idempotent, conflicting idempotency keys are rejected, duplicate retries do not duplicate ledger or AuditLog effects, and balance floors remain concurrency safe.
+- Final reset invariants confirm reset remains a point-in-time compensating ledger operation, never deletes Gamification history, never revokes earned Achievements/Badges, never deletes StreakDays, never mutates Reward Redemptions, and future legitimate earnings/refunds remain possible after reset.
+- Final derived-state invariants confirm XP changes naturally affect Level/Leaderboard, positive manual XP may naturally trigger existing `XP_TOTAL_AT_LEAST` Achievements, and no direct Level/rank/Achievement award bypass was introduced.
+- Final permission and tenancy invariants confirm `gamification.adjustments.manage` and `gamification.reset` remain separate, targets must be active same-Workspace memberships, and no role-name authorization exists.
+- Final protected-reset invariants confirm reset requires reason, exact `RESET` confirmation, password re-verification plus Email OTP, password-only reset is impossible, Email OTP goes to the authenticated actor only, and successful OTP verification creates the final one-time `SecurityStepUpGrant`.
+- Final mail/OTP invariants confirm mail delivery is abstracted behind Resend/SMTP providers, `EMAIL_PROVIDER` selects one provider with no automatic fallback, OTP is cryptographically generated, plaintext OTP is never persisted, keyed HMAC protects OTP storage, OTP expires within five minutes, OTP attempts/resends are bounded, OTP send/verify are rate-limited, and OTP challenges are actor/session/Workspace/target/economy/purpose bound.
+- Final secret-safety invariants confirm OTP/provider/session secrets are absent from logs, AuditLog, and browser storage; `/verify-otp` is connected to the real backend flow; no TOTP/SMS/magic-link was added.
+- Final scope invariants confirm no bulk adjustment/reset, no full Gamification reset, Admin Controls remain within `/workspace/gamification`, no notification/automation side effects, and no reset worker or Redis balance authority exists.
+- Final Phase 10.7 migration status reconfirmed on isolated scratch database `zea_play_phase107_focused_clean_20260922013111`: 46 migrations found and database schema up to date with no pending migrations.
 - E2E auth uses real protected frontend routing with mocked API responses; the previous dev-only frontend session bypass was removed.
 - Future phases should extend from the existing tenant, auth, dashboard shell, theme, i18n, queue, and storage boundaries instead of replacing them.
+- Phase 10.8 Point Management System implementation is pass; the next step is Phase 10.8 Focused Refinement, and it must not start automatically.
+- Phase 10.8 adds Workspace-default and Department-override point rules for Task, Project, and Ticket completion, plus role-based creation point rules, while leaving XP wiring disabled until a later phase.
+- Point rule invariants confirm Department overrides inherit from Workspace defaults only when no override exists, disabled overrides block inherited awards, legal category sets are work-type scoped, and all point math is handled by a pure backend calculator.
+- Base XP, early bonus, and late penalty invariants confirm bounded integer inputs, explicit early threshold semantics, deadline-based penalties capped below the base award, and no negative calculated award.
+- Creation XP invariants confirm Project `xpCategory` is distinct from priority, Task/Ticket categories reuse existing category authority, role rules support Workspace custom roles, no multiple-role award heuristic is implemented, and no XP ledger write occurs in Phase 10.8.
+- Permission and tenancy invariants confirm independent `gamification.points.view`, `gamification.points.manage_workspace`, and `gamification.points.manage_department` permissions, no role-name authorization, active same-Workspace membership checks, and Department managers scoped to their own Department overrides.
+- Frontend invariants confirm Point Management remains inside the single `/workspace/gamification` route, is permission gated, uses batched point-rule reads, supports Workspace/Department scope management, includes Tamil labels, and introduces no separate route or Phase 10.9 functionality.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase108_clean_202609220248` with all 47 migrations applied, including `0047_phase10_8_point_management_system`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.8 implementation verification passed: focused API point management/calculator tests 64/64, focused web gamification suite 126/126, API unit 130/130, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.8 Point Management System focused checklist is pass; the next step is Phase 10.8 Final Completion Verification, and Phase 10.9 must not start automatically.
+- Focused verification confirms Workspace default Point Rules, Department overrides, Department-over-Workspace inheritance, disabled override blocking, override removal restoring inheritance, Task/Ticket LOW/MEDIUM/HIGH/URGENT categories, Project HIGH/MEDIUM/LONG_TERM XP categories separate from priority, no guessed historical Project XP category, and Ticket `URGENT` remaining the backend enum while displaying as Emergency in Point Management.
+- Focused calculator verification confirms configurable Base XP, fixed Early Bonus XP, early threshold, late penalty percent, penalty interval, max penalty cap, max penalty not exceeding Base XP, integer XP output, correct no-deadline behavior, and shared pure calculator usage.
+- Focused creation-rule verification confirms Creation XP is separate, varies by role, supports dynamic custom roles, supports Department overrides over Workspace creation rules, rejects cross-Workspace Department/Role rules, and introduces no unsafe multiple-role heuristic.
+- Focused permission and operations verification confirms migration-backed Workspace/Department management permissions, Department managers are limited to their own Department, no role-name authorization, uniqueness/concurrency protection, configuration AuditLog entries, and no Point Rule worker or Redis Point authority.
+- Focused no-award verification confirms no Task, Project, Ticket, Creation, bonus, penalty, or reopen-reversal XP ledger entries are awarded yet; no global normalization, Agency/Super Admin global leaderboard, Developer Dashboard, or Phase 10.9+ scope was introduced.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase108_focused_clean_202609220300` with all 47 migrations applied, including `0047_phase10_8_point_management_system`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.8 focused verification passed: focused API point management/calculator tests 64/64, focused web gamification suite 126/126, API unit 130/130, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.8 Point Management System is complete/pass; the next step is Phase 10.9 XP Engine + Task / Project / Ticket Integration, and it must not start automatically.
+- Final Point Management invariants confirm configuration is Workspace/Subaccount scoped, Workspace defaults are authoritative fallback rules, Department overrides are explicit and dynamic, explicit disabled Department overrides win over Workspace defaults, and removing an override restores Workspace inheritance.
+- Final work classification invariants confirm Task and Ticket rules reuse LOW/MEDIUM/HIGH/URGENT priority, Ticket `URGENT` is presented as Emergency only in Point Management, Project XP Category is separate from operational Project priority, Project XP Categories are HIGH/MEDIUM/LONG_TERM, and historical Projects are not guessed or backfilled into XP categories.
+- Final completion-rule invariants confirm rules contain Base XP, fixed Early Bonus XP, Early Threshold, Late Penalty %, Penalty Interval, and Max Penalty XP; late penalties are integer-safe percentage-of-Base-XP per configured interval, capped, cannot exceed Base XP, and no-deadline completion receives no timing bonus or penalty.
+- Final calculator and preview invariants confirm the central pure Point calculator is authoritative for non-mutating preview and future Phase 10.9 use, returning Base XP, Bonus XP, Penalty XP, Estimated XP, timing state, and rule source without writing XP.
+- Final creation-rule invariants confirm Creation XP is configured independently, is role-based, supports custom roles dynamically, supports Department overrides over Workspace Creation XP, and implements no unsafe multiple-role award-resolution heuristic.
+- Final permission and tenant invariants confirm `gamification.points.view` gates Point Management reads, `gamification.points.manage_workspace` controls Workspace/all-Department configuration, `gamification.points.manage_department` controls only the actor's own Department, no runtime role-name authorization exists, and cross-Workspace Department/Role rules are blocked.
+- Final operations invariants confirm configuration mutations are audited, no Point Management configuration or preview action writes XP, no Task/Project/Ticket/Creation XP award exists yet, no Early Bonus/Late Penalty ledger integration exists yet, no reopen reversal exists yet, no global normalization exists, no Agency/Super Admin global leaderboard work exists, and no Developer Dashboard Gamification work exists.
+- Final frontend invariants confirm `/workspace/gamification` remains the single Workspace Gamification route, Point Management is integrated as a permission-aware Gamification tab, Workspace/Department rule reads are bounded and batched, and no Point Rule worker or Redis authority exists.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase108_final_clean_202609220330` with all 47 migrations applied, including `0047_phase10_8_point_management_system`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.8 final verification passed: focused API point management/calculator tests 64/64, focused web gamification suite 126/126, API unit 130/130, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, and `pnpm audit --audit-level high`.
+- Phase 10.9 XP Engine + Task / Project / Ticket Integration implementation is pass; the next step is Phase 10.9 Focused Refinement, and Phase 10.10 must not start automatically.
+- Phase 10.9 adds a central backend Work XP Engine that resolves Phase 10.8 Point Rules at event time, records immutable `GamificationWorkXpEvent` history, links deterministic XP ledger components to each work event, and wires Task/Project/Ticket creation, completion, soft-delete creation reversal, and awarded-cycle reopen reversal through the existing central Gamification XP service.
+- Creation XP invariants confirm Task, Project, and Ticket creation awards configured Creation XP to the creator only, uses dynamic custom-role creation rules, is idempotent, records explicit skipped events for missing/disabled rules or inactive/missing creators, reverses creation awards exactly once on soft delete/archive/delete, and restore cannot farm creation XP.
+- Completion XP invariants confirm Task completion awards active assignees only, Project completion awards the owner only, Ticket completion awards the reliable resolver/current-cycle assignee only, followers/project members/non-recipients receive no completion XP, work Department controls rule resolution, Workspace defaults apply only without Department override, Project `xpCategory` drives Project XP, and current rules are snapshotted at event time.
+- Component and cycle invariants confirm Base XP, Early Bonus, and Late Penalty are separate XP ledger entries linked to one durable Work XP Event, the Phase 10.8 calculator is reused, no-deadline completion receives Base only, component commits are transactionally atomic, reopen is a compensating reversal rather than a penalty, and recompletion creates a new cycle using current rule and target/deadline.
+- Reopen and reset-safety invariants confirm reopen reverses the previous awarded completion cycle exactly, reverses original recipients rather than current recipients, never reverses Creation XP, requires a new future target/deadline when an XP-awarded cycle exists, double reversal cannot occur, partial reversal is forbidden, XP floor protection remains active, and post-reset reopen records a neutralized skipped event instead of deducting unrelated later XP.
+- Ticket-specific invariants confirm Ticket SLA history remains untouched, reopened Tickets use `gamificationResolutionTargetAt` as the separate Gamification target for the next resolution cycle, and the target can be supplied only on qualifying reopen rather than silently mutating future Ticket XP calculations.
+- Derived-state and isolation invariants confirm existing Achievement and Streak semantics remain intact, positive XP can naturally trigger existing `XP_TOTAL_AT_LEAST` Achievements, Levels and Leaderboards remain derived from the XP ledger, Reward Points are not awarded directly by Task/Project/Ticket events, Task/Project/Ticket services do not write XP ledger rows directly, and no public arbitrary XP Engine endpoint exists.
+- Security and scope search confirms cross-Workspace work relations are rejected by existing tenant fences, no role-name authorization was introduced, no Redis XP authority, XP worker, Reward Point work award, historical XP backfill, notification, automation, or Phase 10.10 scope was introduced.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase109_clean_20260922` with all 48 migrations applied, including `0048_phase10_9_xp_engine_work_events`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.9 implementation verification passed: focused API gamification tests 67/67, API unit 136/136, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.9 XP Engine + Task / Project / Ticket Integration focused checklist is pass; the next step is Phase 10.9 Final Completion Verification, and Phase 10.10 must not start automatically.
+- Focused XP Engine coverage confirms automatic configured Creation XP for Task/Project/Ticket, creator-only creation awards, custom-role Creation XP, idempotent creation awards, exact once-only creation reversal on delete/archive, and restore attempts do not farm additional Creation XP.
+- Focused completion coverage confirms Task completion awards qualifying active assignees only, Project completion awards Owner only, Ticket completion awards the reliable current-cycle resolver only, followers/project members do not receive completion XP, no-deadline completion receives Base only, and Base/Bonus/Penalty components link to the same durable Work XP Event.
+- Focused rule and snapshot coverage confirms Work Department controls Point Rule resolution, Workspace defaults apply only without Department override, Department overrides snapshot rule source and values, Project `xpCategory` drives Project XP, and historical Work XP Events are not rewritten by later rule edits.
+- Focused reopen/recompletion coverage confirms reopen is a compensating reversal rather than a penalty, reverses the previous cycle exactly, reverses original awarded entries, does not reverse Creation XP, duplicate reopen cannot double reverse, recompletion creates a new cycle using current rule and a new deadline/target, and post-reset reopen does not deduct unrelated later XP.
+- Focused isolation coverage confirms existing Achievement/Streak semantics remain intact, `XP_TOTAL_AT_LEAST` Achievements can react naturally, Levels and Leaderboards remain derived, no direct Reward Point award occurs, Task/Project/Ticket services do not write XP ledger rows directly, no public arbitrary XP Engine endpoint exists, no historical backfill/worker/Redis authority exists, and no Phase 10.10 scope was introduced.
+- Clean Prisma migration deploy passes on isolated scratch database `zea_play_phase109_focused_clean_20260922` with all 48 migrations applied, including `0048_phase10_9_xp_engine_work_events`; `prisma migrate status` reports the schema is up to date.
+- Phase 10.9 focused verification passed: focused API gamification tests 72/72, API unit 141/141, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, and `git diff --check`.
+- Phase 10.9 XP ENGINE + TASK / PROJECT / TICKET INTEGRATION is complete/pass; the next step is Phase 10.10 XP Control Center + Analyzer + Reconciliation, and it must not start automatically.
+- Final Phase 10.9 verification confirms real Task/Project/Ticket lifecycle events automatically drive XP through the central Work XP Engine and immutable XP ledger; no manual employee Claim XP action or public arbitrary XP write endpoint exists.
+- Final Creation XP invariants confirm eligible internal creators receive role-specific Creation XP once per entity lifetime, custom roles remain supported, restore does not re-award Creation XP, and soft-delete/void reverses Creation XP exactly once without mutating historical rows.
+- Final Completion XP invariants confirm Task completion XP goes to qualifying active assignees, Project completion XP goes to Project Owner only, Ticket completion XP goes to the reliable resolver for each XP completion cycle, and Task approval semantics remain authoritative.
+- Final rule/category invariants confirm work-item Department determines Point Rule scope, effective rules resolve at event time with Department override over Workspace default over not configured, Task priority drives Task XP category, Project `xpCategory` drives Project XP category, and Ticket priority drives Ticket XP category.
+- Final Work XP Event invariants confirm `GamificationWorkXpEvent` is durable append-only source-calculation history, records applied and skipped outcomes, snapshots historical rules/calculations, and deterministically links generated XP ledger components without becoming current balance authority.
+- Final component invariants confirm Base, Bonus, and Penalty are separate ledger components, completion components commit atomically, Phase 10.8 Point Calculator remains the timing authority, no-deadline completion receives Base only, missing/disabled rules create explicit skipped outcomes, and timing penalties cannot consume unrelated prior XP.
+- Final historical invariants confirm no mass XP backfill exists, existing open work may earn future Completion XP, historical completed work is not mass-awarded, and historical snapshots are not rewritten by later rule changes.
+- Final reopen/recompletion invariants confirm completion-cycle identity remains deterministic, reopen is not a penalty, reopen reverses exact prior completion-cycle XP for original historical recipients, reopen never reverses Creation XP, reopen requires a new future target/deadline, terminal-to-nonterminal paths enforce reopen invariants, double reversal and unsafe partial reversal are impossible, XP reset neutralization prevents unrelated later XP deductions, unresolved exact-reversal floor conflict blocks safely, and recompletion creates a new cycle using current rules/context.
+- Final Ticket invariants confirm historical SLA semantics remain preserved and reopened Tickets use a separate `gamificationResolutionTargetAt` target for future Gamification timing.
+- Final regression invariants confirm Task/Project/Ticket Achievement semantics remain unchanged, Streak semantics remain unchanged, XP_TOTAL Achievements may naturally react to resulting XP, Levels and Workspace Leaderboards remain derived, and work events do not directly award Reward Points.
+- Final isolation/scope invariants confirm source module authorization remains authoritative, cross-Workspace XP relations are fenced, no XP worker/Redis authority/new event bus/microservice was introduced, no XP Control Center/Reconciliation UI exists yet, no global score normalization exists yet, no Agency/Super Admin global leaderboard exists yet, no Developer Gamification dashboard exists yet, and Phase 7 through Phase 10.8 remain green.
+- Final security search found no direct Task/Project/Ticket `GamificationXpEntry` inserts, no client-authoritative XP amounts or completion timestamps for awards, no follower/project-member/requester completion XP path, no Project priority XP-category mixup, no Ticket EMERGENCY enum, no duplicated timing calculator, no standalone late penalty, no reopen-as-penalty path, no historical XP backfill, no manual XP claim button, no direct Reward Point work award, and no Phase 10.10+ UI surface.
+- Final migration status on local database `zea_play`: 48 migrations found, including `0048_phase10_9_xp_engine_work_events`, and `prisma migrate status` reports the database schema is up to date with no pending migrations.
+- Phase 10.9 final verification passed: focused API gamification tests 72/72, API unit 141/141, Web unit 126/126, Worker unit 13/13, API integration 103/103, Worker integration 13/13, E2E 21/21, `pnpm prisma:generate`, `pnpm prisma:validate`, `pnpm format`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm build`, `pnpm audit --audit-level high`, `git diff --check`, and migration status.

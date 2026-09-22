@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ProjectVisibility, TaskPriority } from '@prisma/client';
+import { ProjectVisibility, ProjectXpCategory, TaskPriority } from '@prisma/client';
 import {
   ArrayMaxSize,
   ArrayUnique,
@@ -34,6 +34,11 @@ export class CreateProjectDto {
   @IsOptional()
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
+
+  @ApiPropertyOptional({ enum: ProjectXpCategory, nullable: true })
+  @IsOptional()
+  @IsEnum(ProjectXpCategory)
+  xpCategory?: ProjectXpCategory | null;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

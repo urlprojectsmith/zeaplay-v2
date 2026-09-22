@@ -1,5 +1,9 @@
-import { PublicPlaceholder } from '../../../components/dashboards/public-placeholder';
+import { VerifyOtpForm } from '../../../components/auth/verify-otp-form';
 
 export default function VerifyOtpPage() {
-  return <PublicPlaceholder title="Verify OTP" />;
+  return (
+    <main className="page-shell auth-page">
+      <VerifyOtpForm />
+    </main>
+  );
 }

@@ -239,6 +239,111 @@ enum GamificationXpSourceType {
   SYSTEM
 }
 
+enum GamificationAchievementCriterionType {
+  XP_TOTAL_AT_LEAST
+  TASK_COMPLETED_COUNT
+  PROJECT_COMPLETED_COUNT
+  TICKET_RESOLVED_COUNT
+}
+
+enum GamificationStreakQualificationType {
+  TASK_COMPLETED
+  TICKET_RESOLVED
+}
+
+enum GamificationRewardPointEntryType {
+  EARN
+  SPEND
+  REFUND
+  ADJUSTMENT
+  REVERSAL
+}
+
+enum GamificationRewardPointSourceType {
+  ACHIEVEMENT
+  STREAK
+  REWARD_REDEMPTION
+  MANUAL
+  SYSTEM
+}
+
+enum GamificationRewardInventoryMode {
+  UNLIMITED
+  LIMITED
+}
+
+enum GamificationRewardRedemptionStatus {
+  PENDING
+  FULFILLED
+  CANCELLED
+}
+
+enum GamificationLeaderboardPrivacyMode {
+  SHOW_NAME
+  SHOW_DISPLAY_NAME
+  ANONYMOUS
+  OPT_OUT
+}
+
+enum SecurityStepUpPurpose {
+  GAMIFICATION_RESET
+}
+
+enum GamificationAdminEconomy {
+  XP
+  REWARD_POINTS
+}
+
+enum ProjectXpCategory {
+  HIGH
+  MEDIUM
+  LONG_TERM
+}
+
+enum GamificationPointScopeType {
+  WORKSPACE
+  DEPARTMENT
+}
+
+enum GamificationPointWorkType {
+  TASK
+  PROJECT
+  TICKET
+}
+
+enum GamificationPointCategory {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  LONG_TERM
+}
+
+enum GamificationWorkXpEventType {
+  CREATION_AWARD
+  CREATION_REVERSAL
+  COMPLETION_AWARD
+  COMPLETION_REVERSAL
+}
+
+enum GamificationWorkXpEventOutcome {
+  APPLIED
+  SKIPPED
+}
+
+enum GamificationWorkXpSkipReason {
+  NOT_CONFIGURED
+  RULE_DISABLED
+  MISSING_CATEGORY
+  INACTIVE_RECIPIENT
+  NO_ELIGIBLE_CREATOR
+  AMBIGUOUS_ROLE
+  NO_PRIOR_AWARD
+  ALREADY_REVERSED
+  ALREADY_NEUTRALIZED_BY_RESET
+  REVERSAL_CONFLICT
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -263,6 +368,8 @@ model User {
   agencyMemberships             AgencyMembership[]
   workspaceMemberships          WorkspaceMembership[]
   refreshTokens                 RefreshToken[]
+  securityStepUpGrants          SecurityStepUpGrant[]
+  securityOtpChallenges         SecurityOtpChallenge[]
   projects                      Project[]                 @relation("ProjectCreator")
   tasksCreated                  Task[]                    @relation("TaskCreator")
   tasksUpdated                  Task[]                    @relation("TaskUpdater")
@@ -341,66 +448,83 @@ model Workspace {
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  agency                            Agency                             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  createdBy                         User                               @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  memberships                       WorkspaceMembership[]
-  departments                       Department[]
-  statusDefinitions                 StatusDefinition[]
-  projects                          Project[]
-  projectMembers                    ProjectMember[]
-  projectTags                       ProjectTag[]
-  tickets                           Ticket[]
-  ticketRequesters                  TicketRequester[]
-  ticketConversationEntries         TicketConversationEntry[]
-  ticketSlaPolicies                 TicketSlaPolicy[]
-  ticketSlaRules                    TicketSlaRule[]
-  ticketSlaPauseStatuses            TicketSlaPauseStatus[]
-  ticketSlaStates                   TicketSlaState[]
-  ticketSavedViews                  TicketSavedView[]
-  ticketAttachments                 TicketAttachment[]
-  ticketConversationAttachments     TicketConversationAttachment[]
-  ticketCounter                     WorkspaceTicketCounter?
-  gamificationXpEntries             GamificationXpEntry[]              @relation("GamificationXpEntryWorkspace")
-  tasks                             Task[]
-  taskRecurrenceSeries              TaskRecurrenceSeries[]
-  taskTemplates                     TaskTemplate[]
-  taskCompletionPolicies            TaskCompletionPolicy[]
-  taskCompletionPolicyApprovers     TaskCompletionPolicyApprover[]
-  taskCompletionSubmissions         TaskCompletionSubmission[]
-  taskCompletionProofItems          TaskCompletionProofItem[]
-  taskCompletionProofAttachments    TaskCompletionProofAttachment[]
-  taskCompletionSubmissionApprovers TaskCompletionSubmissionApprover[]
-  taskCompletionApprovalDecisions   TaskCompletionApprovalDecision[]
-  taskTimeEntries                   TaskTimeEntry[]
-  taskWorkloadAllocations           TaskWorkloadAllocation[]
-  workspaceMemberCapacities         WorkspaceMemberCapacity[]
-  taskRecurrenceCompletionApprovers TaskRecurrenceCompletionApprover[]
-  taskRecurrenceAssignees           TaskRecurrenceAssignee[]
-  taskRecurrenceFollowers           TaskRecurrenceFollower[]
-  taskRecurrenceProjects            TaskRecurrenceProject[]
-  taskRecurrenceTags                TaskRecurrenceTag[]
-  taskTemplateAssignees             TaskTemplateAssignee[]
-  taskTemplateFollowers             TaskTemplateFollower[]
-  taskTemplateProjects              TaskTemplateProject[]
-  taskTemplateTags                  TaskTemplateTag[]
-  taskAssignees                     TaskAssignee[]
-  taskFollowers                     TaskFollower[]
-  taskProjects                      TaskProject[]
-  taskDependencies                  TaskDependency[]
-  taskRelatedTasks                  TaskRelatedTask[]
-  workspaceTags                     WorkspaceTag[]
-  taskTags                          TaskTag[]
-  taskComments                      TaskComment[]
-  taskCommentMentions               TaskCommentMention[]
-  taskCommentReactions              TaskCommentReaction[]
-  taskKanbanColumnSettings          TaskKanbanColumnSetting[]
-  attachments                       Attachment[]
-  taskAttachments                   TaskAttachment[]
-  projectAttachments                ProjectAttachment[]
-  assets                            Asset[]
-  processingJobs                    ProcessingJob[]
-  featureEntitlements               FeatureEntitlement[]
-  auditLogs                         AuditLog[]
+  agency                             Agency                              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy                          User                                @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships                        WorkspaceMembership[]
+  departments                        Department[]
+  statusDefinitions                  StatusDefinition[]
+  projects                           Project[]
+  projectMembers                     ProjectMember[]
+  projectTags                        ProjectTag[]
+  tickets                            Ticket[]
+  ticketRequesters                   TicketRequester[]
+  ticketConversationEntries          TicketConversationEntry[]
+  ticketSlaPolicies                  TicketSlaPolicy[]
+  ticketSlaRules                     TicketSlaRule[]
+  ticketSlaPauseStatuses             TicketSlaPauseStatus[]
+  ticketSlaStates                    TicketSlaState[]
+  ticketSavedViews                   TicketSavedView[]
+  ticketAttachments                  TicketAttachment[]
+  ticketConversationAttachments      TicketConversationAttachment[]
+  ticketCounter                      WorkspaceTicketCounter?
+  gamificationXpEntries              GamificationXpEntry[]               @relation("GamificationXpEntryWorkspace")
+  gamificationLevels                 GamificationLevel[]                 @relation("GamificationLevelWorkspace")
+  gamificationBadgeDefinitions       GamificationBadgeDefinition[]       @relation("GamificationBadgeDefinitionWorkspace")
+  gamificationAchievementDefinitions GamificationAchievementDefinition[] @relation("GamificationAchievementDefinitionWorkspace")
+  gamificationAchievementAwards      GamificationAchievementAward[]      @relation("GamificationAchievementAwardWorkspace")
+  gamificationBadgeAwards            GamificationBadgeAward[]            @relation("GamificationBadgeAwardWorkspace")
+  gamificationStreakConfig           GamificationStreakConfig?           @relation("GamificationStreakConfigWorkspace")
+  gamificationStreakDays             GamificationStreakDay[]             @relation("GamificationStreakDayWorkspace")
+  gamificationRewardPointEntries     GamificationRewardPointEntry[]      @relation("GamificationRewardPointEntryWorkspace")
+  gamificationRewardDefinitions      GamificationRewardDefinition[]      @relation("GamificationRewardDefinitionWorkspace")
+  gamificationRewardRedemptions      GamificationRewardRedemption[]      @relation("GamificationRewardRedemptionWorkspace")
+  gamificationLeaderboardConfig      GamificationLeaderboardConfig?      @relation("GamificationLeaderboardConfigWorkspace")
+  gamificationLeaderboardPreferences GamificationLeaderboardPreference[] @relation("GamificationLeaderboardPreferenceWorkspace")
+  gamificationPointRules             GamificationPointRule[]             @relation("GamificationPointRuleWorkspace")
+  gamificationCreationPointRules     GamificationCreationPointRule[]     @relation("GamificationCreationPointRuleWorkspace")
+  gamificationWorkXpEvents           GamificationWorkXpEvent[]           @relation("GamificationWorkXpEventWorkspace")
+  tasks                              Task[]
+  taskRecurrenceSeries               TaskRecurrenceSeries[]
+  taskTemplates                      TaskTemplate[]
+  taskCompletionPolicies             TaskCompletionPolicy[]
+  taskCompletionPolicyApprovers      TaskCompletionPolicyApprover[]
+  taskCompletionSubmissions          TaskCompletionSubmission[]
+  taskCompletionProofItems           TaskCompletionProofItem[]
+  taskCompletionProofAttachments     TaskCompletionProofAttachment[]
+  taskCompletionSubmissionApprovers  TaskCompletionSubmissionApprover[]
+  taskCompletionApprovalDecisions    TaskCompletionApprovalDecision[]
+  taskTimeEntries                    TaskTimeEntry[]
+  taskWorkloadAllocations            TaskWorkloadAllocation[]
+  workspaceMemberCapacities          WorkspaceMemberCapacity[]
+  taskRecurrenceCompletionApprovers  TaskRecurrenceCompletionApprover[]
+  taskRecurrenceAssignees            TaskRecurrenceAssignee[]
+  taskRecurrenceFollowers            TaskRecurrenceFollower[]
+  taskRecurrenceProjects             TaskRecurrenceProject[]
+  taskRecurrenceTags                 TaskRecurrenceTag[]
+  taskTemplateAssignees              TaskTemplateAssignee[]
+  taskTemplateFollowers              TaskTemplateFollower[]
+  taskTemplateProjects               TaskTemplateProject[]
+  taskTemplateTags                   TaskTemplateTag[]
+  taskAssignees                      TaskAssignee[]
+  taskFollowers                      TaskFollower[]
+  taskProjects                       TaskProject[]
+  taskDependencies                   TaskDependency[]
+  taskRelatedTasks                   TaskRelatedTask[]
+  workspaceTags                      WorkspaceTag[]
+  taskTags                           TaskTag[]
+  taskComments                       TaskComment[]
+  taskCommentMentions                TaskCommentMention[]
+  taskCommentReactions               TaskCommentReaction[]
+  taskKanbanColumnSettings           TaskKanbanColumnSetting[]
+  attachments                        Attachment[]
+  taskAttachments                    TaskAttachment[]
+  projectAttachments                 ProjectAttachment[]
+  assets                             Asset[]
+  processingJobs                     ProcessingJob[]
+  featureEntitlements                FeatureEntitlement[]
+  auditLogs                          AuditLog[]
+  securityStepUpGrants               SecurityStepUpGrant[]               @relation("SecurityStepUpGrantWorkspace")
+  securityOtpChallenges              SecurityOtpChallenge[]              @relation("SecurityOtpChallengeWorkspace")
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -427,6 +551,8 @@ model Department {
   tasks                Task[]
   taskRecurrenceSeries TaskRecurrenceSeries[]
   taskTemplates        TaskTemplate[]
+  gamificationPointRules         GamificationPointRule[]         @relation("GamificationPointRuleDepartment")
+  gamificationCreationPointRules GamificationCreationPointRule[] @relation("GamificationCreationPointRuleDepartment")
 
   @@unique([workspaceId, name])
   @@unique([id, workspaceId])
@@ -483,46 +609,59 @@ model WorkspaceMembership {
   createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user                           User                               @relation(fields: [userId], references: [id], onDelete: Restrict)
-  workspace                      Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  role                           Role                               @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  department                     Department?                        @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  managedDepartments             Department[]                       @relation("DepartmentManager")
-  assignedTasks                  TaskAssignee[]
-  followedTasks                  TaskFollower[]
-  taskComments                   TaskComment[]                      @relation("TaskCommentAuthor")
-  ticketConversationEntries      TicketConversationEntry[]          @relation("TicketConversationEntryAuthor")
-  commentMentions                TaskCommentMention[]
-  commentReactions               TaskCommentReaction[]
-  recurrenceAssignees            TaskRecurrenceAssignee[]
-  recurrenceFollowers            TaskRecurrenceFollower[]
-  templateAssignees              TaskTemplateAssignee[]
-  templateFollowers              TaskTemplateFollower[]
-  completionPolicyApprovers      TaskCompletionPolicyApprover[]
-  completionSubmissionsSubmitted TaskCompletionSubmission[]         @relation("TaskCompletionSubmittedBy")
-  completionSubmissionApprovals  TaskCompletionSubmissionApprover[] @relation("TaskCompletionSubmissionApproverMembership")
-  completionApprovalDecisions    TaskCompletionApprovalDecision[]   @relation("TaskCompletionDecisionApprover")
-  recurrenceCompletionApprovers  TaskRecurrenceCompletionApprover[]
-  taskTimeEntries                TaskTimeEntry[]                    @relation("TaskTimeEntryMembership")
-  taskTimeEntriesCreated         TaskTimeEntry[]                    @relation("TaskTimeEntryCreator")
-  taskTimeEntriesUpdated         TaskTimeEntry[]                    @relation("TaskTimeEntryUpdater")
-  taskTimeEntriesDeleted         TaskTimeEntry[]                    @relation("TaskTimeEntryDeleter")
-  taskWorkloadAllocations        TaskWorkloadAllocation[]
-  workspaceMemberCapacity        WorkspaceMemberCapacity?
-  ownedProjects                  Project[]                          @relation("ProjectOwner")
-  projectMemberships             ProjectMember[]                    @relation("ProjectMemberMembership")
-  projectMembersAdded            ProjectMember[]                    @relation("ProjectMemberAddedBy")
-  projectProgressUpdates         Project[]                          @relation("ProjectProgressUpdatedBy")
-  ticketsCreated                 Ticket[]                           @relation("TicketCreatorMembership")
-  ticketsDeleted                 Ticket[]                           @relation("TicketDeletedByMembership")
-  ticketRequesterMemberships     TicketRequester[]                  @relation("TicketRequesterMembership")
-  ticketsAssigned                Ticket[]                           @relation("TicketAssignedMembership")
-  ticketSavedViewsOwned          TicketSavedView[]                  @relation("TicketSavedViewOwner")
-  ticketSavedViewsCreated        TicketSavedView[]                  @relation("TicketSavedViewCreator")
-  ticketSavedViewsUpdated        TicketSavedView[]                  @relation("TicketSavedViewUpdater")
-  ticketEscalationsChanged       Ticket[]                           @relation("TicketEscalationChangedBy")
-  gamificationXpEntries          GamificationXpEntry[]              @relation("GamificationXpEntryTarget")
-  gamificationXpActorEntries     GamificationXpEntry[]              @relation("GamificationXpEntryActor")
+  user                              User                               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  workspace                         Workspace                          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  role                              Role                               @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  department                        Department?                        @relation("DepartmentMembers", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  managedDepartments                Department[]                       @relation("DepartmentManager")
+  assignedTasks                     TaskAssignee[]
+  followedTasks                     TaskFollower[]
+  taskComments                      TaskComment[]                      @relation("TaskCommentAuthor")
+  ticketConversationEntries         TicketConversationEntry[]          @relation("TicketConversationEntryAuthor")
+  commentMentions                   TaskCommentMention[]
+  commentReactions                  TaskCommentReaction[]
+  recurrenceAssignees               TaskRecurrenceAssignee[]
+  recurrenceFollowers               TaskRecurrenceFollower[]
+  templateAssignees                 TaskTemplateAssignee[]
+  templateFollowers                 TaskTemplateFollower[]
+  completionPolicyApprovers         TaskCompletionPolicyApprover[]
+  completionSubmissionsSubmitted    TaskCompletionSubmission[]         @relation("TaskCompletionSubmittedBy")
+  completionSubmissionApprovals     TaskCompletionSubmissionApprover[] @relation("TaskCompletionSubmissionApproverMembership")
+  completionApprovalDecisions       TaskCompletionApprovalDecision[]   @relation("TaskCompletionDecisionApprover")
+  recurrenceCompletionApprovers     TaskRecurrenceCompletionApprover[]
+  taskTimeEntries                   TaskTimeEntry[]                    @relation("TaskTimeEntryMembership")
+  taskTimeEntriesCreated            TaskTimeEntry[]                    @relation("TaskTimeEntryCreator")
+  taskTimeEntriesUpdated            TaskTimeEntry[]                    @relation("TaskTimeEntryUpdater")
+  taskTimeEntriesDeleted            TaskTimeEntry[]                    @relation("TaskTimeEntryDeleter")
+  taskWorkloadAllocations           TaskWorkloadAllocation[]
+  workspaceMemberCapacity           WorkspaceMemberCapacity?
+  ownedProjects                     Project[]                          @relation("ProjectOwner")
+  projectMemberships                ProjectMember[]                    @relation("ProjectMemberMembership")
+  projectMembersAdded               ProjectMember[]                    @relation("ProjectMemberAddedBy")
+  projectProgressUpdates            Project[]                          @relation("ProjectProgressUpdatedBy")
+  ticketsCreated                    Ticket[]                           @relation("TicketCreatorMembership")
+  ticketsDeleted                    Ticket[]                           @relation("TicketDeletedByMembership")
+  ticketRequesterMemberships        TicketRequester[]                  @relation("TicketRequesterMembership")
+  ticketsAssigned                   Ticket[]                           @relation("TicketAssignedMembership")
+  ticketSavedViewsOwned             TicketSavedView[]                  @relation("TicketSavedViewOwner")
+  ticketSavedViewsCreated           TicketSavedView[]                  @relation("TicketSavedViewCreator")
+  ticketSavedViewsUpdated           TicketSavedView[]                  @relation("TicketSavedViewUpdater")
+  ticketEscalationsChanged          Ticket[]                           @relation("TicketEscalationChangedBy")
+  gamificationXpEntries             GamificationXpEntry[]              @relation("GamificationXpEntryTarget")
+  gamificationXpActorEntries        GamificationXpEntry[]              @relation("GamificationXpEntryActor")
+  gamificationAchievementAwards     GamificationAchievementAward[]     @relation("GamificationAchievementAwardTarget")
+  gamificationBadgeAwards           GamificationBadgeAward[]           @relation("GamificationBadgeAwardTarget")
+  gamificationStreakDays            GamificationStreakDay[]            @relation("GamificationStreakDayTarget")
+  gamificationRewardPointEntries    GamificationRewardPointEntry[]     @relation("GamificationRewardPointEntryTarget")
+  gamificationRewardPointActors     GamificationRewardPointEntry[]     @relation("GamificationRewardPointEntryActor")
+  gamificationRewardRedemptions     GamificationRewardRedemption[]     @relation("GamificationRewardRedemptionTarget")
+  rewardRedemptionsFulfilled        GamificationRewardRedemption[]     @relation("GamificationRewardRedemptionFulfilledBy")
+  rewardRedemptionsCancelled        GamificationRewardRedemption[]     @relation("GamificationRewardRedemptionCancelledBy")
+  gamificationWorkXpEvents          GamificationWorkXpEvent[]          @relation("GamificationWorkXpEventRecipient")
+  gamificationTriggeredWorkXpEvents GamificationWorkXpEvent[]          @relation("GamificationWorkXpEventTrigger")
+  gamificationLeaderboardPreference GamificationLeaderboardPreference? @relation("GamificationLeaderboardPreferenceTarget")
+  securityStepUpGrants              SecurityStepUpGrant[]              @relation("SecurityStepUpGrantTarget")
+  securityOtpChallenges             SecurityOtpChallenge[]              @relation("SecurityOtpChallengeTarget")
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -545,6 +684,7 @@ model GamificationXpEntry {
   sourceEntityId    String?                  @map("source_entity_id") @db.Uuid
   idempotencyKey    String?                  @map("idempotency_key") @db.VarChar(160)
   reversalOfEntryId String?                  @map("reversal_of_entry_id") @db.Uuid
+  workXpEventId     String?                  @map("work_xp_event_id") @db.Uuid
   actorMembershipId String?                  @map("actor_membership_id") @db.Uuid
   reason            String?                  @db.VarChar(500)
   createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -554,13 +694,389 @@ model GamificationXpEntry {
   actorMembership WorkspaceMembership?  @relation("GamificationXpEntryActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   reversalOfEntry GamificationXpEntry?  @relation("GamificationXpEntryReversal", fields: [reversalOfEntryId], references: [id], onDelete: Restrict)
   reversalEntries GamificationXpEntry[] @relation("GamificationXpEntryReversal")
+  workXpEvent     GamificationWorkXpEvent? @relation("GamificationXpEntryWorkXpEvent", fields: [workXpEventId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
 
   @@unique([id, workspaceId])
   @@index([workspaceId, membershipId, createdAt, id])
   @@index([workspaceId, membershipId])
   @@index([workspaceId, sourceType, sourceEvent])
+  @@index([workspaceId, workXpEventId])
   @@index([actorMembershipId, workspaceId])
   @@map("gamification_xp_entries")
+}
+
+model GamificationWorkXpEvent {
+  id                             String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                    String                         @map("workspace_id") @db.Uuid
+  recipientMembershipId          String?                        @map("recipient_membership_id") @db.Uuid
+  triggeredByMembershipId        String?                        @map("triggered_by_membership_id") @db.Uuid
+  workType                       GamificationPointWorkType      @map("work_type")
+  sourceEntityId                 String                         @map("source_entity_id") @db.Uuid
+  sourceLabelSnapshot            String?                        @map("source_label_snapshot") @db.VarChar(160)
+  eventType                      GamificationWorkXpEventType    @map("event_type")
+  completionCycle                Int?                           @map("completion_cycle")
+  correlationKey                 String                         @map("correlation_key") @db.VarChar(220)
+  idempotencyKey                 String                         @map("idempotency_key") @db.VarChar(220)
+  departmentIdSnapshot           String?                        @map("department_id_snapshot") @db.Uuid
+  departmentNameSnapshot         String?                        @map("department_name_snapshot") @db.VarChar(160)
+  categorySnapshot               GamificationPointCategory?     @map("category_snapshot")
+  roleIdSnapshot                 String?                        @map("role_id_snapshot") @db.Uuid
+  roleNameSnapshot               String?                        @map("role_name_snapshot") @db.VarChar(160)
+  ruleIdSnapshot                 String?                        @map("rule_id_snapshot") @db.Uuid
+  ruleSourceSnapshot             String                         @default("NOT_CONFIGURED") @map("rule_source_snapshot") @db.VarChar(40)
+  outcome                        GamificationWorkXpEventOutcome
+  skipReason                     GamificationWorkXpSkipReason?  @map("skip_reason")
+  creationXpSnapshot             Int?                           @map("creation_xp_snapshot")
+  baseXpSnapshot                 Int                            @default(0) @map("base_xp_snapshot")
+  bonusXpSnapshot                Int                            @default(0) @map("bonus_xp_snapshot")
+  penaltyXpSnapshot              Int                            @default(0) @map("penalty_xp_snapshot")
+  netXpSnapshot                  Int                            @default(0) @map("net_xp_snapshot")
+  earlyThresholdMinutesSnapshot  Int?                           @map("early_threshold_minutes_snapshot")
+  latePenaltyPercentSnapshot     Int?                           @map("late_penalty_percent_snapshot")
+  penaltyIntervalMinutesSnapshot Int?                           @map("penalty_interval_minutes_snapshot")
+  maxPenaltyXpSnapshot           Int?                           @map("max_penalty_xp_snapshot")
+  dueAtSnapshot                  DateTime?                      @map("due_at_snapshot") @db.Timestamptz(6)
+  completedAtSnapshot            DateTime?                      @map("completed_at_snapshot") @db.Timestamptz(6)
+  occurredAt                     DateTime                       @map("occurred_at") @db.Timestamptz(6)
+  reversalOfEventId              String?                        @map("reversal_of_event_id") @db.Uuid
+  createdAt                      DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace             Workspace                @relation("GamificationWorkXpEventWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  recipientMembership   WorkspaceMembership?     @relation("GamificationWorkXpEventRecipient", fields: [recipientMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  triggeredByMembership WorkspaceMembership?     @relation("GamificationWorkXpEventTrigger", fields: [triggeredByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  reversalOfEvent       GamificationWorkXpEvent? @relation("GamificationWorkXpEventReversal", fields: [reversalOfEventId], references: [id], onDelete: Restrict)
+  reversalEvents        GamificationWorkXpEvent[] @relation("GamificationWorkXpEventReversal")
+  xpEntries             GamificationXpEntry[]    @relation("GamificationXpEntryWorkXpEvent")
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, workType, sourceEntityId, eventType, completionCycle])
+  @@index([workspaceId, recipientMembershipId, occurredAt, id])
+  @@index([workspaceId, triggeredByMembershipId])
+  @@index([reversalOfEventId])
+  @@map("gamification_work_xp_events")
+}
+
+model GamificationLevel {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String   @map("workspace_id") @db.Uuid
+  name           String   @db.VarChar(80)
+  normalizedName String   @map("normalized_name") @db.VarChar(80)
+  description    String?  @db.VarChar(500)
+  levelNumber    Int      @map("level_number")
+  xpThreshold    Int      @map("xp_threshold")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation("GamificationLevelWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, levelNumber])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, isActive, levelNumber])
+  @@index([workspaceId, xpThreshold])
+  @@map("gamification_levels")
+}
+
+model GamificationBadgeDefinition {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String   @map("workspace_id") @db.Uuid
+  name           String   @db.VarChar(80)
+  normalizedName String   @map("normalized_name") @db.VarChar(80)
+  description    String?  @db.VarChar(500)
+  iconKey        String?  @map("icon_key") @db.VarChar(80)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace              Workspace                           @relation("GamificationBadgeDefinitionWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  achievementDefinitions GamificationAchievementDefinition[] @relation("GamificationAchievementBadgeDefinition")
+  badgeAwards            GamificationBadgeAward[]            @relation("GamificationBadgeAwardDefinition")
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, isActive, name])
+  @@map("gamification_badge_definitions")
+}
+
+model GamificationAchievementDefinition {
+  id                 String                               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String                               @map("workspace_id") @db.Uuid
+  name               String                               @db.VarChar(80)
+  normalizedName     String                               @map("normalized_name") @db.VarChar(80)
+  description        String?                              @db.VarChar(500)
+  criterionType      GamificationAchievementCriterionType @map("criterion_type")
+  criterionValue     Int                                  @map("criterion_value")
+  badgeDefinitionId  String?                              @map("badge_definition_id") @db.Uuid
+  xpReward           Int                                  @default(0) @map("xp_reward")
+  rewardPointsReward Int                                  @default(0) @map("reward_points_reward")
+  isActive           Boolean                              @default(true) @map("is_active")
+  createdAt          DateTime                             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace         Workspace                      @relation("GamificationAchievementDefinitionWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  badgeDefinition   GamificationBadgeDefinition?   @relation("GamificationAchievementBadgeDefinition", fields: [badgeDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  achievementAwards GamificationAchievementAward[] @relation("GamificationAchievementAwardDefinition")
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, criterionType, isActive])
+  @@index([workspaceId, badgeDefinitionId])
+  @@map("gamification_achievement_definitions")
+}
+
+model GamificationAchievementAward {
+  id                         String                               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                String                               @map("workspace_id") @db.Uuid
+  membershipId               String                               @map("membership_id") @db.Uuid
+  achievementDefinitionId    String                               @map("achievement_definition_id") @db.Uuid
+  achievementNameSnapshot    String                               @map("achievement_name_snapshot") @db.VarChar(80)
+  criterionTypeSnapshot      GamificationAchievementCriterionType @map("criterion_type_snapshot")
+  criterionValueSnapshot     Int                                  @map("criterion_value_snapshot")
+  badgeDefinitionIdSnapshot  String?                              @map("badge_definition_id_snapshot") @db.Uuid
+  xpRewardSnapshot           Int                                  @default(0) @map("xp_reward_snapshot")
+  rewardPointsRewardSnapshot Int                                  @default(0) @map("reward_points_reward_snapshot")
+  sourceEventId              String?                              @map("source_event_id") @db.VarChar(160)
+  earnedAt                   DateTime                             @default(now()) @map("earned_at") @db.Timestamptz(6)
+  createdAt                  DateTime                             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace             Workspace                         @relation("GamificationAchievementAwardWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership            WorkspaceMembership               @relation("GamificationAchievementAwardTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  achievementDefinition GamificationAchievementDefinition @relation("GamificationAchievementAwardDefinition", fields: [achievementDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  badgeAwards           GamificationBadgeAward[]          @relation("GamificationBadgeAwardAchievement")
+
+  @@unique([workspaceId, membershipId, achievementDefinitionId])
+  @@index([workspaceId, membershipId, earnedAt, id])
+  @@index([workspaceId, achievementDefinitionId])
+  @@map("gamification_achievement_awards")
+}
+
+model GamificationBadgeAward {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String   @map("workspace_id") @db.Uuid
+  membershipId         String   @map("membership_id") @db.Uuid
+  badgeDefinitionId    String   @map("badge_definition_id") @db.Uuid
+  achievementAwardId   String?  @map("achievement_award_id") @db.Uuid
+  badgeNameSnapshot    String   @map("badge_name_snapshot") @db.VarChar(80)
+  badgeIconKeySnapshot String?  @map("badge_icon_key_snapshot") @db.VarChar(80)
+  earnedAt             DateTime @default(now()) @map("earned_at") @db.Timestamptz(6)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace        Workspace                     @relation("GamificationBadgeAwardWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership       WorkspaceMembership           @relation("GamificationBadgeAwardTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  badgeDefinition  GamificationBadgeDefinition   @relation("GamificationBadgeAwardDefinition", fields: [badgeDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  achievementAward GamificationAchievementAward? @relation("GamificationBadgeAwardAchievement", fields: [achievementAwardId], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, membershipId, badgeDefinitionId])
+  @@index([workspaceId, membershipId, earnedAt, id])
+  @@index([workspaceId, badgeDefinitionId])
+  @@index([achievementAwardId])
+  @@map("gamification_badge_awards")
+}
+
+model GamificationStreakConfig {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String    @unique @map("workspace_id") @db.Uuid
+  enabled           Boolean   @default(false)
+  dailyXpReward     Int       @default(0) @map("daily_xp_reward")
+  dailyRewardPoints Int       @default(0) @map("daily_reward_points")
+  enabledAt         DateTime? @map("enabled_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation("GamificationStreakConfigWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, enabled])
+  @@map("gamification_streak_configs")
+}
+
+model GamificationStreakDay {
+  id                        String                              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId               String                              @map("workspace_id") @db.Uuid
+  membershipId              String                              @map("membership_id") @db.Uuid
+  localDate                 DateTime                            @map("local_date") @db.Date
+  qualificationType         GamificationStreakQualificationType @map("qualification_type")
+  sourceEntityId            String                              @map("source_entity_id") @db.Uuid
+  qualifiedAt               DateTime                            @map("qualified_at") @db.Timestamptz(6)
+  timezoneSnapshot          String                              @map("timezone_snapshot") @db.VarChar(80)
+  dailyXpRewardSnapshot     Int                                 @default(0) @map("daily_xp_reward_snapshot")
+  dailyRewardPointsSnapshot Int                                 @default(0) @map("daily_reward_points_snapshot")
+  createdAt                 DateTime                            @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation("GamificationStreakDayWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership @relation("GamificationStreakDayTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, membershipId, localDate])
+  @@unique([workspaceId, membershipId, qualificationType, sourceEntityId])
+  @@index([workspaceId, membershipId, localDate, id])
+  @@index([workspaceId, membershipId, qualifiedAt, id])
+  @@map("gamification_streak_days")
+}
+
+model GamificationRewardPointEntry {
+  id                String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                            @map("workspace_id") @db.Uuid
+  membershipId      String                            @map("membership_id") @db.Uuid
+  amount            Int
+  entryType         GamificationRewardPointEntryType  @map("entry_type")
+  sourceType        GamificationRewardPointSourceType @map("source_type")
+  sourceEvent       String                            @map("source_event") @db.VarChar(80)
+  sourceEntityId    String?                           @map("source_entity_id") @db.Uuid
+  idempotencyKey    String?                           @map("idempotency_key") @db.VarChar(160)
+  reversalOfEntryId String?                           @map("reversal_of_entry_id") @db.Uuid
+  actorMembershipId String?                           @map("actor_membership_id") @db.Uuid
+  reason            String?                           @db.VarChar(500)
+  createdAt         DateTime                          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace       Workspace                      @relation("GamificationRewardPointEntryWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership      WorkspaceMembership            @relation("GamificationRewardPointEntryTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  actorMembership WorkspaceMembership?           @relation("GamificationRewardPointEntryActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  reversalOfEntry GamificationRewardPointEntry?  @relation("GamificationRewardPointEntryReversal", fields: [reversalOfEntryId], references: [id], onDelete: Restrict)
+  reversalEntries GamificationRewardPointEntry[] @relation("GamificationRewardPointEntryReversal")
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, membershipId, idempotencyKey], map: "gamification_reward_point_entries_idempotency_key")
+  @@index([workspaceId, membershipId, createdAt, id], map: "gamification_reward_point_entries_member_created_idx")
+  @@index([workspaceId, membershipId], map: "gamification_reward_point_entries_member_idx")
+  @@index([workspaceId, sourceType, sourceEvent], map: "gamification_reward_point_entries_source_idx")
+  @@index([actorMembershipId, workspaceId], map: "gamification_reward_point_entries_actor_idx")
+  @@map("gamification_reward_point_entries")
+}
+
+model GamificationRewardDefinition {
+  id                String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                          @map("workspace_id") @db.Uuid
+  name              String                          @db.VarChar(80)
+  normalizedName    String                          @map("normalized_name") @db.VarChar(80)
+  description       String?                         @db.VarChar(500)
+  pointsCost        Int                             @map("points_cost")
+  inventoryMode     GamificationRewardInventoryMode @map("inventory_mode")
+  availableQuantity Int?                            @map("available_quantity")
+  isActive          Boolean                         @default(true) @map("is_active")
+  createdAt         DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace   Workspace                      @relation("GamificationRewardDefinitionWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  redemptions GamificationRewardRedemption[] @relation("GamificationRewardRedemptionDefinition")
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, normalizedName])
+  @@index([workspaceId, isActive, name])
+  @@map("gamification_reward_definitions")
+}
+
+model GamificationRewardRedemption {
+  id                      String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId             String                             @map("workspace_id") @db.Uuid
+  membershipId            String                             @map("membership_id") @db.Uuid
+  rewardDefinitionId      String                             @map("reward_definition_id") @db.Uuid
+  status                  GamificationRewardRedemptionStatus @default(PENDING)
+  rewardNameSnapshot      String                             @map("reward_name_snapshot") @db.VarChar(80)
+  pointsCostSnapshot      Int                                @map("points_cost_snapshot")
+  inventoryModeSnapshot   GamificationRewardInventoryMode    @map("inventory_mode_snapshot")
+  requestedAt             DateTime                           @default(now()) @map("requested_at") @db.Timestamptz(6)
+  fulfilledAt             DateTime?                          @map("fulfilled_at") @db.Timestamptz(6)
+  cancelledAt             DateTime?                          @map("cancelled_at") @db.Timestamptz(6)
+  fulfilledByMembershipId String?                            @map("fulfilled_by_membership_id") @db.Uuid
+  cancelledByMembershipId String?                            @map("cancelled_by_membership_id") @db.Uuid
+  cancelReason            String?                            @map("cancel_reason") @db.VarChar(500)
+  idempotencyKey          String                             @map("idempotency_key") @db.VarChar(160)
+  createdAt               DateTime                           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime                           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace             Workspace                    @relation("GamificationRewardRedemptionWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership            WorkspaceMembership          @relation("GamificationRewardRedemptionTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  rewardDefinition      GamificationRewardDefinition @relation("GamificationRewardRedemptionDefinition", fields: [rewardDefinitionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  fulfilledByMembership WorkspaceMembership?         @relation("GamificationRewardRedemptionFulfilledBy", fields: [fulfilledByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  cancelledByMembership WorkspaceMembership?         @relation("GamificationRewardRedemptionCancelledBy", fields: [cancelledByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, membershipId, idempotencyKey])
+  @@index([workspaceId, membershipId, requestedAt, id])
+  @@index([workspaceId, status, requestedAt, id])
+  @@index([workspaceId, rewardDefinitionId, status])
+  @@map("gamification_reward_redemptions")
+}
+
+model GamificationLeaderboardConfig {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                  String   @unique @map("workspace_id") @db.Uuid
+  enabled                      Boolean  @default(false)
+  workspaceLeaderboardEnabled  Boolean  @default(false) @map("workspace_leaderboard_enabled")
+  departmentLeaderboardEnabled Boolean  @default(false) @map("department_leaderboard_enabled")
+  createdAt                    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation("GamificationLeaderboardConfigWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, enabled], map: "gamification_leaderboard_configs_enabled_idx")
+  @@map("gamification_leaderboard_configs")
+}
+
+model GamificationLeaderboardPreference {
+  id           String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String                             @map("workspace_id") @db.Uuid
+  membershipId String                             @map("membership_id") @db.Uuid
+  privacyMode  GamificationLeaderboardPrivacyMode @default(ANONYMOUS) @map("privacy_mode")
+  createdAt    DateTime                           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime                           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation("GamificationLeaderboardPreferenceWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership @relation("GamificationLeaderboardPreferenceTarget", fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([workspaceId, membershipId])
+  @@unique([membershipId, workspaceId], map: "gamification_leaderboard_preferences_membership_workspace_key")
+  @@index([workspaceId, privacyMode], map: "gamification_leaderboard_preferences_privacy_idx")
+  @@map("gamification_leaderboard_preferences")
+}
+
+model GamificationPointRule {
+  id                     String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId            String                     @map("workspace_id") @db.Uuid
+  departmentId           String?                    @map("department_id") @db.Uuid
+  scopeType              GamificationPointScopeType @map("scope_type")
+  workType               GamificationPointWorkType  @map("work_type")
+  category               GamificationPointCategory
+  isEnabled              Boolean                    @default(true) @map("is_enabled")
+  baseXp                 Int                        @map("base_xp")
+  earlyBonusXp           Int                        @default(0) @map("early_bonus_xp")
+  earlyThresholdMinutes  Int?                       @map("early_threshold_minutes")
+  latePenaltyPercent     Int                        @default(0) @map("late_penalty_percent")
+  penaltyIntervalMinutes Int?                       @map("penalty_interval_minutes")
+  maxPenaltyXp           Int                        @default(0) @map("max_penalty_xp")
+  createdAt              DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace   @relation("GamificationPointRuleWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  department Department? @relation("GamificationPointRuleDepartment", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+
+  @@index([workspaceId, workType, category], map: "gamification_point_rules_workspace_key_idx")
+  @@index([workspaceId, departmentId, workType, category], map: "gamification_point_rules_department_key_idx")
+  @@map("gamification_point_rules")
+}
+
+model GamificationCreationPointRule {
+  id           String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String                     @map("workspace_id") @db.Uuid
+  departmentId String?                    @map("department_id") @db.Uuid
+  scopeType    GamificationPointScopeType @map("scope_type")
+  workType     GamificationPointWorkType  @map("work_type")
+  category     GamificationPointCategory
+  roleId       String                     @map("role_id") @db.Uuid
+  isEnabled    Boolean                    @default(true) @map("is_enabled")
+  creationXp   Int                        @default(0) @map("creation_xp")
+  createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace   @relation("GamificationCreationPointRuleWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  department Department? @relation("GamificationCreationPointRuleDepartment", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  role       Role        @relation("GamificationCreationPointRuleRole", fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, workType, category, roleId], map: "gamification_creation_point_rules_workspace_key_idx")
+  @@index([workspaceId, departmentId, workType, category, roleId], map: "gamification_creation_point_rules_department_key_idx")
+  @@index([workspaceId, roleId], map: "gamification_creation_point_rules_role_idx")
+  @@map("gamification_creation_point_rules")
 }
 
 model Role {
@@ -580,6 +1096,7 @@ model Role {
   agencyMemberships    AgencyMembership[]
   workspaceMemberships WorkspaceMembership[]
   rolePermissions      RolePermission[]
+  gamificationCreationPointRules GamificationCreationPointRule[] @relation("GamificationCreationPointRuleRole")
 
   @@unique([workspaceId, nameNormalized])
   @@index([scope])
@@ -655,11 +1172,65 @@ model RefreshToken {
   replacedBy    String?   @map("replaced_by") @db.Uuid
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  securityStepUpGrants SecurityStepUpGrant[]
+  securityOtpChallenges SecurityOtpChallenge[]
 
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+model SecurityStepUpGrant {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String                   @map("user_id") @db.Uuid
+  refreshTokenId     String                   @map("refresh_token_id") @db.Uuid
+  workspaceId        String                   @map("workspace_id") @db.Uuid
+  targetMembershipId String                   @map("target_membership_id") @db.Uuid
+  purpose            SecurityStepUpPurpose
+  economy            GamificationAdminEconomy
+  expiresAt          DateTime                 @map("expires_at") @db.Timestamptz(6)
+  usedAt             DateTime?                @map("used_at") @db.Timestamptz(6)
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken     RefreshToken        @relation(fields: [refreshTokenId], references: [id], onDelete: Cascade)
+  workspace        Workspace           @relation("SecurityStepUpGrantWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  targetMembership WorkspaceMembership @relation("SecurityStepUpGrantTarget", fields: [targetMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@index([userId, refreshTokenId, expiresAt])
+  @@index([workspaceId, targetMembershipId, purpose, economy])
+  @@index([usedAt, expiresAt])
+  @@map("security_step_up_grants")
+}
+
+model SecurityOtpChallenge {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String                   @map("user_id") @db.Uuid
+  refreshTokenId     String                   @map("refresh_token_id") @db.Uuid
+  workspaceId        String                   @map("workspace_id") @db.Uuid
+  targetMembershipId String                   @map("target_membership_id") @db.Uuid
+  purpose            SecurityStepUpPurpose
+  economy            GamificationAdminEconomy
+  otpDigest          String                   @map("otp_digest")
+  attemptCount       Int                      @default(0) @map("attempt_count")
+  maxAttempts        Int                      @default(5) @map("max_attempts")
+  lastSentAt         DateTime                 @map("last_sent_at") @db.Timestamptz(6)
+  expiresAt          DateTime                 @map("expires_at") @db.Timestamptz(6)
+  consumedAt         DateTime?                @map("consumed_at") @db.Timestamptz(6)
+  invalidatedAt      DateTime?                @map("invalidated_at") @db.Timestamptz(6)
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken     RefreshToken        @relation(fields: [refreshTokenId], references: [id], onDelete: Cascade)
+  workspace        Workspace           @relation("SecurityOtpChallengeWorkspace", fields: [workspaceId], references: [id], onDelete: Restrict)
+  targetMembership WorkspaceMembership @relation("SecurityOtpChallengeTarget", fields: [targetMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@index([userId, refreshTokenId, purpose, workspaceId, targetMembershipId, economy])
+  @@index([workspaceId, targetMembershipId, purpose, economy])
+  @@index([expiresAt])
+  @@index([consumedAt, invalidatedAt, expiresAt])
+  @@map("security_otp_challenges")
 }
 
 model Project {
@@ -670,6 +1241,7 @@ model Project {
   status                              ProjectStatus     @default(DRAFT)
   statusDefinitionId                  String?           @map("status_definition_id") @db.Uuid
   priority                            TaskPriority      @default(MEDIUM)
+  xpCategory                          ProjectXpCategory? @map("xp_category")
   visibility                          ProjectVisibility @default(WORKSPACE)
   manualProgressPercent               Int?              @map("manual_progress_percent")
   manualProgressUpdatedByMembershipId String?           @map("manual_progress_updated_by_membership_id") @db.Uuid
@@ -703,6 +1275,7 @@ model Project {
   @@index([workspaceId, status])
   @@index([workspaceId, statusDefinitionId])
   @@index([workspaceId, priority])
+  @@index([workspaceId, xpCategory])
   @@index([workspaceId, visibility])
   @@index([workspaceId, ownerMembershipId])
   @@index([workspaceId, manualProgressUpdatedByMembershipId])
@@ -776,6 +1349,7 @@ model Ticket {
   escalationChangedAt             DateTime?             @map("escalation_changed_at") @db.Timestamptz(6)
   escalationChangedByMembershipId String?               @map("escalation_changed_by_membership_id") @db.Uuid
   escalationLastReason            String?               @map("escalation_last_reason") @db.VarChar(500)
+  gamificationResolutionTargetAt  DateTime?             @map("gamification_resolution_target_at") @db.Timestamptz(6)
   deletedAt                       DateTime?             @map("deleted_at") @db.Timestamptz(6)
   deletedByMembershipId           String?               @map("deleted_by_membership_id") @db.Uuid
   createdAt                       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -805,6 +1379,7 @@ model Ticket {
   @@index([workspaceId, createdAt])
   @@index([workspaceId, updatedAt])
   @@index([workspaceId, createdByMembershipId])
+  @@index([workspaceId, gamificationResolutionTargetAt])
   @@map("tickets")
 }
 

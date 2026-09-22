@@ -816,7 +816,13 @@ export class TasksController {
     @Param() params: TaskParamsDto,
     @Body() dto: UpdateTaskStatusDto,
   ) {
-    return this.tasks.updateStatus(tenant, params.taskId, dto.statusDefinitionId, dto.completion);
+    return this.tasks.updateStatus(
+      tenant,
+      params.taskId,
+      dto.statusDefinitionId,
+      dto.completion,
+      dto.dueAt,
+    );
   }
 
   @Put(':taskId/assignees')

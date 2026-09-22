@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -14,6 +15,9 @@ import {
   AssetStatus,
   AttachmentType,
   DepartmentStatus,
+  GamificationPointWorkType,
+  GamificationWorkXpEventOutcome,
+  GamificationWorkXpEventType,
   MembershipStatus,
   Prisma,
   ProcessingJobStatus,
@@ -39,6 +43,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
+import { GamificationService } from '../gamification/gamification.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
 import {
@@ -57,6 +62,20 @@ import {
 const PROJECT_ATTACHMENT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const ASSET_JOB_VERSION = 1;
 const PROJECT_REPORT_EXPORT_MAX_ROWS = 10_000;
+const missingGamificationService = {
+  evaluateProjectCompletionAchievements: () => Promise.resolve(undefined),
+  handleProjectCreationXp: () => Promise.resolve(undefined),
+  handleProjectCompletionXp: () => Promise.resolve(undefined),
+  handleWorkCreationVoid: () => Promise.resolve(undefined),
+  handleWorkReopen: () => Promise.resolve(undefined),
+} as Pick<
+  GamificationService,
+  | 'evaluateProjectCompletionAchievements'
+  | 'handleProjectCreationXp'
+  | 'handleProjectCompletionXp'
+  | 'handleWorkCreationVoid'
+  | 'handleWorkReopen'
+> as GamificationService;
 
 @Injectable()
 export class ProjectsService {
@@ -72,6 +91,7 @@ export class ProjectsService {
     private readonly audit: AuditService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue,
+    @Optional() private readonly gamification: GamificationService = missingGamificationService,
   ) {}
 
   async create(tenant: WorkspaceTenantContext, dto: CreateProjectDto) {
@@ -95,6 +115,7 @@ export class ProjectsService {
           description,
           statusDefinitionId: status.id,
           priority: dto.priority ?? TaskPriority.MEDIUM,
+          xpCategory: dto.xpCategory ?? null,
           visibility: dto.visibility ?? ProjectVisibility.WORKSPACE,
           plannedStartAt,
           dueAt,
@@ -132,9 +153,15 @@ export class ProjectsService {
         statusDefinitionId: status.id,
         ownerMembershipId: owner.id,
         visibility: project.visibility,
+        xpCategory: project.xpCategory,
         memberCount: memberIds.length,
       },
     });
+    await this.gamification.handleProjectCreationXp(
+      tenant.workspaceId,
+      project.id,
+      tenant.workspaceMembershipId ?? null,
+    );
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -175,9 +202,11 @@ export class ProjectsService {
     const existing = await this.readAccessibleProject(tenant, id, {
       id: true,
       statusDefinitionId: true,
+      statusDefinition: { select: { isTerminal: true } },
       name: true,
       description: true,
       priority: true,
+      xpCategory: true,
       visibility: true,
       plannedStartAt: true,
       dueAt: true,
@@ -192,6 +221,21 @@ export class ProjectsService {
     const status = dto.statusDefinitionId
       ? await this.projectStatus(tenant.workspaceId, dto.statusDefinitionId)
       : null;
+    const reopensProject =
+      Boolean(status) &&
+      status!.id !== existing.statusDefinitionId &&
+      existing.statusDefinition?.isTerminal === true &&
+      !status!.isTerminal;
+    const reopensAwardedCompletion =
+      reopensProject &&
+      (await this.hasActiveCompletionXpAward(
+        tenant.workspaceId,
+        GamificationPointWorkType.PROJECT,
+        id,
+      ));
+    if (reopensAwardedCompletion) {
+      requireFutureReopenTarget(nextDates.dueAt, 'PROJECT_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT');
+    }
     const department =
       dto.departmentId !== undefined
         ? await this.projectDepartment(tenant.workspaceId, dto.departmentId)
@@ -202,6 +246,7 @@ export class ProjectsService {
         ? { description: normalizeDescription(dto.description) }
         : {}),
       ...(dto.priority ? { priority: dto.priority } : {}),
+      ...(dto.xpCategory !== undefined ? { xpCategory: dto.xpCategory } : {}),
       ...(dto.visibility ? { visibility: dto.visibility } : {}),
       plannedStartAt: nextDates.plannedStartAt,
       dueAt: nextDates.dueAt,
@@ -249,19 +294,54 @@ export class ProjectsService {
           ? { fromVisibility: existing.visibility, toVisibility: dto.visibility }
           : { changed },
     });
+    if (status?.isTerminal && status.id !== existing.statusDefinitionId) {
+      await this.gamification.evaluateProjectCompletionAchievements(tenant.workspaceId, id);
+      await this.gamification.handleProjectCompletionXp(
+        tenant.workspaceId,
+        id,
+        tenant.workspaceMembershipId ?? null,
+      );
+    } else if (reopensAwardedCompletion) {
+      await this.gamification.handleWorkReopen(
+        tenant.workspaceId,
+        GamificationPointWorkType.PROJECT,
+        id,
+        tenant.workspaceMembershipId ?? null,
+      );
+    }
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
     );
   }
 
-  async updateStatus(tenant: WorkspaceTenantContext, id: string, statusDefinitionId: string) {
+  async updateStatus(
+    tenant: WorkspaceTenantContext,
+    id: string,
+    statusDefinitionId: string,
+    reopenDueAtInput?: string | Date | null,
+  ) {
     const existing = await this.readAccessibleProject(tenant, id, {
       id: true,
       statusDefinitionId: true,
+      statusDefinition: { select: { isTerminal: true } },
     } satisfies Prisma.ProjectSelect);
     const status = await this.projectStatus(tenant.workspaceId, statusDefinitionId);
     if (existing.statusDefinitionId === status.id) return this.get(tenant, id);
+    const reopensProject = existing.statusDefinition?.isTerminal === true && !status.isTerminal;
+    const reopensAwardedCompletion =
+      reopensProject &&
+      (await this.hasActiveCompletionXpAward(
+        tenant.workspaceId,
+        GamificationPointWorkType.PROJECT,
+        id,
+      ));
+    const reopenDueAt = reopensAwardedCompletion
+      ? requireFutureReopenTarget(
+          parseOptionalDate(reopenDueAtInput),
+          'PROJECT_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT',
+        )
+      : null;
     const project = await this.prisma.$transaction(async (tx) => {
       if (status.isTerminal) {
         const openTaskCount = await this.openLinkedTaskCount(tenant.workspaceId, id, tx);
@@ -275,7 +355,10 @@ export class ProjectsService {
       }
       return tx.project.update({
         where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
-        data: { statusDefinitionId: status.id },
+        data: {
+          statusDefinitionId: status.id,
+          ...(reopensAwardedCompletion ? { dueAt: reopenDueAt } : {}),
+        },
         select: projectDetailSelect,
       });
     }, serializableTransaction);
@@ -291,6 +374,21 @@ export class ProjectsService {
         toStatusId: status.id,
       },
     });
+    if (status.isTerminal) {
+      await this.gamification.evaluateProjectCompletionAchievements(tenant.workspaceId, id);
+      await this.gamification.handleProjectCompletionXp(
+        tenant.workspaceId,
+        id,
+        tenant.workspaceMembershipId ?? null,
+      );
+    } else if (reopensAwardedCompletion) {
+      await this.gamification.handleWorkReopen(
+        tenant.workspaceId,
+        GamificationPointWorkType.PROJECT,
+        id,
+        tenant.workspaceMembershipId ?? null,
+      );
+    }
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -312,6 +410,12 @@ export class ProjectsService {
       entityType: 'Project',
       entityId: id,
     });
+    await this.gamification.handleWorkCreationVoid(
+      tenant.workspaceId,
+      GamificationPointWorkType.PROJECT,
+      id,
+      tenant.workspaceMembershipId ?? null,
+    );
     return { id, deleted: true };
   }
 
@@ -1259,6 +1363,25 @@ export class ProjectsService {
     return status;
   }
 
+  private async hasActiveCompletionXpAward(
+    workspaceId: string,
+    workType: GamificationPointWorkType,
+    sourceEntityId: string,
+  ) {
+    const award = await this.prisma.gamificationWorkXpEvent.findFirst({
+      where: {
+        workspaceId,
+        workType,
+        sourceEntityId,
+        eventType: GamificationWorkXpEventType.COMPLETION_AWARD,
+        outcome: GamificationWorkXpEventOutcome.APPLIED,
+        reversalEvents: { none: {} },
+      },
+      select: { id: true },
+    });
+    return Boolean(award);
+  }
+
   private async projectDepartment(workspaceId: string, departmentId?: string | null) {
     if (departmentId === undefined) return undefined;
     if (departmentId === null || departmentId === '') return null;
@@ -1748,6 +1871,7 @@ const projectListSelect = {
   statusDefinitionId: true,
   statusDefinition: { select: statusSelect },
   priority: true,
+  xpCategory: true,
   visibility: true,
   manualProgressPercent: true,
   manualProgressUpdatedAt: true,
@@ -1929,6 +2053,7 @@ function serializeProject(
         }
       : null,
     priority: project.priority,
+    xpCategory: project.xpCategory,
     visibility: project.visibility,
     calculatedProgress: progress.calculatedProgress,
     manualProgressPercent: project.manualProgressPercent,
@@ -2097,6 +2222,20 @@ function normalizeProjectDates(input: {
   if (plannedStartAt && dueAt && plannedStartAt > dueAt)
     throw new BadRequestException('INVALID_PROJECT_DATE_RANGE');
   return { plannedStartAt, dueAt };
+}
+
+function parseOptionalDate(value: string | Date | null | undefined) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (value instanceof Date) return value;
+  return new Date(value);
+}
+
+function requireFutureReopenTarget(value: Date | null | undefined, errorCode: string) {
+  if (!value || Number.isNaN(value.getTime()) || value <= new Date()) {
+    throw new BadRequestException(errorCode);
+  }
+  return value;
 }
 
 function dateRange(from?: string, to?: string, errorCode = 'INVALID_DATE_RANGE') {
@@ -2363,6 +2502,7 @@ function changedProjectFields(
     name: string;
     description: string | null;
     priority: TaskPriority;
+    xpCategory: string | null;
     plannedStartAt: Date | null;
     dueAt: Date | null;
   },
@@ -2377,6 +2517,8 @@ function changedProjectFields(
   )
     changed.push('description');
   if (dto.priority && dto.priority !== existing.priority) changed.push('priority');
+  if (dto.xpCategory !== undefined && dto.xpCategory !== existing.xpCategory)
+    changed.push('xpCategory');
   if (dateTime(dates.plannedStartAt) !== dateTime(existing.plannedStartAt))
     changed.push('plannedStartAt');
   if (dateTime(dates.dueAt) !== dateTime(existing.dueAt)) changed.push('dueAt');
