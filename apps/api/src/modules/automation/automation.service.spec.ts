@@ -71,6 +71,52 @@ describe('AutomationService', () => {
     );
   });
 
+  it('checks action and published workflow limits inside a workspace quota lock before publish', async () => {
+    const workflowId = 'workflow-1';
+    const draft = versionRecord({ workflowId, workspaceId: tenant.workspaceId });
+    const tx = {
+      automationWorkflow: {
+        findFirst: jest.fn().mockResolvedValue({ id: workflowId }),
+        update: jest.fn().mockResolvedValue({ id: workflowId }),
+      },
+      automationWorkflowVersion: {
+        findFirst: jest.fn().mockResolvedValue(draft),
+        aggregate: jest.fn().mockResolvedValue({ _max: { versionNumber: 0 } }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ ...draft, state: 'PUBLISHED', versionNumber: 1 }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const policy = {
+      assertActionCountLimit: jest.fn().mockResolvedValue(undefined),
+      withWorkspaceQuotaLock: jest.fn((_workspaceId, _tx, _suffix, callback) => callback()),
+      assertPublishedWorkflowLimit: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AutomationService(prisma as never, audit as never, policy as never);
+
+    await service.publish(tenant, workflowId);
+
+    expect(policy.assertActionCountLimit).toHaveBeenCalledWith(tenant.workspaceId, 0, tx);
+    expect(policy.withWorkspaceQuotaLock).toHaveBeenCalledWith(
+      tenant.workspaceId,
+      tx,
+      11800,
+      expect.any(Function),
+    );
+    expect(policy.assertPublishedWorkflowLimit).toHaveBeenCalledWith(
+      tenant.workspaceId,
+      workflowId,
+      tx,
+    );
+  });
+
   it('clones a workflow into a new draft workflow with an audit record', async () => {
     const workflowId = 'workflow-1';
     const sourceVersion = versionRecord({ workflowId, workspaceId: tenant.workspaceId });

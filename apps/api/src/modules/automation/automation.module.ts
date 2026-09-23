@@ -5,6 +5,7 @@ import { AutomationDomainEventsService } from './automation-domain-events.servic
 import { AutomationExecutionProcessor } from './automation-execution.processor';
 import { AutomationTemplateController } from './automation-template.controller';
 import { AutomationExecutionService } from './automation-execution.service';
+import { AutomationPolicyService } from './automation-policy.service';
 import { AutomationController } from './automation.controller';
 import { AutomationService } from './automation.service';
 
@@ -16,8 +17,14 @@ import { AutomationService } from './automation.service';
     AutomationDomainEventsService,
     AutomationActionService,
     AutomationExecutionService,
+    AutomationPolicyService,
     AutomationExecutionProcessor,
   ],
-  exports: [AutomationDomainEventsService, AutomationActionService, AutomationExecutionService],
+  exports: [
+    AutomationDomainEventsService,
+    AutomationActionService,
+    AutomationExecutionService,
+    AutomationPolicyService,
+  ],
 })
 export class AutomationModule {}

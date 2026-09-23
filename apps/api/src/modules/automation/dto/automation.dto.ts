@@ -9,12 +9,14 @@ import {
 import { Transform } from 'class-transformer';
 import {
   IsArray,
+  IsDateString,
   IsEnum,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -134,6 +136,34 @@ export class AutomationExecutionQueryDto extends PaginationDto {
   @IsOptional()
   @IsUUID()
   workflowVersionId?: string;
+
+  @ApiPropertyOptional({ enum: AutomationTriggerType })
+  @IsOptional()
+  @IsEnum(AutomationTriggerType)
+  eventType?: AutomationTriggerType;
+
+  @ApiPropertyOptional({ enum: AutomationDomainEventEntityType })
+  @IsOptional()
+  @IsEnum(AutomationDomainEventEntityType)
+  entityType?: AutomationDomainEventEntityType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  correlationId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  @IsString()
+  from?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  @IsString()
+  to?: string;
 }
 
 export class AutomationExecutionParamsDto {
@@ -144,6 +174,59 @@ export class AutomationExecutionParamsDto {
   @ApiProperty()
   @IsUUID()
   executionId!: string;
+}
+
+export class ReplayAutomationExecutionDto {
+  @ApiProperty({ maxLength: 500 })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
+
+  @ApiProperty({ enum: ['REPLAY'] })
+  @IsString()
+  @MinLength(6)
+  @MaxLength(6)
+  confirmation!: 'REPLAY';
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(120)
+  @Matches(/^[A-Za-z0-9:_-]+$/)
+  idempotencyKey!: string;
+}
+
+export class UpdateAutomationRuntimePolicyDto {
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  maxPublishedWorkflows!: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(5000)
+  maxExecutionsPerMinute!: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  maxConcurrentExecutions!: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  maxActionsPerExecution!: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  maxReplaysPerHour!: number;
 }
 
 export class CreateAutomationWorkflowDto {

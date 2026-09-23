@@ -23,6 +23,7 @@ import {
 import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
 import { AutomationDomainEventsService } from './automation-domain-events.service';
 import { AutomationExecutionService } from './automation-execution.service';
+import { AutomationPolicyService } from './automation-policy.service';
 import { AutomationService } from './automation.service';
 import {
   AutomationDomainEventParamsDto,
@@ -36,6 +37,8 @@ import {
   AutomationWorkflowVersionParamsDto,
   CloneAutomationWorkflowDto,
   CreateAutomationWorkflowDto,
+  ReplayAutomationExecutionDto,
+  UpdateAutomationRuntimePolicyDto,
   UpdateAutomationDraftDto,
   UpdateAutomationWorkflowDto,
 } from './dto/automation.dto';
@@ -51,6 +54,7 @@ export class AutomationController {
     private readonly automation: AutomationService,
     private readonly domainEvents: AutomationDomainEventsService,
     private readonly executions: AutomationExecutionService,
+    private readonly policy: AutomationPolicyService,
   ) {}
 
   @Get()
@@ -109,7 +113,7 @@ export class AutomationController {
   }
 
   @Get('executions')
-  @RequirePermissions(PermissionKeys.automationView)
+  @RequirePermissions(PermissionKeys.automationExecutionsView)
   executionsList(
     @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Query() query: AutomationExecutionQueryDto,
@@ -117,13 +121,44 @@ export class AutomationController {
     return this.executions.listExecutions(tenant, query);
   }
 
+  @Get('automation-health')
+  @RequirePermissions(PermissionKeys.automationExecutionsView)
+  automationHealth(@CurrentWorkspaceTenant() tenant: WorkspaceTenantContext) {
+    return this.executions.healthSummary(tenant);
+  }
+
+  @Get('runtime-policy')
+  @RequirePermissions(PermissionKeys.automationLimitsView)
+  runtimePolicy(@CurrentWorkspaceTenant() tenant: WorkspaceTenantContext) {
+    return this.policy.getRuntimePolicy(tenant);
+  }
+
+  @Patch('runtime-policy')
+  @RequirePermissions(PermissionKeys.automationLimitsManage)
+  updateRuntimePolicy(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: UpdateAutomationRuntimePolicyDto,
+  ) {
+    return this.policy.updateRuntimePolicy(tenant, dto);
+  }
+
   @Get('executions/:executionId')
-  @RequirePermissions(PermissionKeys.automationView)
+  @RequirePermissions(PermissionKeys.automationExecutionsView)
   execution(
     @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
     @Param() params: AutomationExecutionParamsDto,
   ) {
     return this.executions.getExecution(tenant, params.executionId);
+  }
+
+  @Post('executions/:executionId/replay')
+  @RequirePermissions(PermissionKeys.automationExecutionsReplay)
+  replayExecution(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationExecutionParamsDto,
+    @Body() dto: ReplayAutomationExecutionDto,
+  ) {
+    return this.executions.replayExecution(tenant, params.executionId, dto);
   }
 
   @Get(':workflowId')

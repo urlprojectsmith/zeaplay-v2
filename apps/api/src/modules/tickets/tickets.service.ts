@@ -22,6 +22,9 @@ import {
   GamificationWorkXpEventOutcome,
   GamificationWorkXpEventType,
   MembershipStatus,
+  NotificationCategory,
+  NotificationEntityType,
+  NotificationType,
   Prisma,
   ProcessingJobStatus,
   StatusEntityType,
@@ -49,6 +52,7 @@ import { AutomationDomainEventsService } from '../automation/automation-domain-e
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateTicketDto, TicketRequesterDto } from './dto/create-ticket.dto';
 import {
   CreateTicketUrlAttachmentDto,
@@ -190,6 +194,9 @@ const missingAutomationDomainEventsService = {
   recordDomainEventInTransaction: () => Promise.resolve({ id: null }),
   evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
 } as unknown as AutomationDomainEventsService;
+const missingNotificationsService = {
+  createNotification: () => Promise.resolve(null),
+} as unknown as NotificationsService;
 
 @Injectable()
 export class TicketsService {
@@ -209,6 +216,8 @@ export class TicketsService {
     @Optional() private readonly gamification: GamificationService = missingGamificationService,
     @Optional()
     private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
+    @Optional()
+    private readonly notifications: NotificationsService = missingNotificationsService,
   ) {}
 
   async create(
@@ -286,6 +295,7 @@ export class TicketsService {
         },
         idempotencyKey: `ticket:${ticket.id}:created`,
       });
+      await this.notifyTicketAssignedInTransaction(tx, tenant, ticket);
       return { ticket, eventIds: event.id ? [event.id] : [] };
     });
 
@@ -1037,10 +1047,14 @@ export class TicketsService {
         data: assignmentAtCommit,
       });
       if (result.count !== 1) throw new ConflictException('TICKET_ASSIGNMENT_STALE');
-      return tx.ticket.findUniqueOrThrow({
+      const ticket = await tx.ticket.findUniqueOrThrow({
         where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
         select: ticketDetailSelect,
       });
+      if (assignmentAtCommit.assignedToMembershipId !== current.assignedToMembershipId) {
+        await this.notifyTicketAssignedInTransaction(tx, tenant, ticket);
+      }
+      return ticket;
     });
 
     await this.audit.record({
@@ -1059,6 +1073,30 @@ export class TicketsService {
       },
     });
     return serializeTicket(updated);
+  }
+
+  private async notifyTicketAssignedInTransaction(
+    tx: Prisma.TransactionClient,
+    tenant: WorkspaceTenantContext,
+    ticket: Pick<TicketDetailRecord, 'id' | 'subject' | 'ticketNumber' | 'assignedToMembershipId'>,
+  ) {
+    const membershipId = ticket.assignedToMembershipId;
+    const actorMembershipId = tenant.workspaceMembershipId ?? null;
+    if (!membershipId || (actorMembershipId && membershipId === actorMembershipId)) return;
+    await this.notifications.createNotification({
+      tx,
+      workspaceId: tenant.workspaceId,
+      recipientMembershipId: membershipId,
+      actorMembershipId,
+      category: NotificationCategory.TICKET,
+      type: NotificationType.TICKET_ASSIGNED,
+      title: 'Ticket assigned',
+      message: `You were assigned to ${ticket.ticketNumber}: ${ticket.subject}.`,
+      entityType: NotificationEntityType.TICKET,
+      entityId: ticket.id,
+      dedupeKey: `ticket:${ticket.id}:assigned:${membershipId}`,
+      metadata: { ticketId: ticket.id, ticketNumber: ticket.ticketNumber },
+    });
   }
 
   async claim(tenant: WorkspaceTenantContext, id: string) {

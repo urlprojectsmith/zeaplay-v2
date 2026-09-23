@@ -2,9 +2,15 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button } from '@zea-play/ui';
+import { Button, Switch } from '@zea-play/ui';
 import { useLanguage } from '../../contexts/language-provider';
 import { getWorkspaceSettings, updateWorkspaceSettings } from '../../services/workspace-management';
+import {
+  getWorkspaceNotificationPreferences,
+  notificationsKeys,
+  updateWorkspaceNotificationPreferences,
+  type NotificationCategory,
+} from '../../services/workspace-notifications';
 import { useSessionStore } from '../../stores/session';
 
 const COMMON_TIMEZONES = [
@@ -17,6 +23,16 @@ const COMMON_TIMEZONES = [
   'Asia/Singapore',
   'Asia/Tokyo',
   'Australia/Sydney',
+];
+
+const notificationCategories: Array<{ value: NotificationCategory; labelKey: string }> = [
+  { value: 'TASK', labelKey: 'tasks' },
+  { value: 'PROJECT', labelKey: 'projects' },
+  { value: 'TICKET', labelKey: 'tickets' },
+  { value: 'AUTOMATION', labelKey: 'automation' },
+  { value: 'GAMIFICATION', labelKey: 'gamification' },
+  { value: 'SYSTEM', labelKey: 'system' },
+  { value: 'CALENDAR', labelKey: 'calendar' },
 ];
 
 export function WorkspaceSettingsPage() {
@@ -34,6 +50,11 @@ export function WorkspaceSettingsPage() {
   const settingsQuery = useQuery({
     queryKey: ['workspace', workspaceId, 'settings'],
     queryFn: () => getWorkspaceSettings(workspaceId as string),
+    enabled: Boolean(workspaceId),
+  });
+  const preferencesQuery = useQuery({
+    queryKey: notificationsKeys.preferences(workspaceId),
+    queryFn: () => getWorkspaceNotificationPreferences(workspaceId as string),
     enabled: Boolean(workspaceId),
   });
   const browserTimezone = useMemo(() => {
@@ -85,6 +106,20 @@ export function WorkspaceSettingsPage() {
       });
       void queryClient.invalidateQueries({
         queryKey: ['workspace', workspaceId, 'tasks', 'time-report'],
+      });
+    },
+  });
+  const preferencesMutation = useMutation({
+    mutationFn: (input: { category: NotificationCategory; inAppEnabled: boolean }) =>
+      updateWorkspaceNotificationPreferences(workspaceId as string, [
+        { category: input.category, inAppEnabled: input.inAppEnabled, mutedUntil: null },
+      ]),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: notificationsKeys.preferences(workspaceId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: notificationsKeys.all(workspaceId),
       });
     },
   });
@@ -143,6 +178,45 @@ export function WorkspaceSettingsPage() {
           </Button>
         </div>
       </form>
+      <section className="grid gap-4 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4">
+        <header>
+          <h2 className="text-lg font-semibold">{t(locale, 'notifications.preferences')}</h2>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {t(locale, 'notifications.preferencesDescription')}
+          </p>
+        </header>
+        {preferencesQuery.isLoading ? (
+          <div className="grid gap-2">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-12 animate-pulse rounded-md bg-[hsl(var(--muted))]" />
+            ))}
+          </div>
+        ) : preferencesQuery.isError ? (
+          <p className="text-sm text-[hsl(var(--destructive))]">
+            {t(locale, 'notifications.preferencesLoadFailed')}
+          </p>
+        ) : (
+          <div className="grid gap-3">
+            {notificationCategories.map((item) => {
+              const preference = preferencesQuery.data?.find(
+                (candidate) => candidate.category === item.value,
+              );
+              const checked = preference?.inAppEnabled ?? true;
+              return (
+                <Switch
+                  key={item.value}
+                  checked={checked}
+                  disabled={preferencesMutation.isPending}
+                  label={t(locale, `notifications.${item.labelKey}`)}
+                  onCheckedChange={(inAppEnabled) =>
+                    preferencesMutation.mutate({ category: item.value, inAppEnabled })
+                  }
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
     </main>
   );
 }

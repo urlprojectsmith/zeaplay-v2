@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 11.7 - Workflow Templates + Clone + Draft/Publish Enhancements COMPLETE / PASS
-Next: Phase 11.8 - Execution Monitoring + Replay + Automation Security / Limits
+Current: Phase 11 - Automation & Workflow Engine COMPLETE / PASS
+Next: Phase 12 — Notifications, Realtime & Shared Calendar
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -5463,3 +5463,186 @@ Warnings:
 - Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log noise, and one moderate audit advisory while high threshold passes.
 
 Phase 11.7 WORKFLOW TEMPLATES + CLONE + DRAFT/PUBLISH ENHANCEMENTS is COMPLETE / PASS. Next: Phase 11.8 - Execution Monitoring + Replay + Automation Security / Limits. Do not start Phase 11.8 automatically.
+
+### Phase 11.8 - Execution Monitoring + Replay + Automation Security / Limits COMPLETE / PASS
+
+Implemented:
+
+- Added Workspace Automation monitoring tabs for Workflows, Templates, Executions, and Settings.
+- Added bounded, paginated execution monitoring backed by durable PostgreSQL AutomationExecution state.
+- Added execution detail with safe ordered Step timeline summaries.
+- Added dead-letter/failure visibility through execution status, failure code, attempt count, workflow/version, and last timestamps.
+- Added explicit full execution Replay from trigger for FAILED and DEAD_LETTERED executions.
+- Replay creates a new AutomationExecution, links to the original, uses the original DomainEvent and captured WorkflowVersion, and never mutates old Execution or StepExecution history.
+- Replay requires reason, literal REPLAY confirmation, replay permission, and idempotency key conflict handling.
+- Added bounded AuditLog event `automation.execution_replayed` with ids/reason/actor membership metadata only.
+- Added `AutomationWorkspacePolicy` with effective Workspace limits and platform caps for published workflows, executions/minute, concurrent executions, actions/execution, and replays/hour.
+- Added backend enforcement for published workflow limit, execution rate, concurrency, action count, and replay rate.
+- Added explicit operational permissions: `automation.executions.view`, `automation.executions.replay`, `automation.limits.view`, and `automation.limits.manage`.
+- Added runtime policy API and Settings UI showing effective limits, Platform Default vs Workspace Override, max retry attempts, and max automation depth.
+- Added bounded 24h health summary aggregates.
+- Added migration `0060_phase11_8_automation_monitoring_limits`.
+
+Invariants:
+
+- Workspace users can monitor durable Automation Executions.
+- Execution detail exposes safe ordered Step history.
+- PostgreSQL remains monitoring/runtime authority.
+- Dead-letter failures are visible.
+- Replay creates a NEW execution and never mutates old execution history.
+- Replay uses original DomainEvent and captured WorkflowVersion.
+- Replay is explicit, reasoned, permission-gated and idempotent.
+- Full execution replay is supported; partial/resume/skip-step replay is not.
+- Workspace Automation limits are backend enforced.
+- Platform hard caps cannot be exceeded by Workspace override.
+- Published workflow, execution-rate, concurrency, action-count and replay limits exist.
+- Redis is not quota authority.
+- Monitoring is bounded/paginated.
+- No Step mutation/retry/replay controls exist.
+- No live cancel/pause/resume exists.
+- No realtime WebSocket/SSE infrastructure is introduced.
+- No Phase 11.9 scope started.
+- Phase 10 and 11.1-11.7 remain green.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- Focused Phase 11.8 Automation tests: 24/24.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass. API 234/234, web 144/144, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase118_integration_verify_20260924`, API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase118_clean_verify_20260924`, all 60 migrations applied through `0060_phase11_8_automation_monitoring_limits`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 60 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, `0057_phase11_5_conditions_branching_variables`, `0058_phase11_7_workflow_templates`, `0059_phase11_7_one_active_draft`, and `0060_phase11_8_automation_monitoring_limits` remain pending intentionally; no shared-dev migration was applied.
+
+Focused refinement:
+
+- Replay idempotency now handles same-key races by returning the existing replay for the same original execution and reason, while preserving conflict behavior for changed payloads.
+- Replay audit records are emitted only for newly created replay executions, not idempotent retries.
+- Replay quota enforcement now includes replay/hour, executions/minute, concurrent execution, and action-count limits inside the Workspace quota lock.
+- Default execution creation now performs existing-execution lookup, rate/concurrency/action checks, and insert inside a serializable transaction plus Workspace quota advisory lock.
+- Dispatch concurrency checks exclude the pending execution being queued and block safely when the limit is already consumed by other running/queued executions.
+- Publish path checks action count and published workflow limits inside Workspace policy enforcement.
+- Platform hard caps remain enforced by effective policy resolution.
+- Monitoring filters and pagination are bounded and Workspace scoped.
+- Execution and Step history remain immutable; replay creates a new Execution and no Step mutation, retry, resume, skip, cancel, pause, or live control path exists.
+- Failure messages exposed through monitoring are redacted through `safeMessage`.
+- PostgreSQL plus advisory locks are quota authority; Redis is not quota authority.
+
+Warnings:
+
+- No shared development database migration was applied.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log noise, and one moderate audit advisory while high threshold passes.
+
+Phase 11.8 EXECUTION MONITORING + REPLAY + AUTOMATION SECURITY / LIMITS is COMPLETE / PASS. Next: Phase 11.9 - Final Automation Integration + Security / Performance / Regression Audit. Do not start Phase 11.9 automatically.
+
+### Phase 11.9 - Final Automation Integration + Security / Performance / Regression Audit COMPLETE / PASS
+
+Main audit scope covered Phase 11.1 through Phase 11.8 Automation paths: workflow authoring/versioning, Domain Events, TriggerMatches, execution creation/dispatch/runtime, action idempotency, variables, conditions/branches, visual builder contract, templates/clones, monitoring, replay, limits, authorization, tenant isolation, constraints, indexes, N+1 patterns, and sensitive-data exposure.
+
+Issues found and fixed:
+
+- Added migration `0061_phase11_9_automation_audit_hardening` with a partial unique index on `automation_executions(trigger_match_id)` for non-replay rows, restoring the invariant that one runtime TriggerMatch creates at most one original AutomationExecution while still allowing replay executions.
+- Execution monitoring now always applies a bounded date window of 31 days and rejects inverted date ranges.
+- Replay idempotency keys now accept only bounded safe characters in addition to existing length validation.
+- Focused execution monitoring regression tests were added for bounded windows and invalid ranges.
+
+Main audit invariants:
+
+- Phase 11 Automation remains Workspace scoped.
+- Workflow/version history is immutable and version-safe.
+- Domain Events and TriggerMatches are durable/idempotent.
+- Historical TriggerMatches remain inert.
+- PostgreSQL is execution authority.
+- BullMQ/Redis remains transport only.
+- Action Engine reuses canonical domain services.
+- Execution retry/crash/idempotency paths are protected.
+- Variables contain no arbitrary code execution.
+- Conditions/Branches remain deterministic single-path.
+- Delay/parallel/external actions remain unsupported.
+- Builder mirrors backend authority.
+- Templates/clones do not copy runtime history.
+- Monitoring is bounded and PostgreSQL-backed.
+- Replay creates a new immutable execution.
+- Runtime limits are backend/race-safe.
+- Authorization remains capability based.
+- Tenant isolation verified.
+- No Phase 12 implementation started.
+
+Verification:
+
+- Focused Phase 11 automation tests: pass, 66/66.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass. API 236/236, web 144/144, worker 13/13.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase119_audit_verify_20260924`, all 61 migrations applied through `0061_phase11_9_automation_audit_hardening`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 61 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, `0057_phase11_5_conditions_branching_variables`, `0058_phase11_7_workflow_templates`, `0059_phase11_7_one_active_draft`, `0060_phase11_8_automation_monitoring_limits`, and `0061_phase11_9_automation_audit_hardening` remain pending intentionally; no shared-dev migration was applied.
+
+Refinement + final verification:
+
+- Final high-risk checks reconfirmed tenant isolation, capability authorization, workflow version immutability, Domain Event and TriggerMatch integrity, execution runtime safety, queue/crash recovery, action idempotency, variables, conditions/branches, builder contract, templates/clones, monitoring, replay, runtime limits, database constraints, and hot-path performance.
+- Security search found no confirmed cross-Workspace automation access, backend role-name authorization, published-version mutation path, historical TriggerMatch execution path, client execution status authority, client replay version/event authority, unsafe variable execution, raw secret leak, Redis-only quota authority, Step mutation control, Delay runtime, parallel runtime, external action, or Phase 12 implementation.
+- Migration `0061_phase11_9_automation_audit_hardening` was verified on a clean migrated database. It creates `automation_executions_trigger_match_id_non_replay_key` as a partial unique index on `trigger_match_id WHERE replay_of_execution_id IS NULL`, preserving Replay compatibility while enforcing one non-replay Execution per TriggerMatch.
+
+Final verification:
+
+- Focused Phase 11 automation tests: pass, 66/66.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass. API 236/236, web 144/144, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase119_final_integration_20260924` using Turbo loose env mode. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase119_final_clean_20260924`, all 61 migrations applied through `0061_phase11_9_automation_audit_hardening`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 61 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, `0057_phase11_5_conditions_branching_variables`, `0058_phase11_7_workflow_templates`, `0059_phase11_7_one_active_draft`, `0060_phase11_8_automation_monitoring_limits`, and `0061_phase11_9_automation_audit_hardening` remain pending intentionally; no shared-dev migration was applied.
+
+Final Phase 11 invariants:
+
+- Phase 11.1-11.9 COMPLETE.
+- Automations are Workspace scoped.
+- PostgreSQL is workflow/event/execution authority.
+- BullMQ/Redis remains transport only.
+- Workflow versions are immutable and Draft/Publish safe.
+- Domain Events and TriggerMatches are durable/idempotent.
+- Historical TriggerMatches remain inert.
+- Action Engine reuses canonical domain services.
+- Execution crash/retry/idempotency paths are protected.
+- Variables allow no arbitrary code execution.
+- Conditions/Branches are deterministic single-path.
+- Delay/parallel/external actions remain unsupported.
+- Visual builder mirrors backend authority.
+- Clone/templates never copy runtime history.
+- Monitoring is bounded and PostgreSQL-backed.
+- Replay creates a new immutable execution.
+- Runtime limits are backend/race-safe.
+- Authorization is capability based.
+- Tenant isolation verified.
+- No Phase 12 implementation exists yet.
+
+Warnings:
+
+- No shared development database migration was applied.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log noise, and one moderate audit advisory while high threshold passes.
+
+Phase 11.9 FINAL AUTOMATION INTEGRATION + SECURITY / PERFORMANCE / REGRESSION AUDIT is COMPLETE / PASS.
+
+### Phase 11 - Automation & Workflow Engine COMPLETE / PASS
+
+Phase 11 Automation & Workflow Engine is COMPLETE / PASS. Next: Phase 12 — Notifications, Realtime & Shared Calendar. Do not start Phase 12 automatically.

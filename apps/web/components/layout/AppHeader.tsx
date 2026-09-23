@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Menu, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import { Button } from '@zea-play/ui';
 import { useLanguage } from '../../contexts/language-provider';
 import type { DashboardConfig } from '../navigation/navigation-config';
@@ -9,6 +9,7 @@ import { LanguageSwitcher } from '../navigation/LanguageSwitcher';
 import { ProfileMenu } from '../navigation/ProfileMenu';
 import { ThemeSwitcher } from '../navigation/ThemeSwitcher';
 import { WorkspaceSwitcher } from '../navigation/WorkspaceSwitcher';
+import { NotificationCenter } from '../notifications/NotificationCenter';
 import { GlobalTimerIndicator } from '../workspace/tasks/GlobalTimerIndicator';
 import { Breadcrumbs } from './Breadcrumbs';
 
@@ -69,14 +70,7 @@ export function AppHeader({
           <LanguageSwitcher />
         </div>
         {config.scope === 'workspace' ? <GlobalTimerIndicator /> : null}
-        <Button
-          aria-label={t(locale, 'common.notifications')}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <Bell aria-hidden="true" className="h-5 w-5" />
-        </Button>
+        {config.scope === 'workspace' ? <NotificationCenter /> : null}
         <ProfileMenu />
       </div>
     </header>

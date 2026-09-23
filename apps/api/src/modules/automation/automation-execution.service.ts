@@ -1,10 +1,12 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
   Optional,
+  NotFoundException,
   forwardRef,
 } from '@nestjs/common';
 import {
@@ -18,6 +20,7 @@ import {
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { AuditService } from '../audit/audit.service';
 import {
   AUTOMATION_EXECUTION_JOB_TYPE,
   AUTOMATION_EXECUTION_QUEUE,
@@ -38,8 +41,11 @@ import {
   AUTOMATION_DEFAULT_MAX_ATTEMPTS,
   AUTOMATION_DISPATCH_BATCH_SIZE,
   AUTOMATION_MAX_FUTURE_DEPTH,
+  AUTOMATION_MONITORING_MAX_WINDOW_DAYS,
 } from './automation.constants';
 import type { AutomationExecutionQueryDto } from './dto/automation.dto';
+import type { ReplayAutomationExecutionDto } from './dto/automation.dto';
+import { AutomationPolicyService } from './automation-policy.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -71,9 +77,19 @@ export class AutomationExecutionService {
     @Optional()
     @InjectQueue(AUTOMATION_EXECUTION_QUEUE)
     private readonly queue?: Queue<{ executionId: string }>,
+    @Optional() private readonly policy?: AutomationPolicyService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
-  async createForTriggerMatch(triggerMatchId: string, client: Tx | PrismaService = this.prisma) {
+  async createForTriggerMatch(
+    triggerMatchId: string,
+    client: Tx | PrismaService = this.prisma,
+  ): Promise<{ id: string } | null> {
+    if (this.policy && client === this.prisma) {
+      return this.prisma.$transaction((tx) => this.createForTriggerMatch(triggerMatchId, tx), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    }
     const match = await client.automationTriggerMatch.findUnique({
       where: { id: triggerMatchId },
       select: {
@@ -102,30 +118,40 @@ export class AutomationExecutionService {
       },
     });
     if (!match || !match.runtimeEligibleAt) return null;
-    const existing = await client.automationExecution.findUnique({
-      where: { triggerMatchId: match.id },
-      select: { id: true },
-    });
-    if (existing) return existing;
+    const create = async () => {
+      const existing = await client.automationExecution.findFirst({
+        where: { triggerMatchId: match.id, replayOfExecutionId: null },
+        select: { id: true },
+      });
+      if (existing) return existing;
 
-    const blockedDepth = match.domainEvent.automationDepth >= AUTOMATION_MAX_FUTURE_DEPTH;
-    const plan = blockedDepth
-      ? { status: AutomationExecutionStatus.BLOCKED, reason: 'AUTOMATION_MAX_DEPTH_EXCEEDED' }
-      : planDeterministicRuntime(
-          match.workflowVersion.nodesDefinition,
-          match.workflowVersion.edgesDefinition,
+      if (this.policy) {
+        await this.policy.assertExecutionCreationLimits(match.workspaceId, client as Tx);
+        await this.policy.assertConcurrentExecutionLimit(match.workspaceId, client as Tx);
+        await this.policy.assertActionCountLimit(
+          match.workspaceId,
+          countActionNodes(match.workflowVersion.nodesDefinition),
+          client,
         );
-    const executionId = randomUUID();
-    const status =
-      plan.status === AutomationExecutionStatus.SUCCEEDED
-        ? AutomationExecutionStatus.SUCCEEDED
-        : plan.status === AutomationExecutionStatus.BLOCKED
-          ? AutomationExecutionStatus.BLOCKED
-          : AutomationExecutionStatus.PENDING_QUEUE;
-    const now = new Date();
+      }
 
-    try {
-      return await client.automationExecution.create({
+      const blockedDepth = match.domainEvent.automationDepth >= AUTOMATION_MAX_FUTURE_DEPTH;
+      const plan = blockedDepth
+        ? { status: AutomationExecutionStatus.BLOCKED, reason: 'AUTOMATION_MAX_DEPTH_EXCEEDED' }
+        : planDeterministicRuntime(
+            match.workflowVersion.nodesDefinition,
+            match.workflowVersion.edgesDefinition,
+          );
+      const executionId = randomUUID();
+      const status =
+        plan.status === AutomationExecutionStatus.SUCCEEDED
+          ? AutomationExecutionStatus.SUCCEEDED
+          : plan.status === AutomationExecutionStatus.BLOCKED
+            ? AutomationExecutionStatus.BLOCKED
+            : AutomationExecutionStatus.PENDING_QUEUE;
+      const now = new Date();
+
+      return client.automationExecution.create({
         data: {
           workspaceId: match.workspaceId,
           id: executionId,
@@ -147,10 +173,16 @@ export class AutomationExecutionService {
         },
         select: { id: true },
       });
+    };
+
+    try {
+      return this.policy
+        ? await this.policy.withWorkspaceQuotaLock(match.workspaceId, client as Tx, 11_801, create)
+        : await create();
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        return client.automationExecution.findUnique({
-          where: { triggerMatchId: match.id },
+        return client.automationExecution.findFirst({
+          where: { triggerMatchId: match.id, replayOfExecutionId: null },
           select: { id: true },
         });
       }
@@ -164,12 +196,32 @@ export class AutomationExecutionService {
       where: {
         status: { in: [AutomationExecutionStatus.PENDING_QUEUE, AutomationExecutionStatus.QUEUED] },
       },
-      select: { id: true },
+      select: { id: true, workspaceId: true },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: Math.min(Math.max(limit, 1), AUTOMATION_DISPATCH_BATCH_SIZE),
     });
     let enqueued = 0;
     for (const execution of pending) {
+      if (this.policy) {
+        try {
+          await this.prisma.$transaction(async (tx) =>
+            this.policy?.withWorkspaceQuotaLock(execution.workspaceId, tx, 11_802, async () =>
+              this.policy?.assertConcurrentExecutionLimit(execution.workspaceId, tx, execution.id),
+            ),
+          );
+        } catch {
+          await this.prisma.automationExecution.updateMany({
+            where: { id: execution.id, status: AutomationExecutionStatus.PENDING_QUEUE },
+            data: {
+              status: AutomationExecutionStatus.BLOCKED,
+              failureCode: 'AUTOMATION_CONCURRENCY_LIMIT',
+              failureMessage: 'AUTOMATION_CONCURRENCY_LIMIT',
+              finishedAt: new Date(),
+            },
+          });
+          continue;
+        }
+      }
       await this.queue.add(
         AUTOMATION_EXECUTION_JOB_TYPE,
         { executionId: execution.id },
@@ -191,11 +243,26 @@ export class AutomationExecutionService {
   }
 
   async listExecutions(tenant: WorkspaceTenantContext, query: AutomationExecutionQueryDto) {
+    const from = parseDate(query.from) ?? new Date(Date.now() - 7 * 24 * 60 * 60_000);
+    const requestedTo = parseDate(query.to);
+    const maxTo = new Date(
+      from.getTime() + AUTOMATION_MONITORING_MAX_WINDOW_DAYS * 24 * 60 * 60_000,
+    );
+    const to = requestedTo && requestedTo.getTime() <= maxTo.getTime() ? requestedTo : maxTo;
+    if (to.getTime() < from.getTime()) {
+      throw new BadRequestException('AUTOMATION_MONITORING_DATE_RANGE_INVALID');
+    }
     const where: Prisma.AutomationExecutionWhereInput = {
       workspaceId: tenant.workspaceId,
       status: query.status,
       workflowId: query.workflowId,
       workflowVersionId: query.workflowVersionId,
+      correlationId: query.correlationId?.trim() || undefined,
+      createdAt: { gte: from, ...(to ? { lte: to } : {}) },
+      domainEvent: {
+        eventType: query.eventType,
+        entityType: query.entityType,
+      },
     };
     const [total, items] = await this.prisma.$transaction([
       this.prisma.automationExecution.count({ where }),
@@ -207,7 +274,12 @@ export class AutomationExecutionService {
         take: query.pageSize,
       }),
     ]);
-    return { items, total, page: query.page, pageSize: query.pageSize };
+    return {
+      items: items.map(serializeExecutionSummary),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+    };
   }
 
   async getExecution(tenant: WorkspaceTenantContext, executionId: string) {
@@ -215,8 +287,205 @@ export class AutomationExecutionService {
       where: { id: executionId, workspaceId: tenant.workspaceId },
       select: executionDetailSelect,
     });
-    if (!execution) throw new BadRequestException('AUTOMATION_EXECUTION_NOT_FOUND');
-    return execution;
+    if (!execution) throw new NotFoundException('AUTOMATION_EXECUTION_NOT_FOUND');
+    return serializeExecutionDetail(execution);
+  }
+
+  async replayExecution(
+    tenant: WorkspaceTenantContext,
+    executionId: string,
+    dto: ReplayAutomationExecutionDto,
+  ) {
+    const reason = dto.reason.trim();
+    const key = dto.idempotencyKey.trim();
+    if (dto.confirmation !== 'REPLAY')
+      throw new BadRequestException('AUTOMATION_REPLAY_CONFIRMATION_REQUIRED');
+    const result = await this.prisma
+      .$transaction(
+        async (tx) =>
+          this.policy
+            ? this.policy.withWorkspaceQuotaLock(tenant.workspaceId, tx, 11_803, async () =>
+                this.createReplay(tenant, executionId, reason, key, tx),
+              )
+            : this.createReplay(tenant, executionId, reason, key, tx),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch(async (error) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          const existing = await this.prisma.automationExecution.findFirst({
+            where: { workspaceId: tenant.workspaceId, replayIdempotencyKey: key },
+            select: {
+              id: true,
+              workflowId: true,
+              workflowVersionId: true,
+              replayOfExecutionId: true,
+              replayReason: true,
+            },
+          });
+          if (existing?.replayOfExecutionId === executionId && existing.replayReason === reason) {
+            return { ...existing, created: false };
+          }
+          throw new ConflictException('AUTOMATION_REPLAY_IDEMPOTENCY_CONFLICT');
+        }
+        throw error;
+      });
+    if (this.audit && result.created) {
+      await this.audit.record({
+        agencyId: tenant.agencyId,
+        workspaceId: tenant.workspaceId,
+        userId: tenant.userId,
+        action: 'automation.execution_replayed',
+        entityType: 'AutomationExecution',
+        entityId: result.id,
+        metadata: toPrismaJson({
+          originalExecutionId: executionId,
+          newExecutionId: result.id,
+          workflowId: result.workflowId,
+          workflowVersionId: result.workflowVersionId,
+          reason,
+          actorMembershipId: tenant.workspaceMembershipId,
+        }),
+      });
+    }
+    return this.getExecution(tenant, result.id);
+  }
+
+  private async createReplay(
+    tenant: WorkspaceTenantContext,
+    executionId: string,
+    reason: string,
+    idempotencyKey: string,
+    tx: Tx,
+  ) {
+    const idempotent = await tx.automationExecution.findFirst({
+      where: { workspaceId: tenant.workspaceId, replayIdempotencyKey: idempotencyKey },
+      select: { id: true, replayOfExecutionId: true, replayReason: true },
+    });
+    if (idempotent) {
+      if (idempotent.replayOfExecutionId === executionId && idempotent.replayReason === reason) {
+        const existing = await tx.automationExecution.findUniqueOrThrow({
+          where: { id: idempotent.id },
+          select: { id: true, workflowId: true, workflowVersionId: true },
+        });
+        return { ...existing, created: false };
+      }
+      throw new ConflictException('AUTOMATION_REPLAY_IDEMPOTENCY_CONFLICT');
+    }
+
+    const original = await tx.automationExecution.findFirst({
+      where: { id: executionId, workspaceId: tenant.workspaceId },
+      select: {
+        id: true,
+        workspaceId: true,
+        triggerMatchId: true,
+        domainEventId: true,
+        workflowId: true,
+        workflowVersionId: true,
+        status: true,
+        correlationId: true,
+        automationDepth: true,
+        workflowVersion: { select: { id: true, nodesDefinition: true, edgesDefinition: true } },
+      },
+    });
+    if (!original) throw new NotFoundException('AUTOMATION_EXECUTION_NOT_FOUND');
+    if (
+      original.status !== AutomationExecutionStatus.FAILED &&
+      original.status !== AutomationExecutionStatus.DEAD_LETTERED
+    ) {
+      throw new BadRequestException('AUTOMATION_REPLAY_NOT_ALLOWED');
+    }
+    if (this.policy) {
+      await this.policy.assertReplayLimit(tenant.workspaceId, tx);
+      await this.policy.assertExecutionCreationLimits(tenant.workspaceId, tx);
+      await this.policy.assertConcurrentExecutionLimit(tenant.workspaceId, tx);
+      await this.policy.assertActionCountLimit(
+        tenant.workspaceId,
+        countActionNodes(original.workflowVersion.nodesDefinition),
+        tx,
+      );
+    }
+    const plan = planDeterministicRuntime(
+      original.workflowVersion.nodesDefinition,
+      original.workflowVersion.edgesDefinition,
+    );
+    if (plan.status === AutomationExecutionStatus.BLOCKED) {
+      throw new BadRequestException('AUTOMATION_RUNTIME_UNSUPPORTED_GRAPH');
+    }
+    const now = new Date();
+    const status =
+      plan.status === AutomationExecutionStatus.SUCCEEDED
+        ? AutomationExecutionStatus.SUCCEEDED
+        : AutomationExecutionStatus.PENDING_QUEUE;
+    const created = await tx.automationExecution.create({
+      data: {
+        id: randomUUID(),
+        workspaceId: tenant.workspaceId,
+        triggerMatchId: original.triggerMatchId,
+        domainEventId: original.domainEventId,
+        workflowId: original.workflowId,
+        workflowVersionId: original.workflowVersionId,
+        status,
+        correlationId: original.correlationId,
+        automationDepth: original.automationDepth,
+        maxAttempts: AUTOMATION_DEFAULT_MAX_ATTEMPTS,
+        replayOfExecutionId: original.id,
+        replayReason: reason,
+        replayIdempotencyKey: idempotencyKey,
+        finishedAt: status === AutomationExecutionStatus.SUCCEEDED ? now : null,
+      },
+      select: { id: true, workflowId: true, workflowVersionId: true },
+    });
+    return { ...created, created: true };
+  }
+
+  async healthSummary(tenant: WorkspaceTenantContext) {
+    const since = new Date(Date.now() - 24 * 60 * 60_000);
+    const [publishedWorkflows, executions, replays, avg] = await this.prisma.$transaction([
+      this.prisma.automationWorkflow.count({
+        where: {
+          workspaceId: tenant.workspaceId,
+          archivedAt: null,
+          status: { in: ['PUBLISHED', 'DISABLED'] },
+        },
+      }),
+      this.prisma.automationExecution.groupBy({
+        by: ['status'],
+        where: { workspaceId: tenant.workspaceId, createdAt: { gte: since } },
+        _count: { _all: true },
+        orderBy: { status: 'asc' },
+      }),
+      this.prisma.automationExecution.count({
+        where: {
+          workspaceId: tenant.workspaceId,
+          replayOfExecutionId: { not: null },
+          createdAt: { gte: since },
+        },
+      }),
+      this.prisma.$queryRaw<Array<{ avg_ms: number | null }>>(Prisma.sql`
+        SELECT AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)::float AS avg_ms
+        FROM automation_executions
+        WHERE workspace_id = ${tenant.workspaceId}::uuid
+          AND created_at >= ${since}
+          AND started_at IS NOT NULL
+          AND finished_at IS NOT NULL
+      `),
+    ]);
+    const counts = Object.fromEntries(
+      executions.map((item) => [item.status, countGroupItem(item)]),
+    );
+    const total = executions.reduce((sum, item) => sum + countGroupItem(item), 0);
+    const succeeded = counts[AutomationExecutionStatus.SUCCEEDED] ?? 0;
+    return {
+      publishedWorkflows,
+      executionsLast24h: total,
+      succeeded,
+      failed: counts[AutomationExecutionStatus.FAILED] ?? 0,
+      deadLettered: counts[AutomationExecutionStatus.DEAD_LETTERED] ?? 0,
+      running: counts[AutomationExecutionStatus.RUNNING] ?? 0,
+      successRate: total > 0 ? succeeded / total : null,
+      averageDurationMs: avg[0]?.avg_ms ?? null,
+      replaysLast24h: replays,
+    };
   }
 
   async processExecution(executionId: string) {
@@ -692,10 +961,26 @@ const executionListSelect = {
   maxAttempts: true,
   failureCode: true,
   failureMessage: true,
+  replayOfExecutionId: true,
+  replayReason: true,
   createdAt: true,
   queuedAt: true,
   startedAt: true,
   finishedAt: true,
+  workflowVersion: { select: { versionNumber: true } },
+  workflow: { select: { id: true, name: true } },
+  domainEvent: {
+    select: {
+      id: true,
+      eventType: true,
+      entityType: true,
+      entityId: true,
+      occurredAt: true,
+    },
+  },
+  triggerMatch: {
+    select: { id: true, triggerNodeId: true, status: true, reasonCode: true, createdAt: true },
+  },
 } satisfies Prisma.AutomationExecutionSelect;
 
 const executionDetailSelect = {
@@ -722,6 +1007,13 @@ const executionDetailSelect = {
     orderBy: [{ sequence: 'asc' }, { id: 'asc' }],
   },
 } satisfies Prisma.AutomationExecutionSelect;
+
+type ExecutionSummaryRecord = Prisma.AutomationExecutionGetPayload<{
+  select: typeof executionListSelect;
+}>;
+type ExecutionDetailRecord = Prisma.AutomationExecutionGetPayload<{
+  select: typeof executionDetailSelect;
+}>;
 
 const stepSelect = {
   id: true,
@@ -752,6 +1044,86 @@ function planDeterministicRuntime(
   return [...graph.nodes.values()].some((node) => node.type !== AutomationWorkflowNodeType.TRIGGER)
     ? { status: AutomationExecutionStatus.PENDING_QUEUE }
     : { status: AutomationExecutionStatus.SUCCEEDED };
+}
+
+function serializeExecutionSummary(execution: ExecutionSummaryRecord) {
+  return {
+    id: execution.id,
+    shortRef: execution.id.slice(0, 8),
+    workspaceId: execution.workspaceId,
+    triggerMatchId: execution.triggerMatchId,
+    domainEventId: execution.domainEventId,
+    workflowId: execution.workflowId,
+    workflowName: execution.workflow.name,
+    workflowVersionId: execution.workflowVersionId,
+    workflowVersion: execution.workflowVersion.versionNumber,
+    triggerEvent: execution.domainEvent.eventType,
+    entityType: execution.domainEvent.entityType,
+    entityId: execution.domainEvent.entityId,
+    status: execution.status,
+    correlationId: execution.correlationId,
+    automationDepth: execution.automationDepth,
+    attemptCount: execution.attemptCount,
+    maxAttempts: execution.maxAttempts,
+    failureCode: execution.failureCode,
+    failureMessage: execution.failureMessage ? safeMessage(execution.failureMessage) : null,
+    replayOfExecutionId: execution.replayOfExecutionId,
+    createdAt: execution.createdAt,
+    queuedAt: execution.queuedAt,
+    startedAt: execution.startedAt,
+    finishedAt: execution.finishedAt,
+    durationMs: durationMs(execution.startedAt, execution.finishedAt),
+  };
+}
+
+function serializeExecutionDetail(execution: ExecutionDetailRecord) {
+  const summary = serializeExecutionSummary(execution);
+  return {
+    ...summary,
+    domainEvent: execution.domainEvent,
+    triggerMatch: execution.triggerMatch,
+    replayReason: execution.replayReason,
+    steps: execution.steps.map((step) => ({
+      id: step.id,
+      nodeId: step.nodeId,
+      nodeType: step.nodeType,
+      sequence: step.sequence,
+      actionType: step.actionType,
+      selectedBranchKey: step.selectedBranchKey,
+      conditionResult: step.conditionResult,
+      status: step.status,
+      attemptCount: step.attemptCount,
+      resultSummary: safeStepResult(step.result),
+      failureSummary: step.errorCode
+        ? {
+            code: step.errorCode,
+            message: step.errorMessage ? safeMessage(step.errorMessage) : null,
+          }
+        : null,
+      startedAt: step.startedAt,
+      finishedAt: step.finishedAt,
+      createdAt: step.createdAt,
+      durationMs: durationMs(step.startedAt, step.finishedAt),
+    })),
+  };
+}
+
+function durationMs(startedAt: Date | null, finishedAt: Date | null) {
+  return startedAt && finishedAt ? finishedAt.getTime() - startedAt.getTime() : null;
+}
+
+function parseDate(value: string | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function countActionNodes(value: Prisma.JsonValue) {
+  return parseNodes(value).filter((node) => node.type === AutomationWorkflowNodeType.ACTION).length;
+}
+
+function countGroupItem(item: { _count?: true | { _all?: number } }) {
+  return typeof item._count === 'object' ? (item._count._all ?? 0) : 0;
 }
 
 function blocked(reason: string): Extract<RuntimePlan, { status: 'BLOCKED' }> {

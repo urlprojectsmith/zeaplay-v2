@@ -133,6 +133,83 @@ export interface AutomationTemplateListResponse {
   pageSize: number;
 }
 
+export type AutomationExecutionStatus =
+  | 'PENDING_QUEUE'
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'RETRYING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'DEAD_LETTERED'
+  | 'BLOCKED';
+
+export interface AutomationExecutionSummary {
+  id: string;
+  shortRef: string;
+  workflowId: string;
+  workflowName: string;
+  workflowVersion: number | null;
+  workflowVersionId: string;
+  triggerEvent: AutomationTriggerType;
+  status: AutomationExecutionStatus;
+  correlationId: string;
+  attemptCount: number;
+  maxAttempts: number;
+  failureCode: string | null;
+  failureMessage: string | null;
+  replayOfExecutionId: string | null;
+  createdAt: string;
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface AutomationExecutionDetail extends AutomationExecutionSummary {
+  automationDepth: number;
+  domainEvent: {
+    id: string;
+    eventType: AutomationTriggerType;
+    entityType: string;
+    entityId: string;
+    occurredAt: string;
+  };
+  triggerMatch: { id: string; triggerNodeId: string; status: string; reasonCode: string | null };
+  replayReason: string | null;
+  steps: Array<{
+    id: string;
+    nodeId: string;
+    nodeType: AutomationNodeType;
+    sequence: number;
+    actionType: AutomationActionType | null;
+    selectedBranchKey: string | null;
+    conditionResult: boolean | null;
+    status: string;
+    attemptCount: number;
+    resultSummary: Record<string, unknown> | null;
+    failureSummary: { code: string; message: string | null } | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    durationMs: number | null;
+  }>;
+}
+
+export interface AutomationRuntimePolicy {
+  effective: {
+    maxPublishedWorkflows: number;
+    maxExecutionsPerMinute: number;
+    maxConcurrentExecutions: number;
+    maxActionsPerExecution: number;
+    maxReplaysPerHour: number;
+  };
+  source: 'PLATFORM_DEFAULT' | 'WORKSPACE_OVERRIDE';
+  override: AutomationRuntimePolicy['effective'] | null;
+  platformCaps: AutomationRuntimePolicy['effective'] & {
+    maxRetryAttempts: number;
+    maxAutomationDepth: number;
+  };
+}
+
 export const automationTriggerTypes: AutomationTriggerType[] = [
   'TASK_CREATED',
   'TASK_STATUS_CHANGED',
@@ -167,6 +244,13 @@ export const automationKeys = {
     ['workspace', workspaceId, 'automation-templates', page] as const,
   templateDetail: (workspaceId: string | null, templateId: string | null) =>
     ['workspace', workspaceId, 'automation-templates', templateId] as const,
+  executions: (workspaceId: string | null, page: number, status?: string) =>
+    ['workspace', workspaceId, 'automation-executions', page, status ?? 'all'] as const,
+  executionDetail: (workspaceId: string | null, executionId: string | null) =>
+    ['workspace', workspaceId, 'automation-executions', executionId] as const,
+  runtimePolicy: (workspaceId: string | null) =>
+    ['workspace', workspaceId, 'automation-runtime-policy'] as const,
+  health: (workspaceId: string | null) => ['workspace', workspaceId, 'automation-health'] as const,
 };
 
 export async function listWorkspaceAutomations(workspaceId: string, page = 1) {
@@ -285,6 +369,77 @@ export async function archiveAutomationTemplate(workspaceId: string, templateId:
     `/workspaces/${workspaceId}/automation-templates/${templateId}`,
     { method: 'DELETE' },
   );
+  return response.data;
+}
+
+export async function listAutomationExecutions(
+  workspaceId: string,
+  params: { page?: number; status?: AutomationExecutionStatus; workflowId?: string } = {},
+) {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    pageSize: '20',
+  });
+  if (params.status) query.set('status', params.status);
+  if (params.workflowId) query.set('workflowId', params.workflowId);
+  const response = await apiClient.request<{
+    items: AutomationExecutionSummary[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/workspaces/${workspaceId}/automations/executions?${query.toString()}`);
+  return response.data;
+}
+
+export async function getAutomationExecution(workspaceId: string, executionId: string) {
+  const response = await apiClient.request<AutomationExecutionDetail>(
+    `/workspaces/${workspaceId}/automations/executions/${executionId}`,
+  );
+  return response.data;
+}
+
+export async function replayAutomationExecution(
+  workspaceId: string,
+  executionId: string,
+  body: { reason: string; confirmation: 'REPLAY'; idempotencyKey: string },
+) {
+  const response = await apiClient.request<AutomationExecutionDetail>(
+    `/workspaces/${workspaceId}/automations/executions/${executionId}/replay`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function getAutomationRuntimePolicy(workspaceId: string) {
+  const response = await apiClient.request<AutomationRuntimePolicy>(
+    `/workspaces/${workspaceId}/automations/runtime-policy`,
+  );
+  return response.data;
+}
+
+export async function updateAutomationRuntimePolicy(
+  workspaceId: string,
+  body: AutomationRuntimePolicy['effective'],
+) {
+  const response = await apiClient.request<AutomationRuntimePolicy>(
+    `/workspaces/${workspaceId}/automations/runtime-policy`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function getAutomationHealth(workspaceId: string) {
+  const response = await apiClient.request<{
+    publishedWorkflows: number;
+    executionsLast24h: number;
+    succeeded: number;
+    failed: number;
+    deadLettered: number;
+    running: number;
+    successRate: number | null;
+    averageDurationMs: number | null;
+    replaysLast24h: number;
+  }>(`/workspaces/${workspaceId}/automations/automation-health`);
   return response.data;
 }
 

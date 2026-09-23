@@ -3,12 +3,14 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { AutomationWorkflowVersionState, Prisma } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AUTOMATION_DEFINITION_VERSION, defaultAutomationDefinition } from './automation.constants';
+import { AutomationPolicyService } from './automation-policy.service';
 import {
   cloneAutomationDefinitionForAuthoring,
   definitionFromVersionSnapshot,
@@ -35,6 +37,7 @@ export class AutomationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    @Optional() private readonly policy?: AutomationPolicyService,
   ) {}
 
   async list(tenant: WorkspaceTenantContext, query: AutomationWorkflowQueryDto) {
@@ -104,6 +107,7 @@ export class AutomationService {
   async create(tenant: WorkspaceTenantContext, dto: CreateAutomationWorkflowDto) {
     const definition = definitionFromDto(dto, defaultAutomationDefinition);
     const validated = validateAutomationDefinition(definition);
+    await this.assertActionLimit(tenant.workspaceId, validated.definition, this.prisma);
     const workflow = await this.prisma.$transaction(async (tx) => {
       const created = await tx.automationWorkflow.create({
         data: {
@@ -150,6 +154,7 @@ export class AutomationService {
     );
     const cloned = cloneAutomationDefinitionForAuthoring(baseDefinition.definition);
     const validated = validateAutomationDefinition(cloned.definition);
+    await this.assertActionLimit(tenant.workspaceId, validated.definition, this.prisma);
     const name = normalizeName(dto.name ?? `${source.workflow.name} Copy`);
     const workflow = await this.prisma
       .$transaction(
@@ -231,6 +236,7 @@ export class AutomationService {
       settings: draft.settingsDefinition as Record<string, unknown>,
     };
     const validated = validateAutomationDefinition(definitionFromDto(dto, base));
+    await this.assertActionLimit(tenant.workspaceId, validated.definition, this.prisma);
     const updated = await this.prisma.automationWorkflowVersion.update({
       where: { id: draft.id },
       data: {
@@ -266,12 +272,22 @@ export class AutomationService {
             select: versionSelect,
           });
           if (!draft) throw new BadRequestException('A draft version is required before publish.');
-          validateAutomationDefinition({
+          const validated = validateAutomationDefinition({
             trigger: draft.triggerDefinition as Record<string, unknown>,
             nodes: draft.nodesDefinition as unknown as AutomationDefinition['nodes'],
             edges: draft.edgesDefinition as unknown as AutomationDefinition['edges'],
             settings: draft.settingsDefinition as Record<string, unknown>,
           });
+          if (this.policy) {
+            await this.policy.assertActionCountLimit(
+              tenant.workspaceId,
+              countActionNodes(validated.definition),
+              tx,
+            );
+            await this.policy.withWorkspaceQuotaLock(tenant.workspaceId, tx, 11_800, async () => {
+              await this.policy?.assertPublishedWorkflowLimit(tenant.workspaceId, workflowId, tx);
+            });
+          }
           const maxVersion = await tx.automationWorkflowVersion.aggregate({
             where: { workflowId, workspaceId: tenant.workspaceId, state: 'PUBLISHED' },
             _max: { versionNumber: true },
@@ -342,6 +358,7 @@ export class AutomationService {
           });
           if (!source) throw new NotFoundException('Published automation version not found.');
           const validated = validateAutomationDefinition(definitionFromVersionSnapshot(source));
+          await this.assertActionLimit(tenant.workspaceId, validated.definition, tx);
           const draft = await tx.automationWorkflowVersion.create({
             data: versionCreateData(
               workflowId,
@@ -455,6 +472,7 @@ export class AutomationService {
       dto.sourceWorkflowVersionId,
     );
     const validated = validateAutomationDefinition(definitionFromVersionSnapshot(source.version));
+    await this.assertActionLimit(tenant.workspaceId, validated.definition, this.prisma);
     const template = await this.prisma.automationWorkflowTemplate.create({
       data: {
         workspaceId: tenant.workspaceId,
@@ -493,6 +511,7 @@ export class AutomationService {
     const baseDefinition = validateAutomationDefinition(templateDefinition(template));
     const cloned = cloneAutomationDefinitionForAuthoring(baseDefinition.definition);
     const validated = validateAutomationDefinition(cloned.definition);
+    await this.assertActionLimit(tenant.workspaceId, validated.definition, this.prisma);
     const name = normalizeName(dto.name ?? template.name);
     const workflow = await this.prisma
       .$transaction(
@@ -655,6 +674,15 @@ export class AutomationService {
       throw new BadRequestException('Workspace membership context is required.');
     }
     return tenant.workspaceMembershipId;
+  }
+
+  private async assertActionLimit(
+    workspaceId: string,
+    definition: AutomationDefinition,
+    client: Prisma.TransactionClient | PrismaService,
+  ) {
+    if (!this.policy) return;
+    await this.policy.assertActionCountLimit(workspaceId, countActionNodes(definition), client);
   }
 
   private record(
@@ -822,6 +850,10 @@ function templateDefinition(template: TemplateDetail): AutomationDefinition {
     edges: template.edgesDefinition as unknown as AutomationDefinition['edges'],
     settings: template.settingsDefinition as Record<string, unknown>,
   };
+}
+
+function countActionNodes(definition: AutomationDefinition) {
+  return definition.nodes.filter((node) => node.type === 'ACTION').length;
 }
 
 function triggerTypeFromJson(value: Prisma.JsonValue | null | undefined) {

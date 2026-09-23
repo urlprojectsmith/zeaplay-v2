@@ -5,6 +5,7 @@ import {
   AutomationTriggerType,
   AutomationWorkflowNodeType,
 } from '@prisma/client';
+import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { AutomationExecutionService } from './automation-execution.service';
 
 describe('AutomationExecutionService', () => {
@@ -156,6 +157,39 @@ describe('AutomationExecutionService', () => {
     );
   });
 
+  it('checks dispatch concurrency with the current pending execution excluded', async () => {
+    const queue = { add: jest.fn().mockResolvedValue({}) };
+    const tx = {};
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+      automationExecution: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'execution-1', workspaceId: 'workspace-1' }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const policy = {
+      withWorkspaceQuotaLock: jest.fn((_workspaceId, _tx, _suffix, callback) => callback()),
+      assertConcurrentExecutionLimit: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AutomationExecutionService(
+      prisma as never,
+      {} as never,
+      queue as never,
+      policy as never,
+    );
+
+    await service.dispatchPendingExecutions();
+
+    expect(policy.assertConcurrentExecutionLimit).toHaveBeenCalledWith(
+      'workspace-1',
+      tx,
+      'execution-1',
+    );
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
   it('recovers an ambiguous running CREATE_TASK step from the invocation key without rerunning action', async () => {
     const actions = { executeAction: jest.fn() };
     const prisma = {
@@ -260,7 +294,331 @@ describe('AutomationExecutionService', () => {
       }),
     );
   });
+
+  it('replays a failed execution by creating a new pending execution from stored context', async () => {
+    const tx = replayTx(AutomationExecutionStatus.FAILED);
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+      automationExecution: {
+        findFirst: jest.fn().mockResolvedValue(replayDetail('replay-1')),
+      },
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const service = new AutomationExecutionService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      audit as never,
+    );
+
+    await service.replayExecution(tenantContext(), 'execution-1', {
+      reason: 'Operator approved replay',
+      confirmation: 'REPLAY',
+      idempotencyKey: 'replay-key-1',
+    });
+
+    expect(tx.automationExecution.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          triggerMatchId: 'match-1',
+          domainEventId: 'event-1',
+          workflowVersionId: 'version-1',
+          replayOfExecutionId: 'execution-1',
+          replayReason: 'Operator approved replay',
+          replayIdempotencyKey: 'replay-key-1',
+        }),
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'automation.execution_replayed',
+        entityId: 'replay-1',
+      }),
+    );
+    expect(tx).not.toHaveProperty('automationStepExecution');
+  });
+
+  it('returns an existing replay for the same idempotency key and payload without duplicate audit', async () => {
+    const tx = replayTx(AutomationExecutionStatus.FAILED, {
+      idempotent: {
+        id: 'replay-1',
+        replayOfExecutionId: 'execution-1',
+        replayReason: 'Operator approved replay',
+      },
+    });
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+      automationExecution: {
+        findFirst: jest.fn().mockResolvedValue(replayDetail('replay-1')),
+      },
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const service = new AutomationExecutionService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      audit as never,
+    );
+
+    await service.replayExecution(tenantContext(), 'execution-1', {
+      reason: 'Operator approved replay',
+      confirmation: 'REPLAY',
+      idempotencyKey: 'replay-key-1',
+    });
+
+    expect(tx.automationExecution.create).not.toHaveBeenCalled();
+    expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('rejects replay for succeeded executions', async () => {
+    const tx = replayTx(AutomationExecutionStatus.SUCCEEDED);
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+    };
+    const service = new AutomationExecutionService(prisma as never, {} as never);
+
+    await expect(
+      service.replayExecution(tenantContext(), 'execution-1', {
+        reason: 'No replay',
+        confirmation: 'REPLAY',
+        idempotencyKey: 'replay-key-1',
+      }),
+    ).rejects.toThrow('AUTOMATION_REPLAY_NOT_ALLOWED');
+    expect(tx.automationExecution.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects conflicting replay idempotency keys', async () => {
+    const tx = replayTx(AutomationExecutionStatus.FAILED, {
+      idempotent: {
+        id: 'replay-1',
+        replayOfExecutionId: 'other-execution',
+        replayReason: 'Different payload',
+      },
+    });
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+    };
+    const service = new AutomationExecutionService(prisma as never, {} as never);
+
+    await expect(
+      service.replayExecution(tenantContext(), 'execution-1', {
+        reason: 'Operator approved replay',
+        confirmation: 'REPLAY',
+        idempotencyKey: 'replay-key-1',
+      }),
+    ).rejects.toThrow('AUTOMATION_REPLAY_IDEMPOTENCY_CONFLICT');
+    expect(tx.automationExecution.create).not.toHaveBeenCalled();
+  });
+
+  it('lists executions with workspace, pagination, date, status, event, entity, and correlation filters', async () => {
+    const prisma = {
+      $transaction: jest.fn(async (queries: Array<Promise<unknown>>) => Promise.all(queries)),
+      automationExecution: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new AutomationExecutionService(prisma as never, {} as never);
+
+    await service.listExecutions(tenantContext(), {
+      page: 2,
+      pageSize: 10,
+      sortDirection: 'asc',
+      sortBy: 'createdAt',
+      status: AutomationExecutionStatus.DEAD_LETTERED,
+      workflowId: '11111111-1111-4111-8111-111111111111',
+      eventType: AutomationTriggerType.TASK_CREATED,
+      entityType: 'TASK' as never,
+      correlationId: 'correlation-1',
+      from: '2026-01-01T00:00:00.000Z',
+      to: '2026-01-02T00:00:00.000Z',
+    });
+
+    expect(prisma.automationExecution.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workspaceId: 'workspace-1',
+          status: AutomationExecutionStatus.DEAD_LETTERED,
+          workflowId: '11111111-1111-4111-8111-111111111111',
+          correlationId: 'correlation-1',
+          domainEvent: expect.objectContaining({
+            eventType: AutomationTriggerType.TASK_CREATED,
+            entityType: 'TASK',
+          }),
+        }),
+        skip: 10,
+        take: 10,
+      }),
+    );
+    expect(prisma.automationExecution.findMany.mock.calls[0][0].where.createdAt).toEqual({
+      gte: new Date('2026-01-01T00:00:00.000Z'),
+      lte: new Date('2026-01-02T00:00:00.000Z'),
+    });
+  });
+
+  it('bounds execution monitoring queries to a finite date window', async () => {
+    const prisma = {
+      $transaction: jest.fn(async (queries: Array<Promise<unknown>>) => Promise.all(queries)),
+      automationExecution: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new AutomationExecutionService(prisma as never, {} as never);
+
+    await service.listExecutions(tenantContext(), {
+      page: 1,
+      pageSize: 20,
+      sortDirection: 'desc',
+      sortBy: 'createdAt',
+      from: '2026-01-01T00:00:00.000Z',
+      to: '2026-06-01T00:00:00.000Z',
+    });
+
+    expect(prisma.automationExecution.findMany.mock.calls[0][0].where.createdAt).toEqual({
+      gte: new Date('2026-01-01T00:00:00.000Z'),
+      lte: new Date('2026-02-01T00:00:00.000Z'),
+    });
+  });
+
+  it('rejects execution monitoring ranges where to is before from', async () => {
+    const prisma = {
+      $transaction: jest.fn(),
+      automationExecution: {
+        count: jest.fn(),
+        findMany: jest.fn(),
+      },
+    };
+    const service = new AutomationExecutionService(prisma as never, {} as never);
+
+    await expect(
+      service.listExecutions(tenantContext(), {
+        page: 1,
+        pageSize: 20,
+        sortDirection: 'desc',
+        sortBy: 'createdAt',
+        from: '2026-02-01T00:00:00.000Z',
+        to: '2026-01-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow('AUTOMATION_MONITORING_DATE_RANGE_INVALID');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 });
+
+function tenantContext(): WorkspaceTenantContext {
+  return {
+    agencyId: 'agency-1',
+    workspaceId: 'workspace-1',
+    workspaceMembershipId: 'member-1',
+    agencyMembershipId: null,
+    roleId: 'role-1',
+    roleName: 'ADMIN',
+    permissions: [],
+    accessSource: 'WORKSPACE_MEMBERSHIP',
+    userId: 'user-1',
+  };
+}
+
+function replayTx(
+  status: AutomationExecutionStatus,
+  options: {
+    idempotent?: { id: string; replayOfExecutionId: string | null; replayReason: string | null };
+  } = {},
+) {
+  return {
+    automationExecution: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValueOnce(options.idempotent ?? null)
+        .mockResolvedValueOnce({
+          id: 'execution-1',
+          workspaceId: 'workspace-1',
+          triggerMatchId: 'match-1',
+          domainEventId: 'event-1',
+          workflowId: 'workflow-1',
+          workflowVersionId: 'version-1',
+          status,
+          correlationId: 'correlation-1',
+          automationDepth: 0,
+          workflowVersion: {
+            id: 'version-1',
+            nodesDefinition: [
+              triggerNode(),
+              actionNode('action-1', AutomationActionType.CREATE_TASK),
+            ],
+            edgesDefinition: [{ fromNodeId: 'trigger', toNodeId: 'action-1' }],
+          },
+        }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 'replay-1',
+        workflowId: 'workflow-1',
+        workflowVersionId: 'version-1',
+      }),
+      create: jest.fn().mockResolvedValue({
+        id: 'replay-1',
+        workflowId: 'workflow-1',
+        workflowVersionId: 'version-1',
+      }),
+    },
+  };
+}
+
+function replayDetail(id: string) {
+  return {
+    id,
+    shortRef: id,
+    workspaceId: 'workspace-1',
+    triggerMatchId: 'match-1',
+    domainEventId: 'event-1',
+    workflowId: 'workflow-1',
+    workflowName: 'Workflow',
+    workflowVersionId: 'version-1',
+    triggerEvent: AutomationTriggerType.TASK_CREATED,
+    entityType: 'TASK',
+    entityId: 'task-1',
+    status: AutomationExecutionStatus.PENDING_QUEUE,
+    correlationId: 'correlation-1',
+    automationDepth: 0,
+    attemptCount: 0,
+    maxAttempts: 3,
+    failureCode: null,
+    failureMessage: null,
+    replayOfExecutionId: 'execution-1',
+    replayReason: 'Operator approved replay',
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    queuedAt: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: null,
+    workflow: { id: 'workflow-1', name: 'Workflow' },
+    workflowVersion: { versionNumber: 1 },
+    domainEvent: {
+      id: 'event-1',
+      eventType: AutomationTriggerType.TASK_CREATED,
+      entityType: 'TASK',
+      entityId: 'task-1',
+      occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+    },
+    triggerMatch: {
+      id: 'match-1',
+      triggerNodeId: 'trigger',
+      status: 'MATCHED',
+      reasonCode: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    },
+    steps: [],
+  };
+}
 
 function executionRecord() {
   return {
@@ -399,7 +757,7 @@ function prismaForMatch(
   return {
     automationTriggerMatch: { findUnique: jest.fn().mockResolvedValue(match) },
     automationExecution: {
-      findUnique: jest.fn().mockResolvedValue(null),
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 'execution-1' }),
     },
   };

@@ -22,6 +22,9 @@ import {
   GamificationWorkXpEventOutcome,
   GamificationWorkXpEventType,
   MembershipStatus,
+  NotificationCategory,
+  NotificationEntityType,
+  NotificationType,
   Prisma,
   ProcessingJobStatus,
   ProjectStatus,
@@ -62,6 +65,7 @@ import { AutomationDomainEventsService } from '../automation/automation-domain-e
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   BulkTaskIdsDto,
   BulkTaskMembershipsDto,
@@ -139,6 +143,9 @@ const missingAutomationDomainEventsService = {
   recordDomainEventInTransaction: () => Promise.resolve({ id: null }),
   evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
 } as unknown as AutomationDomainEventsService;
+const missingNotificationsService = {
+  createNotification: () => Promise.resolve(null),
+} as unknown as NotificationsService;
 
 @Injectable()
 export class TasksService {
@@ -157,6 +164,8 @@ export class TasksService {
     @Optional() private readonly gamification: GamificationService = missingGamificationService,
     @Optional()
     private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
+    @Optional()
+    private readonly notifications: NotificationsService = missingNotificationsService,
   ) {}
 
   async create(
@@ -314,6 +323,7 @@ export class TasksService {
               membershipId,
             })),
           });
+          await this.notifyTaskAssigneesInTransaction(tx, tenant, created.id, title, assigneeIds);
         }
         if (followerIds.length > 0) {
           await tx.taskFollower.createMany({
@@ -2458,6 +2468,16 @@ export class TasksService {
           },
         },
       });
+      const tasks = await tx.task.findMany({
+        where: { id: { in: changedTaskIds }, workspaceId: tenant.workspaceId },
+        select: { id: true, title: true },
+      });
+      for (const task of tasks) {
+        const recipients = createdRows
+          .filter((row) => row.taskId === task.id)
+          .map((row) => row.membershipId);
+        await this.notifyTaskAssigneesInTransaction(tx, tenant, task.id, task.title, recipients);
+      }
       return { changedTaskIds, createdCount };
     });
     return bulkRelationResult(
@@ -3783,6 +3803,12 @@ export class TasksService {
   ) {
     await this.assertTask(tenant.workspaceId, taskId);
     const membershipIds = await this.activeMembershipIds(tenant.workspaceId, dto.membershipIds);
+    const existingAssignees = await this.prisma.taskAssignee.findMany({
+      where: { taskId, workspaceId: tenant.workspaceId },
+      select: { membershipId: true },
+    });
+    const existingIds = new Set(existingAssignees.map((assignee) => assignee.membershipId));
+    const newlyAssignedIds = membershipIds.filter((membershipId) => !existingIds.has(membershipId));
     const task = await this.prisma.$transaction(async (tx) => {
       await tx.taskAssignee.deleteMany({ where: { taskId, workspaceId: tenant.workspaceId } });
       if (membershipIds.length > 0) {
@@ -3794,7 +3820,18 @@ export class TasksService {
           })),
         });
       }
-      return tx.task.findUniqueOrThrow({ where: { id: taskId }, select: taskDetailSelect });
+      const updatedTask = await tx.task.findUniqueOrThrow({
+        where: { id: taskId },
+        select: taskDetailSelect,
+      });
+      await this.notifyTaskAssigneesInTransaction(
+        tx,
+        tenant,
+        taskId,
+        updatedTask.title,
+        newlyAssignedIds,
+      );
+      return updatedTask;
     });
     await this.audit.record({
       agencyId: tenant.agencyId,
@@ -3806,6 +3843,33 @@ export class TasksService {
       metadata: { count: membershipIds.length },
     });
     return serializeTaskDetail(task, tenant);
+  }
+
+  private async notifyTaskAssigneesInTransaction(
+    tx: Prisma.TransactionClient,
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    title: string,
+    membershipIds: string[],
+  ) {
+    const actorMembershipId = tenant.workspaceMembershipId ?? null;
+    for (const membershipId of membershipIds) {
+      if (actorMembershipId && membershipId === actorMembershipId) continue;
+      await this.notifications.createNotification({
+        tx,
+        workspaceId: tenant.workspaceId,
+        recipientMembershipId: membershipId,
+        actorMembershipId,
+        category: NotificationCategory.TASK,
+        type: NotificationType.TASK_ASSIGNED,
+        title: 'Task assigned',
+        message: `You were assigned to ${title}.`,
+        entityType: NotificationEntityType.TASK,
+        entityId: taskId,
+        dedupeKey: `task:${taskId}:assigned:${membershipId}`,
+        metadata: { taskId },
+      });
+    }
   }
 
   async replaceFollowers(

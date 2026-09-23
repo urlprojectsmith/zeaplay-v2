@@ -26,6 +26,7 @@ import { TagsModule } from './modules/tags/tags.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { AutomationModule } from './modules/automation/automation.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { AutomationModule } from './modules/automation/automation.module';
     TicketsModule,
     GamificationModule,
     AutomationModule,
+    NotificationsModule,
     TagsModule,
     AgenciesModule,
     WorkspacesModule,

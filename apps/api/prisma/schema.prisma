@@ -98,6 +98,52 @@ enum TaskPriority {
   URGENT
 }
 
+enum NotificationCategory {
+  TASK
+  PROJECT
+  TICKET
+  AUTOMATION
+  GAMIFICATION
+  SYSTEM
+  CALENDAR
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_STATUS_CHANGED
+  TASK_DUE_SOON
+  TASK_OVERDUE
+  PROJECT_ASSIGNED
+  PROJECT_STATUS_CHANGED
+  PROJECT_DUE_SOON
+  TICKET_ASSIGNED
+  TICKET_STATUS_CHANGED
+  TICKET_RESOLVED
+  TICKET_SLA_WARNING
+  AUTOMATION_EXECUTION_FAILED
+  AUTOMATION_DEAD_LETTERED
+  GAMIFICATION_ACHIEVEMENT_EARNED
+  GAMIFICATION_BADGE_EARNED
+  GAMIFICATION_REWARD_REDEEMED
+  SYSTEM_ANNOUNCEMENT
+}
+
+enum NotificationPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
+}
+
+enum NotificationEntityType {
+  TASK
+  PROJECT
+  TICKET
+  AUTOMATION_EXECUTION
+  ACHIEVEMENT
+  REWARD
+  CALENDAR_EVENT
+}
+
 enum TaskCommentVisibility {
   NORMAL
   INTERNAL
@@ -647,10 +693,13 @@ model Workspace {
   automationWorkflows                AutomationWorkflow[]
   automationWorkflowVersions         AutomationWorkflowVersion[]
   automationWorkflowTemplates        AutomationWorkflowTemplate[]
+  automationWorkspacePolicy          AutomationWorkspacePolicy?
   automationDomainEvents             AutomationDomainEvent[]
   automationTriggerMatches           AutomationTriggerMatch[]
   automationExecutions               AutomationExecution[]
   automationStepExecutions           AutomationStepExecution[]
+  notifications                      Notification[]
+  notificationPreferences            NotificationPreference[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -796,6 +845,9 @@ model WorkspaceMembership {
   automationWorkflowVersionsCreated  AutomationWorkflowVersion[]        @relation("AutomationWorkflowVersionCreator")
   automationWorkflowTemplatesCreated AutomationWorkflowTemplate[]       @relation("AutomationWorkflowTemplateCreator")
   automationDomainEventsActed        AutomationDomainEvent[]            @relation("AutomationDomainEventActor")
+  receivedNotifications              Notification[]                     @relation("NotificationRecipient")
+  actedNotifications                 Notification[]                     @relation("NotificationActor")
+  notificationPreferences            NotificationPreference[]
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -805,6 +857,56 @@ model WorkspaceMembership {
   @@index([workspaceId, departmentId])
   @@index([userId])
   @@map("workspace_memberships")
+}
+
+model Notification {
+  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId           String                  @map("workspace_id") @db.Uuid
+  recipientMembershipId String                  @map("recipient_membership_id") @db.Uuid
+  category              NotificationCategory
+  type                  NotificationType
+  title                 String                  @db.VarChar(160)
+  message               String                  @db.VarChar(600)
+  entityType            NotificationEntityType? @map("entity_type")
+  entityId              String?                 @map("entity_id") @db.Uuid
+  actorMembershipId     String?                 @map("actor_membership_id") @db.Uuid
+  priority              NotificationPriority    @default(NORMAL)
+  readAt                DateTime?               @map("read_at") @db.Timestamptz(6)
+  metadata              Json?
+  dedupeKey             String?                 @map("dedupe_key") @db.VarChar(180)
+  createdAt             DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt             DateTime?               @map("expires_at") @db.Timestamptz(6)
+
+  workspace           Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  recipientMembership WorkspaceMembership  @relation("NotificationRecipient", fields: [recipientMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  actorMembership     WorkspaceMembership? @relation("NotificationActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, recipientMembershipId, dedupeKey])
+  @@index([workspaceId, recipientMembershipId, createdAt])
+  @@index([workspaceId, recipientMembershipId, readAt, createdAt])
+  @@index([workspaceId, recipientMembershipId, category, createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String               @map("workspace_id") @db.Uuid
+  membershipId String               @map("membership_id") @db.Uuid
+  category     NotificationCategory
+  inAppEnabled Boolean              @default(true) @map("in_app_enabled")
+  emailEnabled Boolean              @default(false) @map("email_enabled")
+  pushEnabled  Boolean              @default(false) @map("push_enabled")
+  mutedUntil   DateTime?            @map("muted_until") @db.Timestamptz(6)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  membership WorkspaceMembership @relation(fields: [membershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([membershipId, category])
+  @@index([workspaceId, membershipId])
+  @@map("notification_preferences")
 }
 
 model GamificationXpEntry {
@@ -2683,6 +2785,7 @@ model AutomationWorkflow {
   versions               AutomationWorkflowVersion[]  @relation("AutomationWorkflowVersions")
   sourceTemplates        AutomationWorkflowTemplate[] @relation("AutomationWorkflowTemplateSourceWorkflow")
   triggerMatches         AutomationTriggerMatch[]
+  executions             AutomationExecution[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId, status, createdAt])
@@ -2754,6 +2857,22 @@ model AutomationWorkflowTemplate {
   @@map("automation_workflow_templates")
 }
 
+model AutomationWorkspacePolicy {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId                String   @unique @map("workspace_id") @db.Uuid
+  maxPublishedWorkflows      Int      @map("max_published_workflows")
+  maxExecutionsPerMinute     Int      @map("max_executions_per_minute")
+  maxConcurrentExecutions    Int      @map("max_concurrent_executions")
+  maxActionsPerExecution     Int      @map("max_actions_per_execution")
+  maxReplaysPerHour          Int      @map("max_replays_per_hour")
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("automation_workspace_policies")
+}
+
 model AutomationDomainEvent {
   id                String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId       String                          @map("workspace_id") @db.Uuid
@@ -2799,7 +2918,7 @@ model AutomationTriggerMatch {
   domainEvent     AutomationDomainEvent     @relation(fields: [domainEventId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   workflow        AutomationWorkflow        @relation(fields: [workflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   workflowVersion AutomationWorkflowVersion @relation(fields: [workflowVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  execution       AutomationExecution?
+  executions      AutomationExecution[]
 
   @@unique([id, workspaceId])
   @@unique([domainEventId, workflowVersionId, triggerNodeId])
@@ -2813,7 +2932,7 @@ model AutomationTriggerMatch {
 model AutomationExecution {
   id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId       String                    @map("workspace_id") @db.Uuid
-  triggerMatchId    String                    @unique @map("trigger_match_id") @db.Uuid
+  triggerMatchId    String                    @map("trigger_match_id") @db.Uuid
   domainEventId     String                    @map("domain_event_id") @db.Uuid
   workflowId        String                    @map("workflow_id") @db.Uuid
   workflowVersionId String                    @map("workflow_version_id") @db.Uuid
@@ -2824,6 +2943,9 @@ model AutomationExecution {
   maxAttempts       Int                       @default(3) @map("max_attempts")
   failureCode       String?                   @map("failure_code") @db.VarChar(120)
   failureMessage    String?                   @map("failure_message") @db.VarChar(500)
+  replayOfExecutionId String?                 @map("replay_of_execution_id") @db.Uuid
+  replayReason      String?                   @map("replay_reason") @db.VarChar(500)
+  replayIdempotencyKey String?                @map("replay_idempotency_key") @db.VarChar(120)
   createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
   queuedAt          DateTime?                 @map("queued_at") @db.Timestamptz(6)
   startedAt         DateTime?                 @map("started_at") @db.Timestamptz(6)
@@ -2832,13 +2954,18 @@ model AutomationExecution {
   workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   triggerMatch    AutomationTriggerMatch    @relation(fields: [triggerMatchId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   domainEvent     AutomationDomainEvent     @relation(fields: [domainEventId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workflow        AutomationWorkflow        @relation(fields: [workflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   workflowVersion AutomationWorkflowVersion @relation(fields: [workflowVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  replayOf        AutomationExecution?      @relation("AutomationExecutionReplayLineage", fields: [replayOfExecutionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  replays         AutomationExecution[]     @relation("AutomationExecutionReplayLineage")
   steps           AutomationStepExecution[]
 
   @@unique([id, workspaceId])
-  @@unique([triggerMatchId, workspaceId])
+  @@index([triggerMatchId, workspaceId])
   @@index([workspaceId, createdAt])
   @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, replayOfExecutionId])
+  @@index([workspaceId, correlationId])
   @@index([status, createdAt])
   @@index([domainEventId])
   @@index([workflowVersionId])
