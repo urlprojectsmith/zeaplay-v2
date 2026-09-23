@@ -21,8 +21,15 @@ import {
   WORKSPACE_HEADER,
 } from '../../common/tenant/tenant-context.decorator';
 import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
+import { AutomationDomainEventsService } from './automation-domain-events.service';
+import { AutomationExecutionService } from './automation-execution.service';
 import { AutomationService } from './automation.service';
 import {
+  AutomationDomainEventParamsDto,
+  AutomationDomainEventQueryDto,
+  AutomationExecutionParamsDto,
+  AutomationExecutionQueryDto,
+  AutomationTriggerMatchQueryDto,
   AutomationVersionQueryDto,
   AutomationWorkflowParamsDto,
   AutomationWorkflowQueryDto,
@@ -39,7 +46,11 @@ import {
 @UseGuards(JwtAuthGuard, WorkspaceTenantGuard, PermissionGuard)
 @Controller('workspaces/:workspaceId/automations')
 export class AutomationController {
-  constructor(private readonly automation: AutomationService) {}
+  constructor(
+    private readonly automation: AutomationService,
+    private readonly domainEvents: AutomationDomainEventsService,
+    private readonly executions: AutomationExecutionService,
+  ) {}
 
   @Get()
   @RequirePermissions(PermissionKeys.automationView)
@@ -57,6 +68,51 @@ export class AutomationController {
     @Body() dto: CreateAutomationWorkflowDto,
   ) {
     return this.automation.create(tenant, dto);
+  }
+
+  @Get('events')
+  @RequirePermissions(PermissionKeys.automationView)
+  events(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: AutomationDomainEventQueryDto,
+  ) {
+    return this.domainEvents.listEvents(tenant, query);
+  }
+
+  @Get('events/:eventId')
+  @RequirePermissions(PermissionKeys.automationView)
+  event(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationDomainEventParamsDto,
+  ) {
+    return this.domainEvents.getEvent(tenant, params.eventId);
+  }
+
+  @Get('trigger-matches')
+  @RequirePermissions(PermissionKeys.automationView)
+  triggerMatches(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: AutomationTriggerMatchQueryDto,
+  ) {
+    return this.domainEvents.listTriggerMatches(tenant, query);
+  }
+
+  @Get('executions')
+  @RequirePermissions(PermissionKeys.automationView)
+  executionsList(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: AutomationExecutionQueryDto,
+  ) {
+    return this.executions.listExecutions(tenant, query);
+  }
+
+  @Get('executions/:executionId')
+  @RequirePermissions(PermissionKeys.automationView)
+  execution(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationExecutionParamsDto,
+  ) {
+    return this.executions.getExecution(tenant, params.executionId);
   }
 
   @Get(':workflowId')

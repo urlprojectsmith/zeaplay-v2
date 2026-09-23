@@ -7,6 +7,11 @@ describe('AutomationService', () => {
     agencyId: 'agency-1',
     workspaceId: 'workspace-1',
     workspaceMembershipId: 'membership-1',
+    agencyMembershipId: null,
+    roleId: 'role-1',
+    roleName: 'ADMIN',
+    permissions: ['automation.publish'],
+    accessSource: 'WORKSPACE_MEMBERSHIP',
     userId: 'user-1',
   };
 

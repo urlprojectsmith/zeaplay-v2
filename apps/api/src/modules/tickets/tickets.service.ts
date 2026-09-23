@@ -15,6 +15,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import {
   AssetStatus,
   AttachmentType,
+  AutomationDomainEventEntityType,
+  AutomationTriggerType,
   DepartmentStatus,
   GamificationPointWorkType,
   GamificationWorkXpEventOutcome,
@@ -42,6 +44,8 @@ import {
 import type { StorageAdapter } from '../../infrastructure/storage/storage-adapter';
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { AuditService } from '../audit/audit.service';
+import type { AutomationMutationContext } from '../automation/automation-action.types';
+import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
@@ -182,6 +186,10 @@ const missingGamificationService = {
   | 'handleWorkCreationVoid'
   | 'handleWorkReopen'
 > as GamificationService;
+const missingAutomationDomainEventsService = {
+  recordDomainEventInTransaction: () => Promise.resolve({ id: null }),
+  evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
+} as unknown as AutomationDomainEventsService;
 
 @Injectable()
 export class TicketsService {
@@ -199,9 +207,15 @@ export class TicketsService {
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter = missingStorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue = missingQueue,
     @Optional() private readonly gamification: GamificationService = missingGamificationService,
+    @Optional()
+    private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
   ) {}
 
-  async create(tenant: WorkspaceTenantContext, dto: CreateTicketDto) {
+  async create(
+    tenant: WorkspaceTenantContext,
+    dto: CreateTicketDto,
+    automation?: AutomationMutationContext,
+  ) {
     const subject = normalizeSubject(dto.subject);
     const description = normalizeDescription(dto.description);
     const status = await this.ticketStatus(tenant.workspaceId, dto.statusDefinitionId);
@@ -219,7 +233,7 @@ export class TicketsService {
         })
       : { departmentId: null, assignedToMembershipId: null };
 
-    const ticket = await this.prisma.$transaction(async (tx) => {
+    const { ticket, eventIds } = await this.prisma.$transaction(async (tx) => {
       const sequenceNumber = await allocateTicketNumber(tx, tenant.workspaceId);
       const created = await tx.ticket.create({
         data: {
@@ -246,10 +260,33 @@ export class TicketsService {
         data: { workspaceId: tenant.workspaceId, ticketId: created.id, ...requester },
       });
       await this.ticketSla.initializeForTicket(tx, created);
-      return tx.ticket.findUniqueOrThrow({
+      const ticket = await tx.ticket.findUniqueOrThrow({
         where: { id_workspaceId: { id: created.id, workspaceId: tenant.workspaceId } },
         select: ticketDetailSelect,
       });
+      const event = await this.automationEvents.recordDomainEventInTransaction(tx, {
+        workspaceId: tenant.workspaceId,
+        eventType: AutomationTriggerType.TICKET_CREATED,
+        entityType: AutomationDomainEventEntityType.TICKET,
+        entityId: ticket.id,
+        actorMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt: ticket.createdAt,
+        correlationId: automationCorrelationId(automation, `ticket:${ticket.id}:created`),
+        causationId: automationCausationId(automation),
+        automationDepth: automationDepth(automation),
+        payload: {
+          ticketId: ticket.id,
+          workspaceId: tenant.workspaceId,
+          departmentId: ticket.departmentId,
+          statusDefinitionId: ticket.statusDefinitionId,
+          priority: ticket.priority,
+          creatorMembershipId: tenant.workspaceMembershipId ?? null,
+          requesterType: requester.type,
+          occurredAt: ticket.createdAt.toISOString(),
+        },
+        idempotencyKey: `ticket:${ticket.id}:created`,
+      });
+      return { ticket, eventIds: event.id ? [event.id] : [] };
     });
 
     await this.audit.record({
@@ -274,6 +311,7 @@ export class TicketsService {
       ticket.id,
       tenant.workspaceMembershipId ?? null,
     );
+    await this.evaluateAutomationEvents(eventIds);
     return serializeTicket(ticket);
   }
 
@@ -749,7 +787,12 @@ export class TicketsService {
     return serializeTicket(await this.readTicket(tenant, id));
   }
 
-  async update(tenant: WorkspaceTenantContext, id: string, dto: UpdateTicketDto) {
+  async update(
+    tenant: WorkspaceTenantContext,
+    id: string,
+    dto: UpdateTicketDto,
+    automation?: AutomationMutationContext,
+  ) {
     const existing = await this.readTicket(tenant, id);
     const data: Prisma.TicketUncheckedUpdateManyInput = {};
     const changed: string[] = [];
@@ -809,7 +852,7 @@ export class TicketsService {
     if (changed.length === 0) return serializeTicket(existing);
 
     let slaEvents: Array<{ metric: 'FIRST_RESPONSE' | 'RESOLUTION'; action: string }> = [];
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const { updated, eventIds } = await this.prisma.$transaction(async (tx) => {
       const result = await tx.ticket.updateMany({
         where: { id, workspaceId: tenant.workspaceId, deletedAt: null },
         data,
@@ -824,10 +867,21 @@ export class TicketsService {
           new Date(),
         );
       }
-      return tx.ticket.findUniqueOrThrow({
+      const updated = await tx.ticket.findUniqueOrThrow({
         where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
         select: ticketDetailSelect,
       });
+      const eventIds = statusChanged
+        ? await this.recordTicketStatusAutomationEvents(
+            tx,
+            tenant,
+            existing,
+            updated,
+            updated.statusDefinition.isTerminal,
+            automation,
+          )
+        : [];
+      return { updated, eventIds };
     });
 
     if (statusChanged) {
@@ -889,6 +943,7 @@ export class TicketsService {
         metadata: { ticketId: id, metric: event.metric },
       });
     }
+    await this.evaluateAutomationEvents(eventIds);
     return serializeTicket(updated);
   }
 
@@ -897,8 +952,14 @@ export class TicketsService {
     id: string,
     statusDefinitionId: string,
     gamificationResolutionTargetAt?: string | null,
+    automation?: AutomationMutationContext,
   ) {
-    return this.update(tenant, id, { statusDefinitionId, gamificationResolutionTargetAt });
+    return this.update(
+      tenant,
+      id,
+      { statusDefinitionId, gamificationResolutionTargetAt },
+      automation,
+    );
   }
 
   async updateRequester(tenant: WorkspaceTenantContext, id: string, dto: TicketRequesterDto) {
@@ -946,6 +1007,7 @@ export class TicketsService {
     tenant: WorkspaceTenantContext,
     id: string,
     dto: UpdateTicketAssignmentDto,
+    _automation?: AutomationMutationContext,
   ) {
     const existing = await this.readTicket(tenant, id);
     const assignment = await this.validAssignment(tenant.workspaceId, existing, dto);
@@ -1996,6 +2058,115 @@ export class TicketsService {
       select: { timezone: true },
     });
     return workspace?.timezone || 'UTC';
+  }
+
+  private async evaluateAutomationEvents(eventIds: string[]) {
+    for (const eventId of eventIds) {
+      await this.automationEvents.evaluateDomainEvent(eventId);
+    }
+  }
+
+  private async recordTicketStatusAutomationEvents(
+    tx: Prisma.TransactionClient,
+    tenant: WorkspaceTenantContext,
+    previous: {
+      id: string;
+      statusDefinitionId: string;
+      statusDefinition: { isTerminal: boolean };
+      priority: TaskPriority;
+      departmentId: string | null;
+      assignedToMembershipId: string | null;
+    },
+    current: {
+      id: string;
+      statusDefinitionId: string;
+      priority: TaskPriority;
+      departmentId: string | null;
+      assignedToMembershipId: string | null;
+      gamificationResolutionTargetAt?: Date | null;
+      slaState?: { resolutionDueAt: Date | null; resolutionCompletedAt: Date | null } | null;
+    },
+    statusIsTerminal: boolean,
+    automation?: AutomationMutationContext,
+  ) {
+    if (previous.statusDefinitionId === current.statusDefinitionId) return [];
+
+    const occurredAt = new Date();
+    const statusSequence =
+      (await tx.automationDomainEvent.count({
+        where: {
+          workspaceId: tenant.workspaceId,
+          entityType: AutomationDomainEventEntityType.TICKET,
+          entityId: current.id,
+          eventType: AutomationTriggerType.TICKET_STATUS_CHANGED,
+        },
+      })) + 1;
+    const correlationId = automationCorrelationId(
+      automation,
+      `ticket:${current.id}:status:${statusSequence}`,
+    );
+    const statusEvent = await this.automationEvents.recordDomainEventInTransaction(tx, {
+      workspaceId: tenant.workspaceId,
+      eventType: AutomationTriggerType.TICKET_STATUS_CHANGED,
+      entityType: AutomationDomainEventEntityType.TICKET,
+      entityId: current.id,
+      actorMembershipId: tenant.workspaceMembershipId ?? null,
+      occurredAt,
+      correlationId,
+      causationId: automationCausationId(automation),
+      automationDepth: automationDepth(automation),
+      payload: {
+        ticketId: current.id,
+        workspaceId: tenant.workspaceId,
+        previousStatusDefinitionId: previous.statusDefinitionId,
+        newStatusDefinitionId: current.statusDefinitionId,
+        departmentId: current.departmentId,
+        priority: current.priority,
+        changedByMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt: occurredAt.toISOString(),
+      },
+      idempotencyKey: `ticket:${current.id}:status:${statusSequence}`,
+    });
+    const eventIds = statusEvent.id ? [statusEvent.id] : [];
+    if (statusIsTerminal && !previous.statusDefinition.isTerminal) {
+      const resolutionCycle =
+        (await tx.automationDomainEvent.count({
+          where: {
+            workspaceId: tenant.workspaceId,
+            entityType: AutomationDomainEventEntityType.TICKET,
+            entityId: current.id,
+            eventType: AutomationTriggerType.TICKET_RESOLVED,
+          },
+        })) + 1;
+      const resolvedEvent = await this.automationEvents.recordDomainEventInTransaction(tx, {
+        workspaceId: tenant.workspaceId,
+        eventType: AutomationTriggerType.TICKET_RESOLVED,
+        entityType: AutomationDomainEventEntityType.TICKET,
+        entityId: current.id,
+        actorMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt,
+        correlationId,
+        causationId: automationCausationId(automation),
+        automationDepth: automationDepth(automation),
+        payload: {
+          ticketId: current.id,
+          workspaceId: tenant.workspaceId,
+          resolverMembershipId: current.assignedToMembershipId,
+          departmentId: current.departmentId,
+          priority: current.priority,
+          resolvedAt:
+            current.slaState?.resolutionCompletedAt?.toISOString() ?? occurredAt.toISOString(),
+          resolutionTargetAt:
+            current.gamificationResolutionTargetAt?.toISOString() ??
+            current.slaState?.resolutionDueAt?.toISOString() ??
+            null,
+          resolutionCycle,
+        },
+        idempotencyKey: `ticket:${current.id}:resolution:${resolutionCycle}`,
+      });
+      if (resolvedEvent.id) eventIds.push(resolvedEvent.id);
+    }
+    return eventIds;
   }
 
   private slaSummaryCounts(
@@ -3329,4 +3500,19 @@ function sameRequester(current: TicketDetailRecord['requester'], next: Normalize
     current.externalEmail === next.externalEmail &&
     current.externalPhone === next.externalPhone
   );
+}
+
+function automationCorrelationId(
+  automation: AutomationMutationContext | undefined,
+  fallback: string,
+) {
+  return automation?.correlationId ?? fallback;
+}
+
+function automationCausationId(automation: AutomationMutationContext | undefined) {
+  return automation?.causationId ?? automation?.triggerDomainEventId ?? null;
+}
+
+function automationDepth(automation: AutomationMutationContext | undefined) {
+  return automation ? (automation.parentAutomationDepth ?? 0) + 1 : 0;
 }

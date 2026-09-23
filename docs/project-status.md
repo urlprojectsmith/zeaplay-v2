@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 11.1 - Automation Core + Workflow Model Implementation PASS
-Next: Phase 11.1 Focused Refinement + Final Verification
+Current: Phase 11.5 - Conditions, Branching + Variables Implementation PASS
+Next: Phase 11.5 Focused Refinement + Final Verification
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -4730,3 +4730,477 @@ Verification:
 - Prisma migrate status: database schema is up to date on isolated scratch database, 53 migrations.
 
 Phase 11.1 AUTOMATION CORE + WORKFLOW MODEL Implementation is pass; the next step is Phase 11.1 Focused Refinement + Final Verification. Phase 11.2 must not start automatically.
+
+### Phase 11.1 Focused Refinement + Final Verification - PASS
+
+Phase 11.1 - AUTOMATION CORE + WORKFLOW MODEL is COMPLETE / PASS.
+
+Focused refinement:
+
+- Graph validation now enforces both node and edge limits.
+- Graph validation rejects unsupported top-level trigger keys and unsupported node config keys by node type.
+- Publish version-number lookup remains scoped by Workflow and Workspace.
+- Focused service coverage locks the workspace-scoped next published version number behavior.
+- Existing Phase 11.1 runtime absence was rechecked; no Phase 11.2 execution scope was introduced.
+
+Final invariants:
+
+- Automations are Workspace scoped.
+- PostgreSQL is Automation source of truth.
+- Workflow identity and version definitions are separate.
+- New workflows begin as Draft.
+- At most one active Draft exists per workflow.
+- Published versions are immutable.
+- Workflow-local published version numbers are transaction-safe.
+- Active published version changes atomically.
+- Old published versions remain historical.
+- Disable/enable preserves version history.
+- Workflow graphs are typed, bounded, and acyclic.
+- Exactly one Trigger root is supported.
+- No arbitrary JavaScript/code execution exists.
+- Workflow definitions do not store raw credentials.
+- Authorization is permission-based.
+- Cross-Workspace workflow access is blocked.
+- Workflow lifecycle changes are audited without dumping full definitions.
+- Workflow/version lists are bounded and avoid N+1.
+- No runtime Trigger Engine exists yet.
+- No action execution exists yet.
+- No Automation BullMQ execution exists yet.
+- No email/WhatsApp/Webex/webhook execution exists yet.
+- No Phase 11.2+ runtime scope exists.
+- Phase 10 remains green.
+
+Final verification:
+
+- Focused Automation validator/service tests: 11/11.
+- API unit: 181/181.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase111_final_verify_20260923`, all 53 migrations applied through `0053_phase11_1_automation_core`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 53 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core` remains pending intentionally; no shared-dev migration was applied.
+
+Phase 11.1 AUTOMATION CORE + WORKFLOW MODEL is COMPLETE / PASS. Next: Phase 11.2 - Trigger Engine + Domain Events, and it must not start automatically.
+
+### Phase 11.2 Implementation - PASS
+
+Phase 11.2 - TRIGGER ENGINE + DOMAIN EVENTS implementation is pass.
+
+Implemented:
+
+- Durable `AutomationDomainEvent` model for trusted Workspace-scoped Task, Project, and Ticket lifecycle events.
+- Durable `AutomationTriggerMatch` model for deterministic trigger matches against immutable published workflow versions.
+- Prisma migration `0054_phase11_2_trigger_engine_domain_events` with append-only table protections.
+- Task create/status/completion domain-event integration.
+- Project create/status/completion domain-event integration.
+- Ticket create/status/resolution domain-event integration.
+- Read-only Automation Events and Trigger Matches APIs guarded by `automation.view`.
+- Deterministic trigger matching for active published versions only, with optional status-transition filters.
+
+Invariants:
+
+- Domain events are recorded by trusted backend services only.
+- Domain events and trigger matches are Workspace scoped.
+- Domain events carry bounded JSON payloads and schema version `1`.
+- Event idempotency is enforced by `(workspaceId, idempotencyKey)`.
+- Trigger matches are deduplicated by `(domainEventId, workflowVersionId, triggerNodeId)`.
+- Trigger matching never executes actions, conditions, delays, external integrations, webhooks, email, WhatsApp, Webex, or BullMQ jobs.
+- Published workflow versions remain immutable snapshots for matching.
+- Only active published workflow versions are considered.
+- Status filters match explicit `fromStatusId` and `toStatusId` values.
+- Cross-Workspace event, workflow, and trigger-match access is blocked by tenant scope and relational fences.
+- `automationDepth` is bounded and reserved for future loop protection.
+- Correlation and causation identifiers are stored for future workflow tracing.
+- No frontend execution surface or visual runtime panel was introduced.
+- No Phase 11.3 scope was started.
+
+Verification:
+
+- Focused Automation trigger/domain-event tests: 13/13.
+- API unit: 183/183.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase112_impl_clean_20260923`, all 54 migrations applied through `0054_phase11_2_trigger_engine_domain_events`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 54 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core` and `0054_phase11_2_trigger_engine_domain_events` remain pending intentionally; no shared-dev migration was applied.
+
+Phase 11.2 TRIGGER ENGINE + DOMAIN EVENTS Implementation is pass; the next step is Phase 11.2 Focused Refinement + Final Verification.
+
+### Phase 11.2 Focused Refinement + Final Verification - PASS
+
+Phase 11.2 - TRIGGER ENGINE + DOMAIN EVENTS is COMPLETE / PASS.
+
+Issues found and fixed:
+
+- Lifecycle status-event helpers now defensively suppress same-status inputs for Task, Project, and Ticket.
+- Focused lifecycle tests now cover same-status suppression, terminal completion/resolution, reopen status-only behavior, and recompletion/reresolution cycle identity.
+- Focused matcher/read tests now cover duplicate evaluation idempotency, active published version filtering, event-snapshot status filters, Workspace-scoped reads, and bounded pagination.
+- Integration reset helpers now clear append-only Automation event history through test-only truncation before deleting membership fixtures.
+- Integration specs now respect externally supplied database URLs, allowing final verification on an isolated migrated schema without applying pending migrations to shared dev.
+
+Final invariants:
+
+- Task, Project, and Ticket lifecycle services create durable trusted Automation Domain Events.
+- PostgreSQL is the event authority.
+- Events are typed, versioned, bounded, snapshot-based, and immutable.
+- Clients cannot create trusted lifecycle events.
+- Lifecycle event creation is idempotent.
+- Status events occur only on actual status changes.
+- Completion/resolution events represent terminal entry.
+- Reopen does not generate completion/resolution.
+- Recompletion/reresolution creates a new cycle event.
+- Correlation, causation, and automation-depth metadata foundation exists.
+- Human/system-originated lifecycle events use automation depth `0`.
+- Trigger Matcher uses same-Workspace active published versions only.
+- Draft, Disabled, Archived, and historical versions do not match new events.
+- Trigger filters use immutable event snapshots, not current entity state.
+- TriggerMatch is immutable and idempotent.
+- Matching failure does not destroy the durable source event; matcher retry is safe.
+- Event and match APIs are read-only, bounded, permission-gated, and Workspace-scoped.
+- No Actions execute.
+- No Conditions, Branches, or Delays execute.
+- No Automation BullMQ execution exists.
+- No workflow execution records exist.
+- No external integrations execute.
+- Phase 11.3 has not started.
+- Phase 10 and Phase 11.1 remain green.
+
+Final verification:
+
+- Focused Phase 11.2 Automation tests: 19/19.
+- API unit: 189/189.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103 on isolated migrated schema `phase112_final_verify_20260923`.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass with `TURBO_ENV_MODE=loose` and isolated migrated schema override.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated schema `phase112_final_verify_20260923`, all 54 migrations applied through `0054_phase11_2_trigger_engine_domain_events`.
+- Clean Prisma migrate status: database schema was up to date on isolated schema, 54 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core` and `0054_phase11_2_trigger_engine_domain_events` remain pending intentionally; no shared-dev migration was applied.
+- Isolated verification schema was dropped after verification.
+
+Phase 11.2 TRIGGER ENGINE + DOMAIN EVENTS is COMPLETE / PASS. Next: Phase 11.3 - Action Engine, and it must not start automatically.
+
+### Phase 11.3 - Action Engine Implementation PASS
+
+Implemented the internal automation action engine foundation for Task, Project, and Ticket actions.
+
+Implementation scope:
+
+- Added internal `AutomationActionService`; no public execution endpoint was introduced.
+- Added typed Action node config validation for supported Phase 11.3 actions.
+- Added execution-time unresolved variable rejection with `AUTOMATION_UNRESOLVED_VARIABLE`.
+- Added safe action result shape: action type, status, entity type/id, changed flag, generated event IDs placeholder.
+- Reused canonical Task, Project, and Ticket services for mutations.
+- Added workspace-fenced Prisma reads only for target validation and no-op checks.
+- Added optional automation mutation context with workflow/action/trigger/correlation/causation/depth fields.
+- Propagated automation correlation, causation, and depth into domain events caused by internal automation mutations.
+- Added no-op handling for unchanged Task status, Task assignments, Task tags, Project status, Ticket status, and Ticket assignment.
+- Kept `ADD_TICKET_TAG` validation-only because no canonical Ticket tag domain service/model exists yet.
+- Enhanced the frontend automation draft payload builder/editor to include supported Action nodes.
+
+Verification:
+
+- Focused Phase 11.3 tests: 17/17.
+- API unit tests in full suite: 196/196.
+- Web unit tests in full suite: 133/133.
+- Worker unit tests in full suite: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- No migration added; migration chain remains 54 through `0054_phase11_2_trigger_engine_domain_events`.
+- Shared development database was not migrated.
+
+Phase 11.3 ACTION ENGINE Implementation is PASS. Next: Phase 11.3 Focused Refinement + Final Verification. Do not start Phase 11.4 automatically.
+
+### Phase 11.3 - Action Engine Focused Refinement + Final Verification PASS
+
+Phase 11.3 - ACTION ENGINE is COMPLETE / PASS.
+
+Issues found and fixed:
+
+- `ADD_TICKET_TAG` had been reserved but publish-valid despite no canonical Ticket Tag domain service/model existing.
+- `ADD_TICKET_TAG` is now rejected during workflow/action config validation with `AUTOMATION_ACTION_NOT_AVAILABLE`.
+- Frontend Action selectors no longer present `ADD_TICKET_TAG` as an available executable action.
+- Action config validation now adds bounded string checks and date-string validation.
+- Malformed variable fragments such as non-supported `{{...}}` references are rejected during definition validation.
+- Focused tests now cover unavailable action rejection, malformed/overlong action config, duplicate Task tag NO_OP, canonical Task status delegation, missing/foreign Task target rejection, and automation lineage propagation for Task/Project/Ticket events.
+
+Final invariants:
+
+- Action Engine is internal-only.
+- No public arbitrary Action execution endpoint exists.
+- Only approved currently-supported Task, Project, and Ticket Actions can execute.
+- Unavailable action identifiers cannot be published as executable.
+- Action configs are typed and validated.
+- Unresolved variables are not executed.
+- Canonical Task, Project, and Ticket services own business mutations.
+- Action Engine never bypasses domain rules with direct writes.
+- Every target/reference is Workspace-fenced at execution time.
+- Safe repeatable mutations use `NO_OP` semantics where applicable.
+- Automation mutation metadata is trusted internal context only.
+- Action-generated Domain Events propagate correlation/causation and increment `automationDepth`.
+- Action-generated events can match workflows but do not execute them automatically.
+- No Conditions, Branches, or Delays runtime exists.
+- No Automation Execution or Step records exist.
+- No BullMQ Automation queue/retry/dead-letter exists.
+- No external Actions exist.
+- No Phase 11.4 implementation exists.
+- Phase 10, Phase 11.1, and Phase 11.2 remain green.
+
+Final verification:
+
+- Focused Phase 11.3/Automation tests: 32/32.
+- API unit: 202/202.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103 on isolated migrated schema `phase113_final_verify_20260923`.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: initial shared-dev run failed as expected because shared dev still lacks pending 0053/0054; isolated API integration plus worker integration passed.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated schema `phase113_final_verify_20260923`, all 54 migrations applied through `0054_phase11_2_trigger_engine_domain_events`.
+- Clean Prisma migrate status: database schema was up to date on isolated schema, 54 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core` and `0054_phase11_2_trigger_engine_domain_events` remain pending intentionally; no shared-dev migration was applied.
+
+Phase 11.3 ACTION ENGINE is COMPLETE / PASS. Next: Phase 11.4 - Execution Queue + Retry + Idempotency, and it must not start automatically.
+
+### Phase 11.4 - Execution Queue + Retry + Idempotency Implementation PASS
+
+Implemented the first automatic automation execution runtime.
+
+Implementation scope:
+
+- Added `runtimeEligibleAt` to `AutomationTriggerMatch`; existing historical rows remain `NULL`.
+- Added durable `AutomationExecution` and `AutomationStepExecution` models.
+- Added Phase 11.4 migration `0055_phase11_4_automation_execution_runtime`.
+- New runtime-eligible trigger matches create at most one durable execution.
+- PostgreSQL is execution authority; BullMQ/Redis is transport only.
+- Added bounded pending execution dispatcher with deterministic execution job IDs.
+- Added automation execution queue payload shape containing only `executionId`.
+- Added internal BullMQ processor that delegates to the execution service.
+- Added runtime graph planner for linear ACTION-only published workflow versions.
+- Unsupported Condition, Branch, Delay, branching, cyclic, or disconnected graphs become BLOCKED without partial execution.
+- Zero-action workflows succeed without invented action steps.
+- Step executions use deterministic invocation keys and completed steps are skipped on retry.
+- Retry policy is bounded through `AUTOMATION_MAX_ATTEMPTS` with retryable/non-retryable classification.
+- Exhausted retryable failures become `DEAD_LETTERED`.
+- Automation depth is bounded by `AUTOMATION_MAX_DEPTH`; max-depth matches create BLOCKED executions with no steps.
+- Queued executions keep the exact immutable workflow version captured by the trigger match.
+- Added read-only, paginated, permission-gated execution list/detail endpoints.
+- No public run, retry, replay, or step-execute endpoint was added.
+- No external actions, conditions, branches, delays, or Phase 11.5 variable runtime were added.
+
+Implementation invariants:
+
+- Only new runtime-eligible TriggerMatches create executions.
+- Pre-11.4 historical TriggerMatches are never automatically executed.
+- One TriggerMatch creates at most one AutomationExecution.
+- PostgreSQL is Execution authority.
+- BullMQ/Redis is transport only.
+- Queue jobs use deterministic execution IDs.
+- Pending execution dispatch is durable/recoverable.
+- Phase 11.4 executes only linear ACTION-only graphs.
+- Condition/Branch/Delay graphs are blocked without partial execution.
+- Executions reference exact immutable WorkflowVersion.
+- Step executions are durable and idempotent.
+- Completed Steps never rerun.
+- CREATE_TASK retry duplication is guarded by step claim/idempotency state; ambiguous RUNNING retry refuses duplicate side effects.
+- Retries are bounded and distinguish retryable/non-retryable failures.
+- Exhausted retries become DEAD_LETTERED.
+- Automation lineage preserves correlation/causation.
+- automationDepth increments for Action-generated events through Phase 11.3 mutation context.
+- Max Automation depth blocks infinite chains.
+- No public run/retry/replay endpoint exists.
+- No external Actions exist.
+- No Conditions/Branches/Delays execute.
+- No Phase 11.5+ scope started.
+- Phase 10 and 11.1-11.3 remain green.
+
+Verification:
+
+- Focused Phase 11.4/Automation tests: 32/32.
+- API unit: 207/207.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase114_impl_clean_20260923`, all 55 migrations applied through `0055_phase11_4_automation_execution_runtime`.
+- Clean Prisma migrate status: database schema was up to date on isolated scratch database, 55 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, and `0055_phase11_4_automation_execution_runtime` remain pending intentionally; no shared-dev migration was applied.
+- Isolated verification database was dropped after verification.
+
+Phase 11.4 EXECUTION QUEUE + RETRY + IDEMPOTENCY Implementation is PASS. Next: Phase 11.4 Focused Refinement + Final Verification. Do not mark Phase 11.4 COMPLETE. Do not start Phase 11.5.
+
+### Phase 11.4 - Execution Queue + Retry + Idempotency Final Verification PASS
+
+Focused refinement fixed confirmed runtime crash-recovery and queue-recovery gaps without starting Phase 11.5.
+
+Fixes:
+
+- Added Phase 11.4 refinement migration `0056_phase11_4_create_task_invocation_idempotency`.
+- Added nullable `Task.automationInvocationKey` plus workspace-scoped index and partial unique database constraint.
+- CREATE_TASK now reuses an existing task for the same workspace invocation key instead of creating a duplicate.
+- Ambiguous RUNNING CREATE_TASK steps recover from the durable invocation key result; other ambiguous RUNNING step states fail deterministically with a non-retryable diagnostic error.
+- Dispatcher now recovers both `PENDING_QUEUE` and `QUEUED` executions so Redis/job loss is repairable from PostgreSQL.
+- Execution claiming now rejects concurrent fresh RUNNING duplicates while permitting stale RUNNING recovery.
+- Unknown runtime errors are reported with sanitized generic messages instead of raw internal exception text.
+
+Final invariants:
+
+- Only new explicitly runtime-eligible TriggerMatches execute.
+- Historical TriggerMatches are never backfilled or automatically executed.
+- One TriggerMatch creates at most one AutomationExecution.
+- PostgreSQL remains the execution authority; BullMQ/Redis is transport only.
+- Durable dispatch survives API/enqueue/Redis-loss recovery scenarios.
+- Duplicate delivery cannot duplicate completed step side effects.
+- Linear ACTION-only runtime is supported.
+- Unsupported graph shapes are blocked before partial execution.
+- Step ordering is deterministic.
+- Completed steps never rerun.
+- CREATE_TASK is crash-safe against duplicate task creation.
+- Action mutation and step outcome handling are atomic/idempotent around deterministic invocation keys.
+- Retries are bounded and error-classified.
+- Exhausted retryable failures become DEAD_LETTERED.
+- Non-retryable failures become FAILED immediately.
+- automationDepth hard-limits automation loops.
+- Correlation and causation remain stable through execution history.
+- Queued executions use the captured immutable WorkflowVersion.
+- Disabling or archiving a workflow does not rewrite existing execution version/history.
+- Execution APIs are read-only and workspace-scoped.
+- No public run/retry/replay endpoint exists.
+- Conditions, Branches, Delays, variable runtime, and external actions remain out of scope.
+- No Phase 11.5 scope was started.
+- Phase 10 and Phase 11.1-11.3 remain green.
+
+Final verification:
+
+- Focused Phase 11.4/Automation tests: 33/33.
+- API unit: 208/208.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass on isolated database `zea_play_phase114_final_verify_20260923`.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase114_final_verify_20260923`, all 56 migrations applied through `0056_phase11_4_create_task_invocation_idempotency`.
+- Clean Prisma migrate status: database schema was up to date on isolated scratch database, 56 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, and `0056_phase11_4_create_task_invocation_idempotency` remain pending intentionally; no shared-dev migration was applied.
+
+Phase 11.4 EXECUTION QUEUE + RETRY + IDEMPOTENCY is COMPLETE / PASS. Next: Phase 11.5 - Conditions, Branching + Variables. Do not start Phase 11.5 automatically.
+
+### Phase 11.5 - Conditions, Branching + Variables Implementation PASS
+
+Implemented the first deterministic single-path condition/branch runtime and trusted variable resolver.
+
+Implementation scope:
+
+- Added Phase 11.5 migration `0057_phase11_5_conditions_branching_variables`.
+- `AutomationStepExecution` now stores `nodeType`, nullable `actionType`, `selectedBranchKey`, and `conditionResult`.
+- Runtime supports `TRIGGER`, `ACTION`, `CONDITION`, and `BRANCH` nodes.
+- `DELAY` remains unsupported and blocks the reachable runtime graph before actions execute.
+- Runtime traversal follows one deterministic path only.
+- No parallel action fan-out exists.
+- Variables resolve only from trusted persisted event, trigger payload, execution, and prior completed step result context.
+- No arbitrary JavaScript, expression engine, `eval`, `new Function`, or VM execution exists.
+- Dangerous object/prototype paths are rejected.
+- Full variable references preserve safe primitive/array value types.
+- String interpolation supports scalar values only.
+- Missing required variables fail safely.
+- Resolved Action config is revalidated before execution.
+- Condition operators are typed and deterministic.
+- `CONDITION` uses explicit `TRUE` and `FALSE` branches.
+- `BRANCH` evaluates ordered cases and one required `DEFAULT`.
+- First matching Branch case wins.
+- Condition and Branch decisions are persisted and reused on retries.
+- Unselected branch nodes never execute and do not create Step records.
+- WorkflowVersion remains immutable execution authority.
+- Existing Phase 11.4 retry, idempotency, stale-running recovery, and depth protections remain intact.
+- No Delay scheduler exists.
+- No visual drag/drop builder exists.
+- No external Actions exist.
+- No Phase 11.6+ scope started.
+- Phase 10 and Phase 11.1-11.4 remain green.
+
+Frontend scope:
+
+- Added minimal structural form support for Action, Condition, and Branch draft creation.
+- Added simple trigger-family variable hints for Task, Project, and Ticket variables.
+- Added English and Tamil labels for Condition, Branch, Variable, True, False, Default, operators, and selected branch terminology.
+
+Verification:
+
+- Focused Phase 11.5/Automation tests: 34/34.
+- API unit: 214/214.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase115_impl_verify_20260923`, all 57 migrations applied through `0057_phase11_5_conditions_branching_variables`.
+- Clean Prisma migrate status: database schema was up to date on isolated scratch database, 57 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, and `0057_phase11_5_conditions_branching_variables` remain pending intentionally; no shared-dev migration was applied.
+
+Phase 11.5 CONDITIONS, BRANCHING + VARIABLES Implementation is PASS. Next: Phase 11.5 Focused Refinement + Final Verification. Do not mark Phase 11.5 COMPLETE. Do not start Phase 11.6.

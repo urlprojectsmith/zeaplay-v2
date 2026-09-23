@@ -27,9 +27,13 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { useLanguage } from '../../../contexts/language-provider';
 import {
+  AutomationActionDraft,
+  AutomationActionType,
+  AutomationConditionOperator,
   AutomationTriggerType,
   AutomationWorkflow,
   automationKeys,
+  automationActionTypes,
   automationTriggerTypes,
   createWorkspaceAutomation,
   disableAutomation,
@@ -49,6 +53,25 @@ const automationLabelKeys = [
   'name',
   'descriptionField',
   'trigger',
+  'action',
+  'condition',
+  'branch',
+  'variable',
+  'operator',
+  'true',
+  'false',
+  'default',
+  'addCase',
+  'selectedBranch',
+  'equals',
+  'notEquals',
+  'in',
+  'notIn',
+  'exists',
+  'notExists',
+  'actionTitle',
+  'targetId',
+  'statusDefinition',
   'saveDraft',
   'publish',
   'disable',
@@ -88,10 +111,23 @@ export function WorkspaceAutomationsPage() {
   const [draftTriggerByWorkflow, setDraftTriggerByWorkflow] = useState<
     Record<string, AutomationTriggerType>
   >({});
+  const [draftActionByWorkflow, setDraftActionByWorkflow] = useState<
+    Record<string, AutomationActionDraft>
+  >({});
   const [form, setForm] = useState({
     name: '',
     description: '',
     triggerType: 'TASK_CREATED' as AutomationTriggerType,
+    workflowKind: 'ACTION' as 'ACTION' | 'CONDITION' | 'BRANCH',
+    actionType: 'CREATE_TASK' as AutomationActionType,
+    actionTitle: '',
+    targetId: '',
+    statusDefinitionId: '',
+    conditionLeft: '{{trigger.task.priority}}',
+    conditionOperator: 'EQUALS' as AutomationConditionOperator,
+    conditionRight: 'HIGH',
+    branchKey: 'HIGH',
+    branchDefaultKey: 'DEFAULT',
   });
 
   const automationsQuery = useQuery({
@@ -111,12 +147,49 @@ export function WorkspaceAutomationsPage() {
         name: form.name.trim(),
         description: form.description.trim() || null,
         triggerType: form.triggerType,
+        action: formActionDraft(form),
+        condition:
+          form.workflowKind === 'CONDITION'
+            ? {
+                left: form.conditionLeft,
+                operator: form.conditionOperator,
+                right: form.conditionRight,
+              }
+            : null,
+        branch:
+          form.workflowKind === 'BRANCH'
+            ? {
+                cases: [
+                  {
+                    key: form.branchKey,
+                    left: form.conditionLeft,
+                    operator: form.conditionOperator,
+                    right: form.conditionRight,
+                  },
+                ],
+                defaultKey: form.branchDefaultKey,
+              }
+            : null,
       });
     },
     onSuccess: async () => {
       toast.success(labels.created);
       setCreateOpen(false);
-      setForm({ name: '', description: '', triggerType: 'TASK_CREATED' });
+      setForm({
+        name: '',
+        description: '',
+        triggerType: 'TASK_CREATED',
+        workflowKind: 'ACTION',
+        actionType: 'CREATE_TASK',
+        actionTitle: '',
+        targetId: '',
+        statusDefinitionId: '',
+        conditionLeft: '{{trigger.task.priority}}',
+        conditionOperator: 'EQUALS',
+        conditionRight: 'HIGH',
+        branchKey: 'HIGH',
+        branchDefaultKey: 'DEFAULT',
+      });
       await invalidate();
     },
     onError: (error) => toast.error(errorMessage(error, labels.validationError)),
@@ -126,10 +199,12 @@ export function WorkspaceAutomationsPage() {
     mutationFn: ({
       workflowId,
       triggerType,
+      action,
     }: {
       workflowId: string;
       triggerType: AutomationTriggerType;
-    }) => updateAutomationDraft(workspaceId as string, workflowId, triggerType),
+      action?: AutomationActionDraft | null;
+    }) => updateAutomationDraft(workspaceId as string, workflowId, triggerType, action),
     onSuccess: async () => {
       toast.success(labels.draftSaved);
       await invalidate();
@@ -190,9 +265,13 @@ export function WorkspaceAutomationsPage() {
         <div className="grid gap-3">
           {workflows.map((workflow) => {
             const selectedTrigger = draftTriggerByWorkflow[workflow.id] ?? 'TASK_CREATED';
+            const selectedAction = draftActionByWorkflow[workflow.id] ?? {
+              actionType: 'CREATE_TASK',
+              title: 'Automation task',
+            };
             return (
               <Card key={workflow.id}>
-                <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_220px_220px] lg:items-center">
+                <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_190px_190px_220px] lg:items-center">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="break-words font-semibold">{workflow.name}</p>
@@ -229,6 +308,29 @@ export function WorkspaceAutomationsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select
+                    value={selectedAction.actionType}
+                    onValueChange={(value) =>
+                      setDraftActionByWorkflow((current) => ({
+                        ...current,
+                        [workflow.id]: {
+                          ...selectedAction,
+                          actionType: value as AutomationActionType,
+                        },
+                      }))
+                    }
+                  >
+                    <SelectTrigger label={labels.action}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {automationActionTypes.map((action) => (
+                        <SelectItem key={action} value={action}>
+                          {automationTypeLabel(action)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <div className="flex flex-wrap gap-2 lg:justify-end">
                     <Button
                       variant="outline"
@@ -236,6 +338,7 @@ export function WorkspaceAutomationsPage() {
                         saveDraftMutation.mutate({
                           workflowId: workflow.id,
                           triggerType: selectedTrigger,
+                          action: selectedAction,
                         })
                       }
                     >
@@ -304,6 +407,134 @@ export function WorkspaceAutomationsPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select
+              value={form.actionType}
+              onValueChange={(value) =>
+                setForm((current) => ({ ...current, actionType: value as AutomationActionType }))
+              }
+            >
+              <SelectTrigger label={labels.action}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {automationActionTypes.map((action) => (
+                  <SelectItem key={action} value={action}>
+                    {automationTypeLabel(action)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={form.workflowKind}
+              onValueChange={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  workflowKind: value as 'ACTION' | 'CONDITION' | 'BRANCH',
+                }))
+              }
+            >
+              <SelectTrigger label={labels.selectedBranch}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ACTION">{labels.action}</SelectItem>
+                <SelectItem value="CONDITION">{labels.condition}</SelectItem>
+                <SelectItem value="BRANCH">{labels.branch}</SelectItem>
+              </SelectContent>
+            </Select>
+            {form.workflowKind !== 'ACTION' ? (
+              <div className="grid gap-3 rounded-md border border-[hsl(var(--border))] p-3 sm:grid-cols-2">
+                <Input
+                  label={labels.variable}
+                  value={form.conditionLeft}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, conditionLeft: event.target.value }))
+                  }
+                />
+                <Select
+                  value={form.conditionOperator}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      conditionOperator: value as AutomationConditionOperator,
+                    }))
+                  }
+                >
+                  <SelectTrigger label={labels.operator}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {conditionOperators.map((operator) => (
+                      <SelectItem key={operator} value={operator}>
+                        {conditionOperatorLabel(operator, labels)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!['EXISTS', 'NOT_EXISTS'].includes(form.conditionOperator) ? (
+                  <Input
+                    label={form.workflowKind === 'BRANCH' ? labels.selectedBranch : labels.true}
+                    value={form.conditionRight}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, conditionRight: event.target.value }))
+                    }
+                  />
+                ) : null}
+                {form.workflowKind === 'BRANCH' ? (
+                  <>
+                    <Input
+                      label={labels.branch}
+                      value={form.branchKey}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, branchKey: event.target.value }))
+                      }
+                    />
+                    <Input
+                      label={labels.default}
+                      value={form.branchDefaultKey}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          branchDefaultKey: event.target.value,
+                        }))
+                      }
+                    />
+                  </>
+                ) : null}
+                <div className="text-xs text-[hsl(var(--muted-foreground))] sm:col-span-2">
+                  {variableHints(form.triggerType).join(' · ')}
+                </div>
+              </div>
+            ) : null}
+            {form.actionType === 'CREATE_TASK' ? (
+              <Input
+                label={labels.actionTitle}
+                value={form.actionTitle}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, actionTitle: event.target.value }))
+                }
+              />
+            ) : (
+              <Input
+                label={labels.targetId}
+                value={form.targetId}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, targetId: event.target.value }))
+                }
+              />
+            )}
+            {form.actionType.includes('STATUS') ? (
+              <Input
+                label={labels.statusDefinition}
+                value={form.statusDefinitionId}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    statusDefinitionId: event.target.value,
+                  }))
+                }
+              />
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setCreateOpen(false)}>
@@ -364,12 +595,59 @@ function statusLabel(status: AutomationWorkflow['status'], labels: AutomationLab
   return labels.draft;
 }
 
-function triggerLabel(trigger: AutomationTriggerType) {
-  return trigger
+function automationTypeLabel(value: AutomationTriggerType | AutomationActionType) {
+  return value
     .toLowerCase()
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+const triggerLabel = automationTypeLabel;
+
+function formActionDraft(form: {
+  actionType: AutomationActionType;
+  actionTitle: string;
+  targetId: string;
+  statusDefinitionId: string;
+}): AutomationActionDraft {
+  return {
+    actionType: form.actionType,
+    title: form.actionTitle,
+    targetId: form.targetId,
+    statusDefinitionId: form.statusDefinitionId,
+  };
+}
+
+const conditionOperators: AutomationConditionOperator[] = [
+  'EQUALS',
+  'NOT_EQUALS',
+  'IN',
+  'NOT_IN',
+  'EXISTS',
+  'NOT_EXISTS',
+];
+
+function conditionOperatorLabel(operator: AutomationConditionOperator, labels: AutomationLabels) {
+  const map: Record<AutomationConditionOperator, string> = {
+    EQUALS: labels.equals,
+    NOT_EQUALS: labels.notEquals,
+    IN: labels.in,
+    NOT_IN: labels.notIn,
+    EXISTS: labels.exists,
+    NOT_EXISTS: labels.notExists,
+  };
+  return map[operator];
+}
+
+function variableHints(triggerType: AutomationTriggerType) {
+  if (triggerType.startsWith('PROJECT_')) {
+    return ['{{trigger.project.id}}', '{{trigger.project.xpCategory}}', '{{event.entityId}}'];
+  }
+  if (triggerType.startsWith('TICKET_')) {
+    return ['{{trigger.ticket.id}}', '{{trigger.ticket.priority}}', '{{event.entityId}}'];
+  }
+  return ['{{trigger.task.id}}', '{{trigger.task.priority}}', '{{event.entityId}}'];
 }
 
 function errorMessage(error: unknown, fallback: string) {

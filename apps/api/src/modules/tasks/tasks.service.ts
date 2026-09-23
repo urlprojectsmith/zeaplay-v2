@@ -15,6 +15,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import {
   AssetStatus,
   AttachmentType,
+  AutomationDomainEventEntityType,
+  AutomationTriggerType,
   DepartmentStatus,
   GamificationPointWorkType,
   GamificationWorkXpEventOutcome,
@@ -55,6 +57,8 @@ import {
   ASSET_PROCESSING_QUEUE,
 } from '../../infrastructure/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
+import type { AutomationMutationContext } from '../automation/automation-action.types';
+import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
@@ -131,6 +135,10 @@ const missingGamificationService = {
   | 'handleWorkCreationVoid'
   | 'handleWorkReopen'
 > as GamificationService;
+const missingAutomationDomainEventsService = {
+  recordDomainEventInTransaction: () => Promise.resolve({ id: null }),
+  evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
+} as unknown as AutomationDomainEventsService;
 
 @Injectable()
 export class TasksService {
@@ -147,10 +155,16 @@ export class TasksService {
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue,
     @Optional() private readonly gamification: GamificationService = missingGamificationService,
+    @Optional()
+    private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
   ) {}
 
-  async create(tenant: WorkspaceTenantContext, dto: CreateTaskDto) {
-    return this.createTask(tenant, dto, null);
+  async create(
+    tenant: WorkspaceTenantContext,
+    dto: CreateTaskDto,
+    automation?: AutomationMutationContext,
+  ) {
+    return this.createTask(tenant, dto, null, automation);
   }
 
   async createSubtask(tenant: WorkspaceTenantContext, parentTaskId: string, dto: CreateTaskDto) {
@@ -162,7 +176,20 @@ export class TasksService {
     tenant: WorkspaceTenantContext,
     dto: CreateTaskDto,
     parentTaskId: string | null,
+    automation?: AutomationMutationContext,
   ) {
+    const automationInvocationKey = automation?.invocationKey ?? null;
+    if (automationInvocationKey) {
+      const existing = await this.prisma.task.findFirst({
+        where: {
+          workspaceId: tenant.workspaceId,
+          automationInvocationKey,
+          deletedAt: null,
+        },
+        select: taskDetailSelect,
+      });
+      if (existing) return serializeTaskDetail(existing, tenant);
+    }
     const title = normalizeTitle(dto.title);
     const status = await this.taskStatus(tenant.workspaceId, dto.statusDefinitionId);
     const department = await this.activeDepartment(tenant.workspaceId, dto.departmentId);
@@ -193,7 +220,7 @@ export class TasksService {
     const dueAt = firstScheduledFor?.toJSDate() ?? parseOptionalDate(dto.dueAt);
     validateTaskSchedule(plannedStartAt, dueAt);
 
-    const task = await this.prisma
+    const { task, eventIds } = await this.prisma
       .$transaction(async (tx) => {
         if (parentTaskId) {
           await this.assertCanAttachToParent(
@@ -263,6 +290,7 @@ export class TasksService {
             recurrenceSeriesId: series?.id ?? null,
             recurrenceScheduledFor: firstScheduledFor?.toJSDate() ?? null,
             recurrenceSequence: series ? 1 : null,
+            automationInvocationKey,
             createdById: tenant.userId,
           },
           select: { id: true },
@@ -317,7 +345,35 @@ export class TasksService {
             skipDuplicates: true,
           });
         }
-        return tx.task.findUniqueOrThrow({ where: { id: created.id }, select: taskDetailSelect });
+        const task = await tx.task.findUniqueOrThrow({
+          where: { id: created.id },
+          select: taskDetailSelect,
+        });
+        const event = await this.automationEvents.recordDomainEventInTransaction(tx, {
+          workspaceId: tenant.workspaceId,
+          eventType: AutomationTriggerType.TASK_CREATED,
+          entityType: AutomationDomainEventEntityType.TASK,
+          entityId: task.id,
+          actorMembershipId: tenant.workspaceMembershipId ?? null,
+          occurredAt: task.createdAt,
+          correlationId: automationCorrelationId(automation, `task:${task.id}:created`),
+          causationId: automationCausationId(automation),
+          automationDepth: automationDepth(automation),
+          payload: {
+            taskId: task.id,
+            workspaceId: tenant.workspaceId,
+            departmentId: task.department?.id ?? null,
+            statusDefinitionId: task.statusDefinition.id,
+            priority: task.priority,
+            creatorMembershipId: tenant.workspaceMembershipId ?? null,
+            assigneeMembershipIds: assigneeIds,
+            plannedStartAt: task.plannedStartAt?.toISOString() ?? null,
+            dueAt: task.dueAt?.toISOString() ?? null,
+            occurredAt: task.createdAt.toISOString(),
+          },
+          idempotencyKey: `task:${task.id}:created`,
+        });
+        return { task, eventIds: event.id ? [event.id] : [] };
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
 
@@ -340,6 +396,7 @@ export class TasksService {
       task.id,
       tenant.workspaceMembershipId ?? null,
     );
+    await this.evaluateAutomationEvents(eventIds);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3002,7 +3059,12 @@ export class TasksService {
     return tags.map(serializeTaskTag);
   }
 
-  async addTaskTags(tenant: WorkspaceTenantContext, taskId: string, dto: TaskTagIdsDto) {
+  async addTaskTags(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    dto: TaskTagIdsDto,
+    _automation?: AutomationMutationContext,
+  ) {
     await this.assertTask(tenant.workspaceId, taskId);
     const tagIds = uniqueIds(dto.tagIds);
     const insertedTagIds = await this.prisma
@@ -3404,7 +3466,12 @@ export class TasksService {
     return { changed: removed.count > 0 };
   }
 
-  async update(tenant: WorkspaceTenantContext, taskId: string, dto: UpdateTaskDto) {
+  async update(
+    tenant: WorkspaceTenantContext,
+    taskId: string,
+    dto: UpdateTaskDto,
+    automation?: AutomationMutationContext,
+  ) {
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     const changedFields = Object.entries(dto)
       .filter(([key, value]) => key !== 'recurrenceEditScope' && value !== undefined)
@@ -3506,7 +3573,7 @@ export class TasksService {
     ) {
       data.recurrenceIsException = true;
     }
-    const task = await this.prisma
+    const { task, eventIds } = await this.prisma
       .$transaction(async (tx) => {
         if (status && status.id !== existing.statusDefinitionId) {
           await this.assertStatusTransition(tenant.workspaceId, [taskId], status.isTerminal, tx);
@@ -3521,39 +3588,55 @@ export class TasksService {
             where: { id: existing.recurrenceSeriesId, workspaceId: tenant.workspaceId },
             data: seriesUpdateData,
           });
-          return tx.task.findFirstOrThrow({
+          const unchanged = await tx.task.findFirstOrThrow({
             where: { id: taskId, workspaceId: tenant.workspaceId },
             select: taskDetailSelect,
           });
+          return { task: unchanged, eventIds: [] };
         }
-        return tx.task
-          .update({
-            where: { id: taskId },
-            data,
-            select: taskDetailSelect,
-          })
-          .then(async (updated) => {
-            if (status?.isTerminal && status.id !== existing.statusDefinitionId) {
-              await this.autoStopTaskTimers(
+        const updated = await tx.task.update({
+          where: { id: taskId },
+          data,
+          select: taskDetailSelect,
+        });
+        if (status?.isTerminal && status.id !== existing.statusDefinitionId) {
+          await this.autoStopTaskTimers(
+            tx,
+            tenant,
+            taskId,
+            new Date(),
+            TaskTimeEntryStopReason.TASK_TERMINAL,
+          );
+        }
+        if (
+          existing.recurrenceSeriesId &&
+          recurrenceEditScope === 'THIS_AND_FUTURE' &&
+          updatesRecurringBlueprint
+        ) {
+          await tx.taskRecurrenceSeries.updateMany({
+            where: { id: existing.recurrenceSeriesId, workspaceId: tenant.workspaceId },
+            data: seriesUpdateData,
+          });
+        }
+        const eventIds =
+          status && status.id !== existing.statusDefinitionId
+            ? await this.recordTaskStatusAutomationEvents(
                 tx,
                 tenant,
-                taskId,
-                new Date(),
-                TaskTimeEntryStopReason.TASK_TERMINAL,
-              );
-            }
-            if (
-              existing.recurrenceSeriesId &&
-              recurrenceEditScope === 'THIS_AND_FUTURE' &&
-              updatesRecurringBlueprint
-            ) {
-              await tx.taskRecurrenceSeries.updateMany({
-                where: { id: existing.recurrenceSeriesId, workspaceId: tenant.workspaceId },
-                data: seriesUpdateData,
-              });
-            }
-            return updated;
-          });
+                existing,
+                {
+                  ...updated,
+                  statusDefinitionId: updated.statusDefinition.id,
+                  departmentId: updated.department?.id ?? null,
+                  assignees: updated.assignees.map((assignee) => ({
+                    membershipId: assignee.membership.id,
+                  })),
+                },
+                status.isTerminal,
+                automation,
+              )
+            : [];
+        return { task: updated, eventIds };
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
     await this.audit.record({
@@ -3583,6 +3666,7 @@ export class TasksService {
         tenant.workspaceMembershipId ?? null,
       );
     }
+    await this.evaluateAutomationEvents(eventIds);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3592,6 +3676,7 @@ export class TasksService {
     statusDefinitionId: string,
     completion?: SubmitTaskCompletionDto,
     reopenDueAtInput?: string | Date | null,
+    automation?: AutomationMutationContext,
   ) {
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     if (existing.statusDefinitionId === statusDefinitionId) {
@@ -3625,7 +3710,7 @@ export class TasksService {
       }
     }
     await this.assertNoPendingCompletion(tenant.workspaceId, taskId);
-    const task = await this.prisma
+    const { task, eventIds } = await this.prisma
       .$transaction(async (tx) => {
         const transitioned = await this.applyTaskStatusTransition(
           tx,
@@ -3634,12 +3719,29 @@ export class TasksService {
           status.id,
           status.isTerminal,
         );
-        if (!reopensAwardedCompletion) return transitioned;
-        return tx.task.update({
-          where: { id: taskId },
-          data: { dueAt: reopenDueAt, updatedById: tenant.userId },
-          select: taskDetailSelect,
-        });
+        const task = reopensAwardedCompletion
+          ? await tx.task.update({
+              where: { id: taskId },
+              data: { dueAt: reopenDueAt, updatedById: tenant.userId },
+              select: taskDetailSelect,
+            })
+          : transitioned;
+        const eventIds = await this.recordTaskStatusAutomationEvents(
+          tx,
+          tenant,
+          existing,
+          {
+            ...task,
+            statusDefinitionId: task.statusDefinition.id,
+            departmentId: task.department?.id ?? null,
+            assignees: task.assignees.map((assignee) => ({
+              membershipId: assignee.membership.id,
+            })),
+          },
+          status.isTerminal,
+          automation,
+        );
+        return { task, eventIds };
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
     await this.audit.record({
@@ -3669,6 +3771,7 @@ export class TasksService {
         tenant.workspaceMembershipId ?? null,
       );
     }
+    await this.evaluateAutomationEvents(eventIds);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3676,6 +3779,7 @@ export class TasksService {
     tenant: WorkspaceTenantContext,
     taskId: string,
     dto: ReplaceTaskMembershipsDto,
+    _automation?: AutomationMutationContext,
   ) {
     await this.assertTask(tenant.workspaceId, taskId);
     const membershipIds = await this.activeMembershipIds(tenant.workspaceId, dto.membershipIds);
@@ -4176,6 +4280,111 @@ export class TasksService {
       select: { timezone: true },
     });
     return safeWorkspaceTimezone(workspace?.timezone, workspaceId);
+  }
+
+  private async evaluateAutomationEvents(eventIds: string[]) {
+    for (const eventId of eventIds) {
+      await this.automationEvents.evaluateDomainEvent(eventId);
+    }
+  }
+
+  private async recordTaskStatusAutomationEvents(
+    tx: Prisma.TransactionClient,
+    tenant: WorkspaceTenantContext,
+    previous: {
+      id: string;
+      statusDefinitionId: string;
+      statusDefinition: { isTerminal: boolean };
+      priority: TaskPriority;
+      departmentId: string | null;
+      dueAt: Date | null;
+    },
+    current: {
+      id: string;
+      statusDefinitionId: string;
+      priority: TaskPriority;
+      departmentId: string | null;
+      dueAt: Date | null;
+      assignees?: Array<{ membershipId: string }>;
+    },
+    statusIsTerminal: boolean,
+    automation?: AutomationMutationContext,
+  ) {
+    if (previous.statusDefinitionId === current.statusDefinitionId) return [];
+
+    const occurredAt = new Date();
+    const statusSequence =
+      (await tx.automationDomainEvent.count({
+        where: {
+          workspaceId: tenant.workspaceId,
+          entityType: AutomationDomainEventEntityType.TASK,
+          entityId: current.id,
+          eventType: AutomationTriggerType.TASK_STATUS_CHANGED,
+        },
+      })) + 1;
+    const correlationId = automationCorrelationId(
+      automation,
+      `task:${current.id}:status:${statusSequence}`,
+    );
+    const statusEvent = await this.automationEvents.recordDomainEventInTransaction(tx, {
+      workspaceId: tenant.workspaceId,
+      eventType: AutomationTriggerType.TASK_STATUS_CHANGED,
+      entityType: AutomationDomainEventEntityType.TASK,
+      entityId: current.id,
+      actorMembershipId: tenant.workspaceMembershipId ?? null,
+      occurredAt,
+      correlationId,
+      causationId: automationCausationId(automation),
+      automationDepth: automationDepth(automation),
+      payload: {
+        taskId: current.id,
+        workspaceId: tenant.workspaceId,
+        previousStatusDefinitionId: previous.statusDefinitionId,
+        newStatusDefinitionId: current.statusDefinitionId,
+        priority: current.priority,
+        departmentId: current.departmentId,
+        changedByMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt: occurredAt.toISOString(),
+      },
+      idempotencyKey: `task:${current.id}:status:${statusSequence}`,
+    });
+    const eventIds = statusEvent.id ? [statusEvent.id] : [];
+    if (statusIsTerminal && !previous.statusDefinition.isTerminal) {
+      const completionCycle =
+        (await tx.automationDomainEvent.count({
+          where: {
+            workspaceId: tenant.workspaceId,
+            entityType: AutomationDomainEventEntityType.TASK,
+            entityId: current.id,
+            eventType: AutomationTriggerType.TASK_COMPLETED,
+          },
+        })) + 1;
+      const completionEvent = await this.automationEvents.recordDomainEventInTransaction(tx, {
+        workspaceId: tenant.workspaceId,
+        eventType: AutomationTriggerType.TASK_COMPLETED,
+        entityType: AutomationDomainEventEntityType.TASK,
+        entityId: current.id,
+        actorMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt,
+        correlationId,
+        causationId: automationCausationId(automation),
+        automationDepth: automationDepth(automation),
+        payload: {
+          taskId: current.id,
+          workspaceId: tenant.workspaceId,
+          statusDefinitionId: current.statusDefinitionId,
+          priority: current.priority,
+          departmentId: current.departmentId,
+          completedAt: occurredAt.toISOString(),
+          dueAt: current.dueAt?.toISOString() ?? null,
+          completionCycle,
+          assigneeMembershipIds: current.assignees?.map((assignee) => assignee.membershipId) ?? [],
+        },
+        idempotencyKey: `task:${current.id}:completion:${completionCycle}`,
+      });
+      if (completionEvent.id) eventIds.push(completionEvent.id);
+    }
+    return eventIds;
   }
 
   private canSeeInternal(tenant: WorkspaceTenantContext) {
@@ -4908,7 +5117,9 @@ export class TasksService {
       select: {
         id: true,
         parentTaskId: true,
+        priority: true,
         statusDefinitionId: true,
+        departmentId: true,
         plannedStartAt: true,
         dueAt: true,
         recurrenceSeriesId: true,
@@ -5698,6 +5909,7 @@ const taskDetailSelect = {
   recurrenceSequence: true,
   recurrenceIsException: true,
   pendingCompletionSubmissionId: true,
+  automationInvocationKey: true,
   archivedAt: true,
   deletedAt: true,
   createdAt: true,
@@ -7421,4 +7633,19 @@ function bulkRelationResult(
     relationChangedCount,
     relationUnchangedCount,
   };
+}
+
+function automationCorrelationId(
+  automation: AutomationMutationContext | undefined,
+  fallback: string,
+) {
+  return automation?.correlationId ?? fallback;
+}
+
+function automationCausationId(automation: AutomationMutationContext | undefined) {
+  return automation?.causationId ?? automation?.triggerDomainEventId ?? null;
+}
+
+function automationDepth(automation: AutomationMutationContext | undefined) {
+  return automation ? (automation.parentAutomationDepth ?? 0) + 1 : 0;
 }

@@ -11,6 +11,42 @@ export type AutomationTriggerType =
   | 'TICKET_CREATED'
   | 'TICKET_STATUS_CHANGED'
   | 'TICKET_RESOLVED';
+export type AutomationActionType =
+  | 'CREATE_TASK'
+  | 'UPDATE_TASK'
+  | 'ASSIGN_TASK'
+  | 'CHANGE_TASK_STATUS'
+  | 'ADD_TASK_TAG'
+  | 'UPDATE_PROJECT'
+  | 'CHANGE_PROJECT_STATUS'
+  | 'ASSIGN_TICKET'
+  | 'CHANGE_TICKET_STATUS'
+  | 'ADD_TICKET_TAG';
+
+export interface AutomationActionDraft {
+  actionType: AutomationActionType;
+  title?: string;
+  targetId?: string;
+  statusDefinitionId?: string;
+}
+
+export type AutomationConditionOperator =
+  'EQUALS' | 'NOT_EQUALS' | 'IN' | 'NOT_IN' | 'EXISTS' | 'NOT_EXISTS';
+
+export interface AutomationConditionDraft {
+  left: string;
+  operator: AutomationConditionOperator;
+  right?: string;
+}
+
+export interface AutomationBranchCaseDraft extends AutomationConditionDraft {
+  key: string;
+}
+
+export interface AutomationBranchDraft {
+  cases: AutomationBranchCaseDraft[];
+  defaultKey: string;
+}
 
 export interface AutomationWorkflow {
   id: string;
@@ -62,6 +98,18 @@ export const automationTriggerTypes: AutomationTriggerType[] = [
   'TICKET_RESOLVED',
 ];
 
+export const automationActionTypes: AutomationActionType[] = [
+  'CREATE_TASK',
+  'UPDATE_TASK',
+  'ASSIGN_TASK',
+  'CHANGE_TASK_STATUS',
+  'ADD_TASK_TAG',
+  'UPDATE_PROJECT',
+  'CHANGE_PROJECT_STATUS',
+  'ASSIGN_TICKET',
+  'CHANGE_TICKET_STATUS',
+];
+
 export const automationKeys = {
   all: (workspaceId: string | null) => ['workspace', workspaceId, 'automations'] as const,
   list: (workspaceId: string | null, page: number) =>
@@ -77,7 +125,14 @@ export async function listWorkspaceAutomations(workspaceId: string, page = 1) {
 
 export async function createWorkspaceAutomation(
   workspaceId: string,
-  body: { name: string; description?: string | null; triggerType: AutomationTriggerType },
+  body: {
+    name: string;
+    description?: string | null;
+    triggerType: AutomationTriggerType;
+    action?: AutomationActionDraft | null;
+    condition?: AutomationConditionDraft | null;
+    branch?: AutomationBranchDraft | null;
+  },
 ) {
   const response = await apiClient.request<AutomationWorkflow>(
     `/workspaces/${workspaceId}/automations`,
@@ -93,10 +148,16 @@ export async function updateAutomationDraft(
   workspaceId: string,
   workflowId: string,
   triggerType: AutomationTriggerType,
+  action?: AutomationActionDraft | null,
+  condition?: AutomationConditionDraft | null,
+  branch?: AutomationBranchDraft | null,
 ) {
   const response = await apiClient.request<AutomationWorkflowVersion>(
     `/workspaces/${workspaceId}/automations/${workflowId}/draft`,
-    { method: 'PATCH', body: JSON.stringify(definitionPayload({ triggerType })) },
+    {
+      method: 'PATCH',
+      body: JSON.stringify(definitionPayload({ triggerType, action, condition, branch })),
+    },
   );
   return response.data;
 }
@@ -129,7 +190,65 @@ function definitionPayload(input: {
   name?: string;
   description?: string | null;
   triggerType: AutomationTriggerType;
+  action?: AutomationActionDraft | null;
+  condition?: AutomationConditionDraft | null;
+  branch?: AutomationBranchDraft | null;
 }) {
+  const actionConfig = input.action ? actionConfigFromDraft(input.action) : null;
+  const trueAction = actionConfig ?? {
+    actionType: 'CREATE_TASK' as const,
+    title: 'Automation task',
+  };
+  if (input.condition) {
+    return {
+      name: input.name,
+      description: input.description,
+      trigger: { triggerType: input.triggerType },
+      nodes: [
+        { nodeId: 'trigger', type: 'TRIGGER', config: { triggerType: input.triggerType } },
+        { nodeId: 'condition', type: 'CONDITION', config: compactConfig(input.condition) },
+        { nodeId: 'true-action', type: 'ACTION', config: trueAction },
+        {
+          nodeId: 'false-action',
+          type: 'ACTION',
+          config: { actionType: 'CREATE_TASK', title: 'Automation condition fallback' },
+        },
+      ],
+      edges: [
+        { fromNodeId: 'trigger', toNodeId: 'condition' },
+        { fromNodeId: 'condition', toNodeId: 'true-action', branchKey: 'TRUE' },
+        { fromNodeId: 'condition', toNodeId: 'false-action', branchKey: 'FALSE' },
+      ],
+      settings: {},
+    };
+  }
+  if (input.branch) {
+    return {
+      name: input.name,
+      description: input.description,
+      trigger: { triggerType: input.triggerType },
+      nodes: [
+        { nodeId: 'trigger', type: 'TRIGGER', config: { triggerType: input.triggerType } },
+        { nodeId: 'branch', type: 'BRANCH', config: input.branch },
+        { nodeId: 'case-action', type: 'ACTION', config: trueAction },
+        {
+          nodeId: 'default-action',
+          type: 'ACTION',
+          config: { actionType: 'CREATE_TASK', title: 'Automation branch default' },
+        },
+      ],
+      edges: [
+        { fromNodeId: 'trigger', toNodeId: 'branch' },
+        {
+          fromNodeId: 'branch',
+          toNodeId: 'case-action',
+          branchKey: input.branch.cases[0]?.key ?? 'HIGH',
+        },
+        { fromNodeId: 'branch', toNodeId: 'default-action', branchKey: input.branch.defaultKey },
+      ],
+      settings: {},
+    };
+  }
   return {
     name: input.name,
     description: input.description,
@@ -140,8 +259,55 @@ function definitionPayload(input: {
         type: 'TRIGGER',
         config: { triggerType: input.triggerType },
       },
+      ...(actionConfig
+        ? [
+            {
+              nodeId: 'action',
+              type: 'ACTION',
+              config: actionConfig,
+            },
+          ]
+        : []),
     ],
-    edges: [],
+    edges: actionConfig ? [{ fromNodeId: 'trigger', toNodeId: 'action' }] : [],
     settings: {},
   };
+}
+
+function compactConfig(value: object) {
+  return Object.fromEntries(
+    Object.entries(value).filter((entry) => entry[1] !== undefined && entry[1] !== ''),
+  );
+}
+
+function actionConfigFromDraft(action: AutomationActionDraft) {
+  const targetId = action.targetId?.trim();
+  const statusDefinitionId = action.statusDefinitionId?.trim();
+  if (action.actionType === 'CREATE_TASK') {
+    return { actionType: action.actionType, title: action.title?.trim() || 'Automation task' };
+  }
+  if (action.actionType === 'UPDATE_TASK' && targetId)
+    return { actionType: action.actionType, taskId: targetId };
+  if (action.actionType === 'ASSIGN_TASK' && targetId) {
+    return { actionType: action.actionType, taskId: targetId, membershipIds: [] };
+  }
+  if (action.actionType === 'CHANGE_TASK_STATUS' && targetId && statusDefinitionId) {
+    return { actionType: action.actionType, taskId: targetId, statusDefinitionId };
+  }
+  if (action.actionType === 'ADD_TASK_TAG' && targetId) {
+    return { actionType: action.actionType, taskId: targetId, tagIds: [] };
+  }
+  if (action.actionType === 'UPDATE_PROJECT' && targetId) {
+    return { actionType: action.actionType, projectId: targetId };
+  }
+  if (action.actionType === 'CHANGE_PROJECT_STATUS' && targetId && statusDefinitionId) {
+    return { actionType: action.actionType, projectId: targetId, statusDefinitionId };
+  }
+  if (action.actionType === 'ASSIGN_TICKET' && targetId) {
+    return { actionType: action.actionType, ticketId: targetId };
+  }
+  if (action.actionType === 'CHANGE_TICKET_STATUS' && targetId && statusDefinitionId) {
+    return { actionType: action.actionType, ticketId: targetId, statusDefinitionId };
+  }
+  return { actionType: 'CREATE_TASK' as const, title: action.title?.trim() || 'Automation task' };
 }

@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AutomationWorkflowStatus } from '@prisma/client';
+import {
+  AutomationDomainEventEntityType,
+  AutomationExecutionStatus,
+  AutomationTriggerMatchStatus,
+  AutomationTriggerType,
+  AutomationWorkflowStatus,
+} from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsArray,
@@ -46,6 +52,82 @@ export class AutomationWorkflowQueryDto extends PaginationDto {
 }
 
 export class AutomationVersionQueryDto extends PaginationDto {}
+
+export class AutomationDomainEventQueryDto extends PaginationDto {
+  @ApiPropertyOptional({ enum: AutomationTriggerType })
+  @IsOptional()
+  @IsEnum(AutomationTriggerType)
+  eventType?: AutomationTriggerType;
+
+  @ApiPropertyOptional({ enum: AutomationDomainEventEntityType })
+  @IsOptional()
+  @IsEnum(AutomationDomainEventEntityType)
+  entityType?: AutomationDomainEventEntityType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  entityId?: string;
+}
+
+export class AutomationDomainEventParamsDto {
+  @ApiProperty()
+  @IsUUID()
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsUUID()
+  eventId!: string;
+}
+
+export class AutomationTriggerMatchQueryDto extends PaginationDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  domainEventId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  workflowId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  workflowVersionId?: string;
+
+  @ApiPropertyOptional({ enum: AutomationTriggerMatchStatus })
+  @IsOptional()
+  @IsEnum(AutomationTriggerMatchStatus)
+  status?: AutomationTriggerMatchStatus;
+}
+
+export class AutomationExecutionQueryDto extends PaginationDto {
+  @ApiPropertyOptional({ enum: AutomationExecutionStatus })
+  @IsOptional()
+  @IsEnum(AutomationExecutionStatus)
+  status?: AutomationExecutionStatus;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  workflowId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  workflowVersionId?: string;
+}
+
+export class AutomationExecutionParamsDto {
+  @ApiProperty()
+  @IsUUID()
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsUUID()
+  executionId!: string;
+}
 
 export class CreateAutomationWorkflowDto {
   @ApiProperty({ minLength: 2, maxLength: 120 })

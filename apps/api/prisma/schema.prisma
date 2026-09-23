@@ -428,6 +428,39 @@ enum AutomationConditionOperator {
   NOT_EXISTS
 }
 
+enum AutomationDomainEventEntityType {
+  TASK
+  PROJECT
+  TICKET
+}
+
+enum AutomationTriggerMatchStatus {
+  MATCHED
+  SKIPPED
+  INVALID
+}
+
+enum AutomationExecutionStatus {
+  PENDING_QUEUE
+  QUEUED
+  RUNNING
+  RETRYING
+  SUCCEEDED
+  FAILED
+  DEAD_LETTERED
+  BLOCKED
+}
+
+enum AutomationStepExecutionStatus {
+  PENDING
+  RUNNING
+  RETRYING
+  SUCCEEDED
+  NO_OP
+  FAILED
+  SKIPPED
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -613,6 +646,10 @@ model Workspace {
   securityOtpChallenges              SecurityOtpChallenge[]              @relation("SecurityOtpChallengeWorkspace")
   automationWorkflows                 AutomationWorkflow[]
   automationWorkflowVersions          AutomationWorkflowVersion[]
+  automationDomainEvents              AutomationDomainEvent[]
+  automationTriggerMatches            AutomationTriggerMatch[]
+  automationExecutions                AutomationExecution[]
+  automationStepExecutions            AutomationStepExecution[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -756,6 +793,7 @@ model WorkspaceMembership {
   automationWorkflowsCreated         AutomationWorkflow[]               @relation("AutomationWorkflowCreator")
   automationWorkflowsUpdated         AutomationWorkflow[]               @relation("AutomationWorkflowUpdater")
   automationWorkflowVersionsCreated  AutomationWorkflowVersion[]        @relation("AutomationWorkflowVersionCreator")
+  automationDomainEventsActed        AutomationDomainEvent[]            @relation("AutomationDomainEventActor")
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -1762,6 +1800,7 @@ model Task {
   recurrenceSequence            Int?         @map("recurrence_sequence")
   recurrenceIsException         Boolean      @default(false) @map("recurrence_is_exception")
   pendingCompletionSubmissionId String?      @map("pending_completion_submission_id") @db.Uuid
+  automationInvocationKey       String?      @map("automation_invocation_key") @db.VarChar(180)
   createdById                   String       @map("created_by_id") @db.Uuid
   updatedById                   String?      @map("updated_by_id") @db.Uuid
   archivedAt                    DateTime?    @map("archived_at") @db.Timestamptz(6)
@@ -1796,6 +1835,7 @@ model Task {
   @@unique([id, workspaceId])
   @@unique([recurrenceSeriesId, recurrenceSequence])
   @@index([workspaceId, pendingCompletionSubmissionId])
+  @@index([workspaceId, automationInvocationKey])
   @@index([workspaceId, statusDefinitionId, createdAt])
   @@index([workspaceId, statusDefinitionId, kanbanRank, createdAt])
   @@index([workspaceId, recurrenceSeriesId, recurrenceSequence])
@@ -2639,6 +2679,7 @@ model AutomationWorkflow {
   createdByMembership    WorkspaceMembership         @relation("AutomationWorkflowCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   updatedByMembership    WorkspaceMembership?        @relation("AutomationWorkflowUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   versions               AutomationWorkflowVersion[] @relation("AutomationWorkflowVersions")
+  triggerMatches         AutomationTriggerMatch[]
 
   @@unique([id, workspaceId])
   @@index([workspaceId, status, createdAt])
@@ -2668,12 +2709,138 @@ model AutomationWorkflowVersion {
   workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   createdByMembership WorkspaceMembership  @relation("AutomationWorkflowVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   activeForWorkflows  AutomationWorkflow[] @relation("ActiveAutomationWorkflowVersion")
+  triggerMatches      AutomationTriggerMatch[]
+  executions          AutomationExecution[]
+  stepExecutions      AutomationStepExecution[]
 
   @@unique([id, workspaceId])
   @@unique([workflowId, versionNumber])
   @@index([workflowId, state])
   @@index([workspaceId, createdAt])
   @@map("automation_workflow_versions")
+}
+
+model AutomationDomainEvent {
+  id                String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                          @map("workspace_id") @db.Uuid
+  eventType         AutomationTriggerType           @map("event_type")
+  entityType        AutomationDomainEventEntityType @map("entity_type")
+  entityId          String                          @map("entity_id") @db.Uuid
+  actorMembershipId String?                         @map("actor_membership_id") @db.Uuid
+  occurredAt        DateTime                        @map("occurred_at") @db.Timestamptz(6)
+  schemaVersion     Int                             @default(1) @map("schema_version")
+  correlationId     String                          @map("correlation_id") @db.VarChar(120)
+  causationId       String?                         @map("causation_id") @db.Uuid
+  automationDepth   Int                             @default(0) @map("automation_depth")
+  payload           Json
+  idempotencyKey    String                          @map("idempotency_key") @db.VarChar(240)
+  createdAt         DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  actorMembership WorkspaceMembership?      @relation("AutomationDomainEventActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  triggerMatches  AutomationTriggerMatch[]
+  executions      AutomationExecution[]
+
+  @@unique([workspaceId, idempotencyKey])
+  @@unique([id, workspaceId])
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, eventType, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@map("automation_domain_events")
+}
+
+model AutomationTriggerMatch {
+  id                String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                       @map("workspace_id") @db.Uuid
+  domainEventId     String                       @map("domain_event_id") @db.Uuid
+  workflowId        String                       @map("workflow_id") @db.Uuid
+  workflowVersionId String                       @map("workflow_version_id") @db.Uuid
+  triggerNodeId     String                       @map("trigger_node_id") @db.VarChar(80)
+  status            AutomationTriggerMatchStatus @default(MATCHED)
+  reasonCode        String?                      @map("reason_code") @db.VarChar(120)
+  runtimeEligibleAt DateTime?                    @map("runtime_eligible_at") @db.Timestamptz(6)
+  createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  domainEvent     AutomationDomainEvent     @relation(fields: [domainEventId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workflow        AutomationWorkflow        @relation(fields: [workflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workflowVersion AutomationWorkflowVersion @relation(fields: [workflowVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  execution       AutomationExecution?
+
+  @@unique([id, workspaceId])
+  @@unique([domainEventId, workflowVersionId, triggerNodeId])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, runtimeEligibleAt])
+  @@index([domainEventId])
+  @@index([workflowVersionId])
+  @@map("automation_trigger_matches")
+}
+
+model AutomationExecution {
+  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                    @map("workspace_id") @db.Uuid
+  triggerMatchId    String                    @unique @map("trigger_match_id") @db.Uuid
+  domainEventId     String                    @map("domain_event_id") @db.Uuid
+  workflowId        String                    @map("workflow_id") @db.Uuid
+  workflowVersionId String                    @map("workflow_version_id") @db.Uuid
+  status            AutomationExecutionStatus @default(PENDING_QUEUE)
+  correlationId     String                    @map("correlation_id") @db.VarChar(120)
+  automationDepth   Int                       @default(0) @map("automation_depth")
+  attemptCount      Int                       @default(0) @map("attempt_count")
+  maxAttempts       Int                       @default(3) @map("max_attempts")
+  failureCode       String?                   @map("failure_code") @db.VarChar(120)
+  failureMessage    String?                   @map("failure_message") @db.VarChar(500)
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  queuedAt          DateTime?                 @map("queued_at") @db.Timestamptz(6)
+  startedAt         DateTime?                 @map("started_at") @db.Timestamptz(6)
+  finishedAt        DateTime?                 @map("finished_at") @db.Timestamptz(6)
+
+  workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  triggerMatch    AutomationTriggerMatch    @relation(fields: [triggerMatchId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  domainEvent     AutomationDomainEvent     @relation(fields: [domainEventId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workflowVersion AutomationWorkflowVersion @relation(fields: [workflowVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  steps           AutomationStepExecution[]
+
+  @@unique([id, workspaceId])
+  @@unique([triggerMatchId, workspaceId])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([domainEventId])
+  @@index([workflowVersionId])
+  @@map("automation_executions")
+}
+
+model AutomationStepExecution {
+  id                String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                        @map("workspace_id") @db.Uuid
+  executionId       String                        @map("execution_id") @db.Uuid
+  workflowVersionId String                        @map("workflow_version_id") @db.Uuid
+  nodeId            String                        @map("node_id") @db.VarChar(80)
+  nodeType          AutomationWorkflowNodeType    @default(ACTION) @map("node_type")
+  sequence          Int
+  actionType        AutomationActionType?         @map("action_type")
+  selectedBranchKey String?                       @map("selected_branch_key") @db.VarChar(80)
+  conditionResult   Boolean?                      @map("condition_result")
+  status            AutomationStepExecutionStatus @default(PENDING)
+  attemptCount      Int                           @default(0) @map("attempt_count")
+  invocationKey     String                        @unique @map("invocation_key") @db.VarChar(180)
+  result            Json?
+  errorCode         String?                       @map("error_code") @db.VarChar(120)
+  errorMessage      String?                       @map("error_message") @db.VarChar(500)
+  startedAt         DateTime?                     @map("started_at") @db.Timestamptz(6)
+  finishedAt        DateTime?                     @map("finished_at") @db.Timestamptz(6)
+  createdAt         DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  execution       AutomationExecution       @relation(fields: [executionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workflowVersion AutomationWorkflowVersion @relation(fields: [workflowVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([executionId, nodeId])
+  @@index([executionId, sequence])
+  @@index([executionId, status])
+  @@index([workspaceId, executionId])
+  @@map("automation_step_executions")
 }
 
 model FeatureDefinition {

@@ -14,6 +14,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import {
   AssetStatus,
   AttachmentType,
+  AutomationDomainEventEntityType,
+  AutomationTriggerType,
   DepartmentStatus,
   GamificationPointWorkType,
   GamificationWorkXpEventOutcome,
@@ -41,6 +43,8 @@ import {
   ASSET_PROCESSING_QUEUE,
 } from '../../infrastructure/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
+import type { AutomationMutationContext } from '../automation/automation-action.types';
+import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
@@ -76,6 +80,10 @@ const missingGamificationService = {
   | 'handleWorkCreationVoid'
   | 'handleWorkReopen'
 > as GamificationService;
+const missingAutomationDomainEventsService = {
+  recordDomainEventInTransaction: () => Promise.resolve({ id: null }),
+  evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
+} as unknown as AutomationDomainEventsService;
 
 @Injectable()
 export class ProjectsService {
@@ -92,9 +100,15 @@ export class ProjectsService {
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue,
     @Optional() private readonly gamification: GamificationService = missingGamificationService,
+    @Optional()
+    private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
   ) {}
 
-  async create(tenant: WorkspaceTenantContext, dto: CreateProjectDto) {
+  async create(
+    tenant: WorkspaceTenantContext,
+    dto: CreateProjectDto,
+    automation?: AutomationMutationContext,
+  ) {
     const name = normalizeName(dto.name);
     const description = normalizeDescription(dto.description);
     const { plannedStartAt, dueAt } = normalizeProjectDates(dto);
@@ -106,7 +120,7 @@ export class ProjectsService {
     const memberIds = uniqueIds(dto.memberMembershipIds ?? []).filter((id) => id !== owner.id);
     await this.activeMemberships(tenant.workspaceId, memberIds);
 
-    const project = await this.prisma.$transaction(async (tx) => {
+    const { project, eventIds } = await this.prisma.$transaction(async (tx) => {
       const created = await tx.project.create({
         data: {
           workspaceId: tenant.workspaceId,
@@ -136,10 +150,36 @@ export class ProjectsService {
           skipDuplicates: true,
         });
       }
-      return tx.project.findUniqueOrThrow({
+      const project = await tx.project.findUniqueOrThrow({
         where: { id_workspaceId: { id: created.id, workspaceId: tenant.workspaceId } },
         select: projectDetailSelect,
       });
+      const event = await this.automationEvents.recordDomainEventInTransaction(tx, {
+        workspaceId: tenant.workspaceId,
+        eventType: AutomationTriggerType.PROJECT_CREATED,
+        entityType: AutomationDomainEventEntityType.PROJECT,
+        entityId: project.id,
+        actorMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt: project.createdAt,
+        correlationId: automationCorrelationId(automation, `project:${project.id}:created`),
+        causationId: automationCausationId(automation),
+        automationDepth: automationDepth(automation),
+        payload: {
+          projectId: project.id,
+          workspaceId: tenant.workspaceId,
+          departmentId: project.departmentId,
+          statusDefinitionId: project.statusDefinitionId,
+          priority: project.priority,
+          xpCategory: project.xpCategory,
+          ownerMembershipId: project.ownerMembershipId,
+          creatorMembershipId: tenant.workspaceMembershipId ?? null,
+          plannedStartAt: project.plannedStartAt?.toISOString() ?? null,
+          dueAt: project.dueAt?.toISOString() ?? null,
+          occurredAt: project.createdAt.toISOString(),
+        },
+        idempotencyKey: `project:${project.id}:created`,
+      });
+      return { project, eventIds: event.id ? [event.id] : [] };
     });
 
     await this.audit.record({
@@ -162,6 +202,7 @@ export class ProjectsService {
       project.id,
       tenant.workspaceMembershipId ?? null,
     );
+    await this.evaluateAutomationEvents(eventIds);
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -198,7 +239,12 @@ export class ProjectsService {
     );
   }
 
-  async update(tenant: WorkspaceTenantContext, id: string, dto: UpdateProjectDto) {
+  async update(
+    tenant: WorkspaceTenantContext,
+    id: string,
+    dto: UpdateProjectDto,
+    _automation?: AutomationMutationContext,
+  ) {
     const existing = await this.readAccessibleProject(tenant, id, {
       id: true,
       statusDefinitionId: true,
@@ -320,11 +366,17 @@ export class ProjectsService {
     id: string,
     statusDefinitionId: string,
     reopenDueAtInput?: string | Date | null,
+    automation?: AutomationMutationContext,
   ) {
     const existing = await this.readAccessibleProject(tenant, id, {
       id: true,
       statusDefinitionId: true,
       statusDefinition: { select: { isTerminal: true } },
+      priority: true,
+      xpCategory: true,
+      departmentId: true,
+      ownerMembershipId: true,
+      dueAt: true,
     } satisfies Prisma.ProjectSelect);
     const status = await this.projectStatus(tenant.workspaceId, statusDefinitionId);
     if (existing.statusDefinitionId === status.id) return this.get(tenant, id);
@@ -342,7 +394,7 @@ export class ProjectsService {
           'PROJECT_REOPEN_REQUIRES_NEW_FUTURE_DUE_AT',
         )
       : null;
-    const project = await this.prisma.$transaction(async (tx) => {
+    const { project, eventIds } = await this.prisma.$transaction(async (tx) => {
       if (status.isTerminal) {
         const openTaskCount = await this.openLinkedTaskCount(tenant.workspaceId, id, tx);
         if (openTaskCount > 0) {
@@ -353,7 +405,7 @@ export class ProjectsService {
           });
         }
       }
-      return tx.project.update({
+      const project = await tx.project.update({
         where: { id_workspaceId: { id, workspaceId: tenant.workspaceId } },
         data: {
           statusDefinitionId: status.id,
@@ -361,6 +413,15 @@ export class ProjectsService {
         },
         select: projectDetailSelect,
       });
+      const eventIds = await this.recordProjectStatusAutomationEvents(
+        tx,
+        tenant,
+        existing,
+        project,
+        status.isTerminal,
+        automation,
+      );
+      return { project, eventIds };
     }, serializableTransaction);
     await this.audit.record({
       agencyId: tenant.agencyId,
@@ -389,6 +450,7 @@ export class ProjectsService {
         tenant.workspaceMembershipId ?? null,
       );
     }
+    await this.evaluateAutomationEvents(eventIds);
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -1334,6 +1396,115 @@ export class ProjectsService {
           : []),
       ],
     };
+  }
+
+  private async evaluateAutomationEvents(eventIds: string[]) {
+    for (const eventId of eventIds) {
+      await this.automationEvents.evaluateDomainEvent(eventId);
+    }
+  }
+
+  private async recordProjectStatusAutomationEvents(
+    tx: Prisma.TransactionClient,
+    tenant: WorkspaceTenantContext,
+    previous: {
+      id: string;
+      statusDefinitionId: string | null;
+      statusDefinition: { isTerminal: boolean } | null;
+      priority: TaskPriority;
+      xpCategory: string | null;
+      departmentId: string | null;
+      ownerMembershipId: string;
+      dueAt: Date | null;
+    },
+    current: {
+      id: string;
+      statusDefinitionId: string | null;
+      priority: TaskPriority;
+      xpCategory: string | null;
+      departmentId: string | null;
+      ownerMembershipId: string;
+      dueAt: Date | null;
+    },
+    statusIsTerminal: boolean,
+    automation?: AutomationMutationContext,
+  ) {
+    if (previous.statusDefinitionId === current.statusDefinitionId) return [];
+
+    const occurredAt = new Date();
+    const statusSequence =
+      (await tx.automationDomainEvent.count({
+        where: {
+          workspaceId: tenant.workspaceId,
+          entityType: AutomationDomainEventEntityType.PROJECT,
+          entityId: current.id,
+          eventType: AutomationTriggerType.PROJECT_STATUS_CHANGED,
+        },
+      })) + 1;
+    const correlationId = automationCorrelationId(
+      automation,
+      `project:${current.id}:status:${statusSequence}`,
+    );
+    const statusEvent = await this.automationEvents.recordDomainEventInTransaction(tx, {
+      workspaceId: tenant.workspaceId,
+      eventType: AutomationTriggerType.PROJECT_STATUS_CHANGED,
+      entityType: AutomationDomainEventEntityType.PROJECT,
+      entityId: current.id,
+      actorMembershipId: tenant.workspaceMembershipId ?? null,
+      occurredAt,
+      correlationId,
+      causationId: automationCausationId(automation),
+      automationDepth: automationDepth(automation),
+      payload: {
+        projectId: current.id,
+        workspaceId: tenant.workspaceId,
+        previousStatusDefinitionId: previous.statusDefinitionId,
+        newStatusDefinitionId: current.statusDefinitionId,
+        departmentId: current.departmentId,
+        priority: current.priority,
+        xpCategory: current.xpCategory,
+        ownerMembershipId: current.ownerMembershipId,
+        changedByMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt: occurredAt.toISOString(),
+      },
+      idempotencyKey: `project:${current.id}:status:${statusSequence}`,
+    });
+    const eventIds = statusEvent.id ? [statusEvent.id] : [];
+    if (statusIsTerminal && previous.statusDefinition?.isTerminal !== true) {
+      const completionCycle =
+        (await tx.automationDomainEvent.count({
+          where: {
+            workspaceId: tenant.workspaceId,
+            entityType: AutomationDomainEventEntityType.PROJECT,
+            entityId: current.id,
+            eventType: AutomationTriggerType.PROJECT_COMPLETED,
+          },
+        })) + 1;
+      const completionEvent = await this.automationEvents.recordDomainEventInTransaction(tx, {
+        workspaceId: tenant.workspaceId,
+        eventType: AutomationTriggerType.PROJECT_COMPLETED,
+        entityType: AutomationDomainEventEntityType.PROJECT,
+        entityId: current.id,
+        actorMembershipId: tenant.workspaceMembershipId ?? null,
+        occurredAt,
+        correlationId,
+        causationId: automationCausationId(automation),
+        automationDepth: automationDepth(automation),
+        payload: {
+          projectId: current.id,
+          workspaceId: tenant.workspaceId,
+          ownerMembershipId: current.ownerMembershipId,
+          departmentId: current.departmentId,
+          xpCategory: current.xpCategory,
+          completedAt: occurredAt.toISOString(),
+          dueAt: current.dueAt?.toISOString() ?? null,
+          completionCycle,
+        },
+        idempotencyKey: `project:${current.id}:completion:${completionCycle}`,
+      });
+      if (completionEvent.id) eventIds.push(completionEvent.id);
+    }
+    return eventIds;
   }
 
   private async readAccessibleProject<T extends Prisma.ProjectSelect>(
@@ -2565,4 +2736,19 @@ function isSerializableConflict(error: unknown) {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     (error.code === 'P2034' || error.meta?.code === '40001')
   );
+}
+
+function automationCorrelationId(
+  automation: AutomationMutationContext | undefined,
+  fallback: string,
+) {
+  return automation?.correlationId ?? fallback;
+}
+
+function automationCausationId(automation: AutomationMutationContext | undefined) {
+  return automation?.causationId ?? automation?.triggerDomainEventId ?? null;
+}
+
+function automationDepth(automation: AutomationMutationContext | undefined) {
+  return automation ? (automation.parentAutomationDepth ?? 0) + 1 : 0;
 }

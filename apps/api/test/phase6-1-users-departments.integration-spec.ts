@@ -14,8 +14,12 @@ process.env = {
   WEB_APP_URL: 'http://localhost:3000',
   API_PUBLIC_URL: 'http://localhost:4000/api/v1',
   CORS_ORIGINS: 'http://localhost:3000',
-  DATABASE_URL: 'postgresql://zea:zea_password@localhost:6432/zea_play?schema=public',
-  DIRECT_DATABASE_URL: 'postgresql://zea:zea_password@localhost:5432/zea_play?schema=public',
+  DATABASE_URL:
+    process.env.DATABASE_URL ??
+    'postgresql://zea:zea_password@localhost:6432/zea_play?schema=public',
+  DIRECT_DATABASE_URL:
+    process.env.DIRECT_DATABASE_URL ??
+    'postgresql://zea:zea_password@localhost:5432/zea_play?schema=public',
   REDIS_CACHE_URL: 'redis://localhost:6379',
   REDIS_QUEUE_URL: 'redis://localhost:6380',
   REDIS_REALTIME_URL: 'redis://localhost:6381',
@@ -951,6 +955,9 @@ async function seedRoles() {
 async function resetDatabase() {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "gamification_work_xp_events", "gamification_xp_entries" CASCADE',
+  );
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "automation_trigger_matches", "automation_domain_events" CASCADE',
   );
   await prisma.$transaction([
     prisma.taskCommentReaction.deleteMany(),

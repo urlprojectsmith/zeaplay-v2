@@ -187,8 +187,22 @@ describe('automation graph validator', () => {
               value: 'Done',
             },
           },
+          {
+            nodeId: 'true-action',
+            type: AutomationWorkflowNodeType.ACTION,
+            config: { actionType: AutomationActionType.CREATE_TASK, title: 'True task' },
+          },
+          {
+            nodeId: 'false-action',
+            type: AutomationWorkflowNodeType.ACTION,
+            config: { actionType: AutomationActionType.CREATE_TASK, title: 'False task' },
+          },
         ],
-        edges: [{ fromNodeId: 'trigger', toNodeId: 'condition' }],
+        edges: [
+          { fromNodeId: 'trigger', toNodeId: 'condition' },
+          { fromNodeId: 'condition', toNodeId: 'true-action', branchKey: 'TRUE' },
+          { fromNodeId: 'condition', toNodeId: 'false-action', branchKey: 'FALSE' },
+        ],
       }),
     ).not.toThrow();
 
@@ -208,6 +222,84 @@ describe('automation graph validator', () => {
           },
         ],
         edges: [{ fromNodeId: 'trigger', toNodeId: 'condition' }],
+      }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('accepts supported action payload fields and trigger variable references', () => {
+    expect(() =>
+      validateAutomationDefinition({
+        ...validDefinition(),
+        nodes: [
+          triggerNode('trigger', AutomationTriggerType.TASK_CREATED),
+          {
+            nodeId: 'action',
+            type: AutomationWorkflowNodeType.ACTION,
+            config: {
+              actionType: AutomationActionType.CHANGE_TASK_STATUS,
+              taskId: '{{trigger.task.id}}',
+              statusDefinitionId: '11111111-1111-4111-8111-111111111111',
+            },
+          },
+        ],
+        edges: [{ fromNodeId: 'trigger', toNodeId: 'action' }],
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects unavailable action identifiers as publish-valid executable actions', () => {
+    expect(() =>
+      validateAutomationDefinition({
+        ...validDefinition(),
+        nodes: [
+          triggerNode('trigger', AutomationTriggerType.TASK_CREATED),
+          {
+            nodeId: 'action',
+            type: AutomationWorkflowNodeType.ACTION,
+            config: {
+              actionType: AutomationActionType.ADD_TICKET_TAG,
+              ticketId: '11111111-1111-4111-8111-111111111111',
+              tagIds: ['22222222-2222-4222-8222-222222222222'],
+            },
+          },
+        ],
+        edges: [{ fromNodeId: 'trigger', toNodeId: 'action' }],
+      }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('rejects malformed action variable references and overlong strings', () => {
+    expect(() =>
+      validateAutomationDefinition({
+        ...definitionWithAction(),
+        nodes: [
+          triggerNode('trigger', AutomationTriggerType.TASK_CREATED),
+          {
+            nodeId: 'action',
+            type: AutomationWorkflowNodeType.ACTION,
+            config: {
+              actionType: AutomationActionType.CREATE_TASK,
+              title: 'Bad {{task.id}}',
+            },
+          },
+        ],
+      }),
+    ).toThrow(BadRequestException);
+
+    expect(() =>
+      validateAutomationDefinition({
+        ...definitionWithAction(),
+        nodes: [
+          triggerNode('trigger', AutomationTriggerType.TASK_CREATED),
+          {
+            nodeId: 'action',
+            type: AutomationWorkflowNodeType.ACTION,
+            config: {
+              actionType: AutomationActionType.CREATE_TASK,
+              title: 'x'.repeat(161),
+            },
+          },
+        ],
       }),
     ).toThrow(BadRequestException);
   });
@@ -249,7 +341,7 @@ function definitionWithAction(): AutomationDefinition {
       {
         nodeId: 'action',
         type: AutomationWorkflowNodeType.ACTION,
-        config: { actionType: AutomationActionType.CREATE_TASK },
+        config: { actionType: AutomationActionType.CREATE_TASK, title: 'Follow up' },
       },
     ],
     edges: [{ fromNodeId: 'trigger', toNodeId: 'action' }],
