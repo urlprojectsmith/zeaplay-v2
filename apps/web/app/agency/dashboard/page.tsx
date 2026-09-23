@@ -1,5 +1,5 @@
-import { DashboardFoundation } from '../../../components/dashboards/DashboardFoundation';
+import { AgencyGlobalLeaderboardPage } from '../../../components/gamification/AgencyGlobalLeaderboardPage';
 
 export default function AgencyDashboardPage() {
-  return <DashboardFoundation scope="agency" />;
+  return <AgencyGlobalLeaderboardPage />;
 }

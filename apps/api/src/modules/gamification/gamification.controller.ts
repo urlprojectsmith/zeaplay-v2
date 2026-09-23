@@ -13,17 +13,19 @@ import {
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { validateEnvironment } from '@zea-play/config';
 import type { Request } from 'express';
-import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { DeveloperDiagnosticsGuard } from '../../common/authorization/developer-diagnostics.guard';
 import { PermissionGuard } from '../../common/authorization/permission.guard';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
 import {
   AGENCY_HEADER,
+  CurrentAgencyTenant,
   CurrentWorkspaceTenant,
   WORKSPACE_HEADER,
 } from '../../common/tenant/tenant-context.decorator';
-import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
+import { AgencyTenantGuard, WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
 import {
   GamificationAdminAdjustmentDto,
   GamificationAdminMemberQueryDto,
@@ -43,7 +45,10 @@ import {
   UpdateGamificationLevelDto,
 } from './dto/gamification-level.dto';
 import {
+  GamificationAgencyGlobalLeaderboardUsersParamsDto,
   GamificationDepartmentLeaderboardParamsDto,
+  GamificationGlobalLeaderboardQueryDto,
+  GamificationGlobalLeaderboardTabParamsDto,
   UpdateGamificationLeaderboardConfigDto,
   UpdateGamificationLeaderboardPreferenceDto,
 } from './dto/gamification-leaderboard.dto';
@@ -76,6 +81,16 @@ import {
 } from './dto/gamification-point-rule.dto';
 import { GamificationService } from './gamification.service';
 import { AuthService } from '../auth/auth.service';
+import {
+  DeveloperAuditQueryDto,
+  DeveloperGamificationIdParamDto,
+  DeveloperGamificationPageQueryDto,
+  DeveloperLeaderboardDiagnosticsQueryDto,
+  DeveloperNormalizationEventsQueryDto,
+  DeveloperPointRuleInspectorQueryDto,
+  DeveloperReconciliationQueryDto,
+  DeveloperXpEventMonitorQueryDto,
+} from './dto/developer-gamification.dto';
 
 @ApiTags('gamification')
 @ApiBearerAuth()
@@ -515,6 +530,121 @@ export class GamificationController {
     @Body() dto: GamificationXpReconciliationApplyDto,
   ) {
     return this.gamification.applyXpReconciliation(tenant, dto);
+  }
+}
+
+@ApiTags('gamification')
+@ApiBearerAuth()
+@ApiHeader({ name: AGENCY_HEADER, required: true })
+@UseGuards(JwtAuthGuard, AgencyTenantGuard, PermissionGuard)
+@Controller('agencies/:agencyId/gamification/global-leaderboard')
+export class AgencyGlobalLeaderboardController {
+  constructor(private readonly gamification: GamificationService) {}
+
+  @Get('subaccounts')
+  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewAgency)
+  getAgencySubaccounts(
+    @CurrentAgencyTenant() tenant: AgencyTenantContext,
+    @Query() query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    return this.gamification.getAgencyGlobalLeaderboardSubaccounts(tenant, query);
+  }
+
+  @Get('subaccounts/:workspaceId/users')
+  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewAgency)
+  getAgencySubaccountUsers(
+    @CurrentAgencyTenant() tenant: AgencyTenantContext,
+    @Param() params: GamificationAgencyGlobalLeaderboardUsersParamsDto,
+    @Query() query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    return this.gamification.getAgencyGlobalLeaderboardUsers(tenant, params.workspaceId, query);
+  }
+}
+
+@ApiTags('gamification')
+@ApiBearerAuth()
+@ApiHeader({ name: AGENCY_HEADER, required: true })
+@UseGuards(JwtAuthGuard, AgencyTenantGuard, PermissionGuard)
+@Controller('platform/gamification/global-leaderboard')
+export class PlatformGlobalLeaderboardController {
+  constructor(private readonly gamification: GamificationService) {}
+
+  @Get(':tab')
+  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewPlatform)
+  getPlatformLeaderboard(
+    @CurrentAgencyTenant() tenant: AgencyTenantContext,
+    @Param() params: GamificationGlobalLeaderboardTabParamsDto,
+    @Query() query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    return this.gamification.getPlatformGlobalLeaderboard(tenant, params.tab, query);
+  }
+}
+
+@ApiTags('developer-gamification')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, DeveloperDiagnosticsGuard)
+@Controller('developer/gamification')
+export class DeveloperGamificationController {
+  constructor(private readonly gamification: GamificationService) {}
+
+  @Get('health')
+  getHealth() {
+    return this.gamification.getDeveloperGamificationHealth();
+  }
+
+  @Get('point-rules')
+  getPointRules(@Query() query: DeveloperPointRuleInspectorQueryDto) {
+    return this.gamification.getDeveloperPointRules(query);
+  }
+
+  @Get('xp-events')
+  getXpEvents(@Query() query: DeveloperXpEventMonitorQueryDto) {
+    return this.gamification.getDeveloperXpEvents(query);
+  }
+
+  @Get('xp-events/:id')
+  getXpEventDetail(@Param() params: DeveloperGamificationIdParamDto) {
+    return this.gamification.getDeveloperXpEventDetail(params.id);
+  }
+
+  @Get('normalization/baselines')
+  getNormalizationBaselines(@Query() query: DeveloperGamificationPageQueryDto) {
+    return this.gamification.getDeveloperNormalizationBaselines(query);
+  }
+
+  @Get('normalization/events')
+  getNormalizationEvents(@Query() query: DeveloperNormalizationEventsQueryDto) {
+    return this.gamification.getDeveloperNormalizationEvents(query);
+  }
+
+  @Get('leaderboards/diagnostics')
+  getLeaderboardDiagnostics(@Query() query: DeveloperLeaderboardDiagnosticsQueryDto) {
+    return this.gamification.getDeveloperLeaderboardDiagnostics(query);
+  }
+
+  @Get('reconciliation')
+  getReconciliation(@Query() query: DeveloperReconciliationQueryDto) {
+    return this.gamification.getDeveloperReconciliation(query);
+  }
+
+  @Get('ledgers/health')
+  getLedgerHealth() {
+    return this.gamification.getDeveloperLedgerHealth();
+  }
+
+  @Get('achievements-streaks/health')
+  getAchievementsStreaksHealth() {
+    return this.gamification.getDeveloperAchievementsStreaksHealth();
+  }
+
+  @Get('security')
+  getSecurityHealth() {
+    return this.gamification.getDeveloperSecurityHealth();
+  }
+
+  @Get('audit')
+  getAudit(@Query() query: DeveloperAuditQueryDto) {
+    return this.gamification.getDeveloperAudit(query);
   }
 }
 

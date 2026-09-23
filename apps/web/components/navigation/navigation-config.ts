@@ -85,6 +85,11 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           disabled('navigation.featureFlags', Flag),
           disabled('navigation.templates', FileText),
           disabled('navigation.isolatedSpace', LockKeyhole),
+          {
+            labelKey: 'navigation.gamification',
+            href: '/developer/dashboard',
+            icon: Trophy,
+          },
         ],
       },
       {
@@ -125,7 +130,11 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           disabled('navigation.featureManagement', Flag),
           disabled('navigation.modules', Puzzle),
           disabled('navigation.isolatedSpace', LockKeyhole),
-          disabled('navigation.globalLeaderboard', Trophy),
+          {
+            labelKey: 'navigation.globalLeaderboard',
+            href: '/super-admin/dashboard',
+            icon: Trophy,
+          },
         ],
       },
       {
@@ -157,7 +166,11 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           disabled('navigation.rolesPermissions', Shield),
           disabled('navigation.plansUsage', Receipt),
           disabled('navigation.featureControls', Flag),
-          disabled('navigation.agencyLeaderboard', Trophy),
+          {
+            labelKey: 'navigation.agencyLeaderboard',
+            href: '/agency/dashboard',
+            icon: Trophy,
+          },
         ],
       },
       {

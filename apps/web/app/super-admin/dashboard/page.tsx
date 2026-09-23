@@ -1,5 +1,5 @@
-import { DashboardFoundation } from '../../../components/dashboards/DashboardFoundation';
+import { PlatformGlobalLeaderboardPage } from '../../../components/gamification/PlatformGlobalLeaderboardPage';
 
 export default function SuperAdminDashboardPage() {
-  return <DashboardFoundation scope="super-admin" />;
+  return <PlatformGlobalLeaderboardPage />;
 }

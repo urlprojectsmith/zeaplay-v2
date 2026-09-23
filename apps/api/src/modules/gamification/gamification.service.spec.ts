@@ -1836,6 +1836,614 @@ describe('GamificationService', () => {
     expect(globalScoreEvents).toHaveLength(0);
   });
 
+  it('serves set-based Global Score leaderboards with agency scope and privacy redaction', async () => {
+    const { service, prisma } = makeService();
+    const agencyTenant = globalAgencyTenant([
+      'gamification.global_leaderboard.view_agency',
+      'gamification.global_leaderboard.view_platform',
+    ]);
+    (prisma.gamificationGlobalScoreEvent.aggregate as jest.Mock).mockResolvedValueOnce({
+      _sum: { normalizedScore: 450 },
+    });
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        workspaceId,
+        workspaceName: 'Alpha Workspace',
+        globalScore: 300,
+        scoredUsers: 3,
+      },
+      {
+        rank: 1,
+        workspaceId: otherWorkspaceId,
+        workspaceName: 'Beta Workspace',
+        globalScore: 300,
+        scoredUsers: 2,
+      },
+    ]);
+
+    const agencyResult = await service.getAgencyGlobalLeaderboardSubaccounts(agencyTenant);
+
+    expect(agencyResult).toMatchObject({
+      scope: 'AGENCY_SUBACCOUNTS',
+      period: 'ALL_TIME',
+      globalScore: 450,
+      items: [
+        { rank: 1, workspaceName: 'Alpha Workspace', globalScore: 300, scoredUsers: 3 },
+        { rank: 1, workspaceName: 'Beta Workspace', globalScore: 300, scoredUsers: 2 },
+      ],
+    });
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(
+      String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' ')),
+    ).toContain('gamification_global_score_events');
+
+    (prisma.workspace.findFirst as jest.Mock).mockResolvedValueOnce({ id: workspaceId });
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        membershipId,
+        workspaceId,
+        workspaceName: 'Alpha Workspace',
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        name: 'Private Winner',
+        departmentName: 'Support',
+        privacyMode: GamificationLeaderboardPrivacyMode.ANONYMOUS,
+        globalScore: 120,
+        totalCount: 1,
+      },
+    ]);
+
+    const users = await service.getAgencyGlobalLeaderboardUsers(agencyTenant, workspaceId, {
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(users).toMatchObject({
+      scope: 'AGENCY_SUBACCOUNT_USERS',
+      items: [
+        {
+          rank: 1,
+          membershipId: null,
+          displayName: 'Anonymous User',
+          departmentName: null,
+          globalScore: 120,
+        },
+      ],
+    });
+  });
+
+  it('keeps agency organization score based on signed applied normalized events only', async () => {
+    const { service, prisma } = makeService({
+      entries: [
+        baseInput({
+          amount: 999999,
+          sourceType: GamificationXpSourceType.MANUAL,
+          idempotencyKey: 'manual-xp-must-not-rank',
+        }),
+        baseInput({
+          amount: -999999,
+          sourceEvent: 'XP_RESET',
+          idempotencyKey: 'reset-xp-must-not-rank',
+        }),
+        baseInput({
+          amount: 888888,
+          sourceType: GamificationXpSourceType.ACHIEVEMENT,
+          idempotencyKey: 'achievement-xp-must-not-rank',
+        }),
+        baseInput({
+          amount: 777777,
+          sourceType: GamificationXpSourceType.STREAK,
+          idempotencyKey: 'streak-xp-must-not-rank',
+        }),
+      ],
+      rewardPointEntries: [rewardPointEntry({ membershipId, amount: 123456 })],
+    });
+    (prisma.gamificationGlobalScoreEvent.aggregate as jest.Mock).mockResolvedValueOnce({
+      _sum: { normalizedScore: -25 },
+    });
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        workspaceId,
+        workspaceName: 'Signed Workspace',
+        globalScore: -25,
+        scoredUsers: 2,
+      },
+    ]);
+
+    const result = await service.getAgencyGlobalLeaderboardSubaccounts(
+      globalAgencyTenant(['gamification.global_leaderboard.view_agency']),
+    );
+    const sql = String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '));
+
+    expect(result.globalScore).toBe(-25);
+    expect(result.items).toEqual([
+      {
+        rank: 1,
+        workspaceId,
+        workspaceName: 'Signed Workspace',
+        agencyId: null,
+        agencyName: null,
+        globalScore: -25,
+        scoredUsers: 2,
+      },
+    ]);
+    expect(prisma.gamificationGlobalScoreEvent.aggregate).toHaveBeenCalledWith({
+      where: {
+        workspace: { agencyId: tenant.agencyId },
+        status: GamificationGlobalScoreEventStatus.APPLIED,
+      },
+      _sum: { normalizedScore: true },
+    });
+    expect(sql).toContain('SUM(gse.normalized_score)');
+    expect(sql).toContain("gse.status = 'APPLIED'");
+    expect(sql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
+    expect(sql).toContain('w.agency_id =');
+    expect(sql).toContain('LIMIT 10');
+    expect(sql).not.toContain('gamification_xp_entries');
+    expect(sql).not.toContain('gamification_reward_point_entries');
+  });
+
+  it('ranks platform agencies and subaccounts from normalized score with deterministic dense ties', async () => {
+    const { service, prisma } = makeService();
+    const platformTenant = globalAgencyTenant(['gamification.global_leaderboard.view_platform']);
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        globalScore: 500,
+        subaccounts: 2,
+        scoredUsers: 4,
+        totalCount: 2,
+      },
+      {
+        rank: 1,
+        agencyId: '00000000-0000-4000-8000-000000000055',
+        agencyName: 'Agency Beta',
+        globalScore: 500,
+        subaccounts: 1,
+        scoredUsers: 1,
+        totalCount: 2,
+      },
+    ]);
+
+    const agencies = await service.getPlatformGlobalLeaderboard(platformTenant, 'agencies', {
+      page: 1,
+      pageSize: 20,
+      search: 'Agency',
+    });
+    const agencySql = String(
+      (prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '),
+    );
+
+    expect(agencies.items.map((item) => [item.rank, item.globalScore])).toEqual([
+      [1, 500],
+      [1, 500],
+    ]);
+    expect(agencySql).toContain('SUM(gse.normalized_score)');
+    expect(agencySql).toContain('JOIN gamification_global_score_events gse');
+    expect(agencySql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
+    expect(agencySql).toContain('ORDER BY rank ASC, agency_name ASC, agency_id ASC');
+    expect(agencySql).toContain('LIMIT');
+    expect(agencySql).toContain('OFFSET');
+
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        workspaceId,
+        workspaceName: 'Alpha Workspace',
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        globalScore: 300,
+        scoredUsers: 3,
+        totalCount: 1,
+      },
+    ]);
+    const subaccounts = await service.getPlatformGlobalLeaderboard(platformTenant, 'subaccounts', {
+      page: 2,
+      pageSize: 5,
+      agencyId: tenant.agencyId,
+      search: 'Alpha',
+    });
+    const subaccountSql = String(
+      (prisma.$queryRaw as jest.Mock).mock.calls[1]?.[0]?.strings?.join(' '),
+    );
+
+    expect(subaccounts).toMatchObject({ page: 2, pageSize: 5, total: 1 });
+    expect(subaccountSql).toContain('SUM(gse.normalized_score)');
+    expect(subaccountSql).toContain('a.id =');
+    expect(subaccountSql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
+    expect(subaccountSql).toContain('ORDER BY rank ASC, workspace_name ASC, workspace_id ASC');
+  });
+
+  it('uses WorkspaceMembership as platform user rank unit and applies privacy/inactive filters before rank', async () => {
+    const { service, prisma } = makeService();
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        membershipId,
+        workspaceId,
+        workspaceName: 'Alpha Workspace',
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        name: 'Same User',
+        departmentName: 'Support',
+        privacyMode: GamificationLeaderboardPrivacyMode.SHOW_NAME,
+        globalScore: 200,
+        totalCount: 2,
+      },
+      {
+        rank: 1,
+        membershipId: otherMembershipId,
+        workspaceId: otherWorkspaceId,
+        workspaceName: 'Beta Workspace',
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        name: 'Same User',
+        departmentName: 'Success',
+        privacyMode: GamificationLeaderboardPrivacyMode.SHOW_DISPLAY_NAME,
+        globalScore: 200,
+        totalCount: 2,
+      },
+    ]);
+
+    const result = await service.getPlatformGlobalLeaderboard(
+      globalAgencyTenant(['gamification.global_leaderboard.view_platform']),
+      'users',
+      { page: 1, pageSize: 20, agencyId: tenant.agencyId, workspaceId, search: 'Same User' },
+    );
+    const sql = String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '));
+    const userItems = result.items as Array<{
+      rank: number;
+      membershipId: string | null;
+      workspaceId: string;
+    }>;
+
+    expect(userItems.map((item) => [item.rank, item.membershipId, item.workspaceId])).toEqual([
+      [1, membershipId, workspaceId],
+      [1, otherMembershipId, otherWorkspaceId],
+    ]);
+    expect(sql).toContain('wm.id AS membership_id');
+    expect(sql).toContain('gse.recipient_membership_id = wm.id');
+    expect(sql).toContain("wm.status = 'ACTIVE'");
+    expect(sql).toContain("<> 'OPT_OUT'");
+    expect(sql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
+    expect(sql).toContain('ORDER BY rank ASC, name ASC, membership_id ASC');
+    expect(sql).not.toContain('GROUP BY u.id');
+  });
+
+  it('bounds global leaderboard server pagination before executing platform queries', async () => {
+    const { service, prisma } = makeService();
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
+
+    const result = await service.getPlatformGlobalLeaderboard(
+      globalAgencyTenant(['gamification.global_leaderboard.view_platform']),
+      'users',
+      { page: -12, pageSize: 500 },
+    );
+    const sql = (prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0];
+
+    expect(result).toMatchObject({ page: 1, pageSize: 100, total: 0, totalPages: 1 });
+    expect(sql?.values).toEqual(expect.arrayContaining([100, 0]));
+  });
+
+  it('keeps OPT_OUT and inactive historical work in organization totals while excluding them from user rows', async () => {
+    const { service, prisma } = makeService();
+    (prisma.gamificationGlobalScoreEvent.aggregate as jest.Mock).mockResolvedValueOnce({
+      _sum: { normalizedScore: 700 },
+    });
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
+
+    const org = await service.getAgencyGlobalLeaderboardSubaccounts(
+      globalAgencyTenant(['gamification.global_leaderboard.view_agency']),
+    );
+    const orgSql = String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '));
+
+    expect(org.globalScore).toBe(700);
+    expect(orgSql).not.toContain("wm.status = 'ACTIVE'");
+    expect(orgSql).not.toContain('OPT_OUT');
+
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
+    await service.getPlatformGlobalLeaderboard(
+      globalAgencyTenant(['gamification.global_leaderboard.view_platform']),
+      'users',
+      { page: 1, pageSize: 20 },
+    );
+    const userSql = String((prisma.$queryRaw as jest.Mock).mock.calls[1]?.[0]?.strings?.join(' '));
+
+    expect(userSql).toContain("wm.status = 'ACTIVE'");
+    expect(userSql).toContain("<> 'OPT_OUT'");
+  });
+
+  it('enforces Global Score leaderboard permissions and foreign agency drilldown denial', async () => {
+    const { service, prisma } = makeService();
+    await expect(
+      service.getAgencyGlobalLeaderboardSubaccounts(globalAgencyTenant([])),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.getPlatformGlobalLeaderboard(
+        globalAgencyTenant(['gamification.global_leaderboard.view_agency']),
+        'agencies',
+        { page: 1, pageSize: 20 },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    (prisma.workspace.findFirst as jest.Mock).mockResolvedValueOnce(null);
+    await expect(
+      service.getAgencyGlobalLeaderboardUsers(
+        globalAgencyTenant(['gamification.global_leaderboard.view_agency']),
+        otherWorkspaceId,
+        { page: 1, pageSize: 20 },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('serves Developer point rules with explicit default, override, and effective diagnostics', async () => {
+    const workspaceDefault = pointRule({
+      id: 'point-default',
+      baseXp: 10,
+      departmentId: null,
+    });
+    const departmentOverride = pointRule({
+      id: 'point-department',
+      departmentId,
+      scopeType: GamificationPointScopeType.DEPARTMENT,
+      baseXp: 25,
+    });
+    const creationDefault = creationPointRule({
+      id: 'creation-default',
+      creationXp: 3,
+      departmentId: null,
+    });
+    const creationOverride = creationPointRule({
+      id: 'creation-department',
+      departmentId,
+      scopeType: GamificationPointScopeType.DEPARTMENT,
+      creationXp: 8,
+    });
+    const { service } = makeService({
+      pointRules: [workspaceDefault, departmentOverride],
+      creationPointRules: [creationDefault, creationOverride],
+    });
+
+    const result = await service.getDeveloperPointRules({
+      workspaceId,
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result.completionRules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'point-default', effectiveSource: 'WORKSPACE_DEFAULT' }),
+        expect.objectContaining({ id: 'point-department', effectiveSource: 'DEPARTMENT_OVERRIDE' }),
+      ]),
+    );
+    expect(result.effectiveCompletionRules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceDefault: expect.objectContaining({ id: 'point-default', baseXp: 10 }),
+          departmentOverride: expect.objectContaining({ id: 'point-department', baseXp: 25 }),
+          effectiveRule: expect.objectContaining({ id: 'point-department', baseXp: 25 }),
+          effectiveSource: 'DEPARTMENT_OVERRIDE',
+        }),
+      ]),
+    );
+    expect(result.effectiveCreationRules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceDefault: expect.objectContaining({ id: 'creation-default', creationXp: 3 }),
+          departmentOverride: expect.objectContaining({ id: 'creation-department', creationXp: 8 }),
+          effectiveRule: expect.objectContaining({ id: 'creation-department', creationXp: 8 }),
+        }),
+      ]),
+    );
+  });
+
+  it('bounds Developer XP monitor queries and returns linked immutable ledger detail without mutation', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(Date.UTC(2026, 0, 8, 12)));
+    const event = {
+      id: '00000000-0000-4000-8000-000000000701',
+      workspaceId,
+      recipientMembershipId: membershipId,
+      workType: GamificationPointWorkType.TASK,
+      sourceEntityId: ticketId,
+      sourceLabelSnapshot: 'Snapshot task',
+      eventType: GamificationWorkXpEventType.COMPLETION_AWARD,
+      categorySnapshot: GamificationPointCategory.HIGH,
+      departmentNameSnapshot: 'Engineering',
+      outcome: GamificationWorkXpEventOutcome.APPLIED,
+      skipReason: null,
+      netXpSnapshot: 42,
+      completionCycle: 1,
+      idempotencyKey: 'xp-event:1',
+      occurredAt: new Date(Date.UTC(2026, 0, 8, 10)),
+      ruleSourceSnapshot: 'DEPARTMENT_OVERRIDE',
+      reversalOfEventId: null,
+    };
+    const entry = {
+      id: '00000000-0000-4000-8000-000000000702',
+      workspaceId,
+      membershipId,
+      amount: 42,
+      sourceType: GamificationXpSourceType.TASK,
+      sourceEvent: 'TASK_COMPLETION',
+      sourceEntityId: ticketId,
+      workXpEventId: event.id,
+      createdAt: new Date(Date.UTC(2026, 0, 8, 10)),
+    };
+    const { service, prisma, workXpEvents, entries } = makeService({
+      workXpEvents: [event],
+      entries: [entry],
+    });
+
+    const result = await service.getDeveloperXpEvents({ page: -5, pageSize: 500 });
+    const detail = await service.getDeveloperXpEventDetail(event.id);
+
+    expect(result).toMatchObject({ page: 1, pageSize: 100, total: 1 });
+    expect(result.items[0]).toMatchObject({
+      id: event.id,
+      sourceLabelSnapshot: 'Snapshot task',
+      xpEntries: [expect.objectContaining({ id: entry.id, amount: 42 })],
+    });
+    expect(detail).toMatchObject({
+      id: event.id,
+      ruleSourceSnapshot: 'DEPARTMENT_OVERRIDE',
+      xpEntries: [expect.objectContaining({ id: entry.id })],
+    });
+    expect(prisma.gamificationWorkXpEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 100 }),
+    );
+    expect(workXpEvents).toHaveLength(1);
+    expect(entries).toHaveLength(1);
+  });
+
+  it('keeps Developer health and normalization diagnostics warning-based and snapshot-driven', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(Date.UTC(2026, 0, 8, 12)));
+    const baseline = globalScoreBaseline({
+      id: '00000000-0000-4000-8000-000000000801',
+      status: GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE,
+      eligibleWorkspaceCount: 1,
+      normalizedBaseXp: 12,
+      calculatedAt: new Date(Date.UTC(2026, 0, 8, 9)),
+    });
+    const globalEvent = {
+      id: '00000000-0000-4000-8000-000000000802',
+      workspaceId,
+      recipientMembershipId: membershipId,
+      workXpEventId: '00000000-0000-4000-8000-000000000803',
+      workType: GamificationPointWorkType.TASK,
+      sourceEntityId: ticketId,
+      eventType: GamificationWorkXpEventType.COMPLETION_AWARD,
+      scoreType: GamificationGlobalScoreEventScoreType.COMPLETION,
+      categorySnapshot: GamificationPointCategory.HIGH,
+      baselineVersionSnapshot: baseline.baselineVersion,
+      eligibleWorkspaceCountSnapshot: 1,
+      normalizedScore: 12,
+      status: GamificationGlobalScoreEventStatus.SKIPPED_INSUFFICIENT_SAMPLE,
+      occurredAt: new Date(Date.UTC(2026, 0, 8, 9)),
+      reversalOfGlobalScoreEventId: null,
+    };
+    const { service } = makeService({
+      globalScoreBaselines: [baseline],
+      globalScoreEvents: [globalEvent],
+    });
+
+    const health = await service.getDeveloperGamificationHealth();
+    const baselines = await service.getDeveloperNormalizationBaselines({ page: 1, pageSize: 20 });
+    const events = await service.getDeveloperNormalizationEvents({ page: 1, pageSize: 20 });
+
+    expect(health.cards).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Global Normalization',
+          status: 'WARNING',
+          value: 1,
+        }),
+      ]),
+    );
+    expect(baselines.items[0]).toMatchObject({
+      id: baseline.id,
+      status: GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE,
+      normalizedBaseXp: 12,
+    });
+    expect(events.items[0]).toMatchObject({
+      id: globalEvent.id,
+      baselineVersionSnapshot: baseline.baselineVersion,
+      normalizedScore: 12,
+      status: GamificationGlobalScoreEventStatus.SKIPPED_INSUFFICIENT_SAMPLE,
+    });
+  });
+
+  it('reports Developer leaderboard metric authority without rank mutation', () => {
+    const { service } = makeService();
+
+    expect(
+      service.getDeveloperLeaderboardDiagnostics({ scope: 'workspace', page: 1, pageSize: 20 }),
+    ).toMatchObject({
+      authority: 'LOCAL XP',
+      mutation: 'READ_ONLY_DIAGNOSTIC',
+    });
+    expect(
+      service.getDeveloperLeaderboardDiagnostics({ scope: 'department', page: 1, pageSize: 20 }),
+    ).toMatchObject({
+      authority: 'LOCAL XP',
+    });
+    expect(
+      service.getDeveloperLeaderboardDiagnostics({ scope: 'agency', page: 1, pageSize: 20 }),
+    ).toMatchObject({
+      authority: 'NORMALIZED GLOBAL SCORE',
+    });
+    expect(
+      service.getDeveloperLeaderboardDiagnostics({
+        scope: 'platform-users',
+        page: 1,
+        pageSize: 20,
+      }),
+    ).toMatchObject({
+      authority: 'NORMALIZED GLOBAL SCORE',
+    });
+  });
+
+  it('returns sanitized Developer security and audit diagnostics only', async () => {
+    jest.useFakeTimers().setSystemTime(new Date(Date.UTC(2026, 0, 8, 12)));
+    const { service } = makeService({
+      securityOtpChallenges: [
+        {
+          id: 'otp-1',
+          createdAt: new Date(Date.UTC(2026, 0, 8, 11)),
+          expiresAt: new Date(Date.UTC(2026, 0, 8, 11, 5)),
+          consumedAt: null,
+          invalidatedAt: null,
+          otpDigest: 'raw-digest-never-return',
+        },
+      ],
+      auditRows: [
+        {
+          id: 'audit-1',
+          agencyId: tenant.agencyId,
+          workspaceId,
+          userId: tenant.userId,
+          action: 'gamification.xp.reset',
+          entityType: 'Gamification',
+          entityId: membershipId,
+          createdAt: new Date(Date.UTC(2026, 0, 8, 10)),
+          metadata: { authorization: 'Bearer secret', otpDigest: 'digest' },
+          ipAddress: '127.0.0.1',
+          userAgent: 'secret-agent',
+        },
+      ],
+      stepUpGrants: [
+        {
+          id: 'grant-1',
+          purpose: 'GAMIFICATION_RESET',
+          createdAt: new Date(Date.UTC(2026, 0, 8, 10)),
+        },
+      ],
+    });
+
+    const security = await service.getDeveloperSecurityHealth();
+    const audit = await service.getDeveloperAudit({ page: 1, pageSize: 500 });
+
+    expect(security).toMatchObject({ otpChallenges: 1, resetGrants: 1, windowDays: 7 });
+    expect(JSON.stringify(security)).not.toContain('raw-digest-never-return');
+    expect(audit).toMatchObject({ page: 1, pageSize: 100, total: 1 });
+    expect(audit.items[0]).toEqual({
+      id: 'audit-1',
+      agencyId: tenant.agencyId,
+      workspaceId,
+      userId: tenant.userId,
+      action: 'gamification.xp.reset',
+      entityType: 'Gamification',
+      entityId: membershipId,
+      createdAt: new Date(Date.UTC(2026, 0, 8, 10)),
+    });
+    expect(JSON.stringify(audit)).not.toContain('Bearer secret');
+    expect(JSON.stringify(audit)).not.toContain('secret-agent');
+  });
+
   it('reverses normalized score exactly and recompletion uses the latest baseline', async () => {
     const taskId = '00000000-0000-4000-8000-000000000030';
     const task = {
@@ -3277,6 +3885,17 @@ function leaderboardViewTenant() {
   return { ...tenant, permissions: ['gamification.leaderboards.view'] };
 }
 
+function globalAgencyTenant(permissions: string[]) {
+  return {
+    userId: tenant.userId,
+    agencyId: tenant.agencyId,
+    agencyMembershipId: '00000000-0000-4000-8000-000000000777',
+    roleId: tenant.roleId,
+    roleName: 'AGENCY_ADMIN',
+    permissions,
+  };
+}
+
 function hashString(value: string) {
   return [...value].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) | 0, 7);
 }
@@ -3358,6 +3977,48 @@ function globalScoreBaseline(overrides: Record<string, unknown>) {
     createdAt: new Date(Date.UTC(2026, 0, 1)),
     ...overrides,
   };
+}
+
+function selectRecord(row: Record<string, unknown>, select?: Record<string, boolean>) {
+  if (!select) return row;
+  return Object.fromEntries(Object.keys(select).map((key) => [key, row[key]]));
+}
+
+function withDeveloperWorkEventRelations(
+  event: Record<string, unknown> | null,
+  entries: Array<Record<string, unknown>>,
+  workXpEvents: Array<Record<string, unknown>>,
+  globalScoreEvents: Array<Record<string, unknown>>,
+) {
+  if (!event) return null;
+  return {
+    ...event,
+    workspace: { name: 'Workspace', agency: { id: tenant.agencyId, name: 'Agency' } },
+    recipientMembership: { user: { name: 'Member' } },
+    xpEntries: entries.filter((entry) => entry.workXpEventId === event.id),
+    reversalEvents: workXpEvents.filter((item) => item.reversalOfEventId === event.id),
+    globalScoreEvent: globalScoreEvents.find((item) => item.workXpEventId === event.id) ?? null,
+  };
+}
+
+function sortByOrder(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  orderBy: Array<Record<string, 'asc' | 'desc'>>,
+) {
+  for (const order of orderBy) {
+    const [field, direction] = Object.entries(order)[0] ?? [];
+    if (!field || !direction) continue;
+    const leftValue = left[field] instanceof Date ? (left[field] as Date).getTime() : left[field];
+    const rightValue =
+      right[field] instanceof Date ? (right[field] as Date).getTime() : right[field];
+    if (leftValue === rightValue) continue;
+    const result = String(leftValue).localeCompare(String(rightValue), undefined, {
+      numeric: true,
+    });
+    return direction === 'asc' ? result : -result;
+  }
+  return 0;
 }
 
 function achievementDefinition(overrides: Record<string, unknown>) {
@@ -3552,6 +4213,7 @@ function makeService(options?: {
   leaderboardConfig?: Record<string, unknown> | null;
   leaderboardPreferences?: Array<Record<string, unknown>>;
   auditRows?: Array<Record<string, unknown>>;
+  securityOtpChallenges?: Array<Record<string, unknown>>;
   stepUpGrants?: Array<Record<string, unknown>>;
   statusDefinitions?: Array<Record<string, unknown>>;
   streakConfig?: Record<string, unknown> | null;
@@ -3610,6 +4272,9 @@ function makeService(options?: {
     })),
   ];
   const auditRows: Array<Record<string, unknown>> = [...(options?.auditRows ?? [])];
+  const securityOtpChallenges: Array<Record<string, unknown>> = [
+    ...(options?.securityOtpChallenges ?? []),
+  ];
   const stepUpGrants: Array<Record<string, unknown>> = [...(options?.stepUpGrants ?? [])];
   const statusDefinitions: Array<Record<string, unknown>> = [...(options?.statusDefinitions ?? [])];
   let streakConfig: Record<string, unknown> | null | undefined = options?.streakConfig;
@@ -3695,6 +4360,17 @@ function makeService(options?: {
         if (!metadataKey) return false;
         return metadata?.[metadataKey] === matcher.equals;
       }
+      if (value && typeof value === 'object' && 'contains' in value) {
+        const candidate = entry[key];
+        return (
+          typeof candidate === 'string' &&
+          candidate.includes((value as { contains: string }).contains)
+        );
+      }
+      if (value && typeof value === 'object' && 'lte' in value)
+        return Number(entry[key]) <= Number((value as { lte: Date }).lte);
+      if (value && typeof value === 'object' && 'gte' in value)
+        return Number(entry[key]) >= Number((value as { gte: Date }).gte);
       return entry[key] === value;
     });
 
@@ -3928,6 +4604,13 @@ function makeService(options?: {
     },
     workspace: {
       findUnique: jest.fn(() => Promise.resolve({ timezone: workspaceTimezone })),
+      findFirst: jest.fn(({ where }: { where: { id?: string; agencyId?: string } }) =>
+        Promise.resolve(
+          where.id === workspaceId && where.agencyId === tenant.agencyId
+            ? { id: workspaceId }
+            : null,
+        ),
+      ),
     },
     gamificationXpEntry: {
       groupBy: jest.fn(
@@ -3968,7 +4651,7 @@ function makeService(options?: {
           },
         }),
       ),
-      count: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
         Promise.resolve(entries.filter((entry) => matchesEntry(entry, where)).length),
       ),
       findFirst: jest.fn(
@@ -4048,26 +4731,41 @@ function makeService(options?: {
         ({
           where,
         }: {
-          where: { workspaceId_idempotencyKey?: { workspaceId: string; idempotencyKey: string } };
+          where: {
+            id?: string;
+            workspaceId_idempotencyKey?: { workspaceId: string; idempotencyKey: string };
+          };
         }) => {
           const key = where.workspaceId_idempotencyKey;
           return Promise.resolve(
-            key
-              ? (workXpEvents.find(
-                  (event) =>
-                    event.workspaceId === key.workspaceId &&
-                    event.idempotencyKey === key.idempotencyKey,
-                ) ?? null)
-              : null,
+            where.id
+              ? withDeveloperWorkEventRelations(
+                  workXpEvents.find((event) => event.id === where.id) ?? null,
+                  entries,
+                  workXpEvents,
+                  globalScoreEvents,
+                )
+              : key
+                ? withDeveloperWorkEventRelations(
+                    workXpEvents.find(
+                      (event) =>
+                        event.workspaceId === key.workspaceId &&
+                        event.idempotencyKey === key.idempotencyKey,
+                    ) ?? null,
+                    entries,
+                    workXpEvents,
+                    globalScoreEvents,
+                  )
+                : null,
           );
         },
       ),
       findFirst: jest.fn(
         ({
-          where,
+          where = {},
           orderBy,
         }: {
-          where: Record<string, unknown>;
+          where?: Record<string, unknown>;
           orderBy?: Array<Record<string, string>>;
         }) => {
           const found = workXpEvents.filter((event) => workEventMatches(event, where));
@@ -4078,26 +4776,28 @@ function makeService(options?: {
       findMany: jest.fn(
         ({
           where,
-          include,
           orderBy,
+          skip = 0,
+          take = workXpEvents.length,
         }: {
           where: Record<string, unknown>;
-          include?: { xpEntries?: boolean };
           orderBy?: Array<Record<string, string>>;
+          skip?: number;
+          take?: number;
         }) => {
           const found = workXpEvents.filter((event) => workEventMatches(event, where));
           if (orderBy) found.sort(sortWorkEventsNewestFirst);
           return Promise.resolve(
-            found.map((event) =>
-              include?.xpEntries
-                ? {
-                    ...event,
-                    xpEntries: entries.filter((entry) => entry.workXpEventId === event.id),
-                  }
-                : event,
-            ),
+            found
+              .slice(skip, skip + take)
+              .map((event) =>
+                withDeveloperWorkEventRelations(event, entries, workXpEvents, globalScoreEvents),
+              ),
           );
         },
+      ),
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(workXpEvents.filter((event) => workEventMatches(event, where)).length),
       ),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
         if (
@@ -4120,12 +4820,17 @@ function makeService(options?: {
       }),
     },
     gamificationGlobalScoreBaseline: {
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(
+          globalScoreBaselines.filter((baseline) => matchesEntry(baseline, where)).length,
+        ),
+      ),
       findFirst: jest.fn(
         ({
-          where,
+          where = {},
           orderBy,
         }: {
-          where: Record<string, unknown>;
+          where?: Record<string, unknown>;
           orderBy?: Array<Record<string, string>>;
         }) => {
           const found = globalScoreBaselines.filter((baseline) => matchesEntry(baseline, where));
@@ -4133,8 +4838,22 @@ function makeService(options?: {
           return Promise.resolve(found[0] ?? null);
         },
       ),
-      findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
-        Promise.resolve(globalScoreBaselines.filter((baseline) => matchesEntry(baseline, where))),
+      findMany: jest.fn(
+        ({
+          where = {},
+          skip = 0,
+          take = globalScoreBaselines.length,
+        }: {
+          where?: Record<string, unknown>;
+          skip?: number;
+          take?: number;
+        }) =>
+          Promise.resolve(
+            globalScoreBaselines
+              .filter((baseline) => matchesEntry(baseline, where))
+              .sort(sortNewestFirst)
+              .slice(skip, skip + take),
+          ),
       ),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
         const created = {
@@ -4147,6 +4866,9 @@ function makeService(options?: {
       }),
     },
     gamificationGlobalScoreEvent: {
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(globalScoreEvents.filter((event) => matchesEntry(event, where)).length),
+      ),
       aggregate: jest.fn(({ where }: { where: Record<string, unknown> }) =>
         Promise.resolve({
           _sum: {
@@ -4176,8 +4898,26 @@ function makeService(options?: {
             ) ?? null,
           ),
       ),
-      findMany: jest.fn(({ where }: { where: Record<string, unknown> }) =>
-        Promise.resolve(globalScoreEvents.filter((event) => matchesEntry(event, where))),
+      findMany: jest.fn(
+        ({
+          where,
+          skip = 0,
+          take = globalScoreEvents.length,
+        }: {
+          where: Record<string, unknown>;
+          skip?: number;
+          take?: number;
+        }) =>
+          Promise.resolve(
+            globalScoreEvents
+              .filter((event) => matchesEntry(event, where))
+              .sort(sortNewestFirst)
+              .slice(skip, skip + take)
+              .map((event) => ({
+                ...event,
+                workspace: { name: 'Workspace', agency: { id: tenant.agencyId, name: 'Agency' } },
+              })),
+          ),
       ),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
         if (globalScoreEvents.some((event) => event.workXpEventId === data.workXpEventId)) {
@@ -4205,19 +4945,51 @@ function makeService(options?: {
     },
     gamificationXpReconciliation: {
       groupBy: jest.fn(
-        ({ where }: { by: string[]; where: Record<string, unknown>; _count?: unknown }) => {
+        ({
+          by,
+          where = {},
+        }: {
+          by: string[];
+          where?: Record<string, unknown>;
+          _count?: unknown;
+        }) => {
           const grouped = new Map<string, number>();
           for (const item of reconciliations.filter((entry) => matchesEntry(entry, where))) {
-            const membership = String(item.membershipId);
-            grouped.set(membership, (grouped.get(membership) ?? 0) + 1);
+            const key = by.includes('status') ? String(item.status) : String(item.membershipId);
+            grouped.set(key, (grouped.get(key) ?? 0) + 1);
           }
           return Promise.resolve(
-            [...grouped.entries()].map(([membershipId, count]) => ({
-              membershipId,
+            [...grouped.entries()].map(([key, count]) => ({
+              ...(by.includes('status') ? { status: key } : { membershipId: key }),
               _count: { _all: count },
             })),
           );
         },
+      ),
+      findMany: jest.fn(
+        ({
+          where,
+          skip = 0,
+          take = reconciliations.length,
+        }: {
+          where: Record<string, unknown>;
+          skip?: number;
+          take?: number;
+        }) =>
+          Promise.resolve(
+            reconciliations
+              .filter((entry) => matchesEntry(entry, where))
+              .sort(sortNewestFirst)
+              .slice(skip, skip + take)
+              .map((entry) => ({
+                ...entry,
+                workspace: { name: 'Workspace', agency: { id: tenant.agencyId, name: 'Agency' } },
+                membership: { user: { name: 'Member' } },
+              })),
+          ),
+      ),
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(reconciliations.filter((entry) => matchesEntry(entry, where)).length),
       ),
       findUnique: jest.fn(
         ({
@@ -4296,7 +5068,7 @@ function makeService(options?: {
           },
         }),
       ),
-      count: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
         Promise.resolve(rewardPointEntries.filter((entry) => matchesEntry(entry, where)).length),
       ),
       findFirst: jest.fn(
@@ -4545,6 +5317,7 @@ function makeService(options?: {
       ),
     },
     gamificationLeaderboardConfig: {
+      count: jest.fn(() => Promise.resolve(leaderboardConfig ? 1 : 0)),
       findUnique: jest.fn(() => Promise.resolve(leaderboardConfig ?? null)),
       upsert: jest.fn(
         ({
@@ -4646,7 +5419,7 @@ function makeService(options?: {
               .slice(skip, skip + take),
           ),
       ),
-      count: jest.fn(({ where }: { where: Record<string, unknown> }) =>
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
         Promise.resolve(streakDays.filter((item) => matchesEntry(item, where)).length),
       ),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
@@ -4708,15 +5481,30 @@ function makeService(options?: {
           });
         return Promise.resolve(sorted[0] ?? null);
       }),
-      findMany: jest.fn(() =>
-        Promise.resolve(
-          [...auditRows].sort((left, right) => {
-            const createdDiff =
-              (left.createdAt as Date).getTime() - (right.createdAt as Date).getTime();
-            if (createdDiff !== 0) return createdDiff;
-            return String(left.id).localeCompare(String(right.id));
-          }),
-        ),
+      findMany: jest.fn(
+        ({
+          where = {},
+          skip = 0,
+          take = auditRows.length,
+          select,
+          orderBy,
+        }: {
+          where?: Record<string, unknown>;
+          skip?: number;
+          take?: number;
+          select?: Record<string, boolean>;
+          orderBy?: Array<Record<string, 'asc' | 'desc'>>;
+        } = {}) =>
+          Promise.resolve(
+            auditRows
+              .filter((row) => matchesAuditWhere(row, where))
+              .sort((left, right) => sortByOrder(left, right, orderBy ?? [{ createdAt: 'desc' }]))
+              .slice(skip, skip + take)
+              .map((row) => selectRecord(row, select)),
+          ),
+      ),
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(auditRows.filter((row) => matchesAuditWhere(row, where)).length),
       ),
       create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
         const created = {
@@ -4743,6 +5531,9 @@ function makeService(options?: {
       ),
     },
     securityStepUpGrant: {
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(stepUpGrants.filter((grant) => matchesEntry(grant, where)).length),
+      ),
       updateMany: jest.fn(
         ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
           const index = stepUpGrants.findIndex(
@@ -4848,6 +5639,13 @@ function makeService(options?: {
     statusDefinition: tx.statusDefinition,
     auditLog: tx.auditLog,
     refreshToken: tx.refreshToken,
+    securityOtpChallenge: {
+      count: jest.fn(({ where = {} }: { where?: Record<string, unknown> } = {}) =>
+        Promise.resolve(
+          securityOtpChallenges.filter((challenge) => matchesEntry(challenge, where)).length,
+        ),
+      ),
+    },
     securityStepUpGrant: tx.securityStepUpGrant,
   };
 

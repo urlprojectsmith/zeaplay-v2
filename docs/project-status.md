@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 10.11 — GLOBAL SCORE NORMALIZATION ENGINE COMPLETE / PASS
-Next: Phase 10.12 — Agency + Super Admin Global Leaderboards
+Current: Phase 10.13 — DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER COMPLETE / PASS
+Next: Phase 10.14 — Complete Gamification UI Integration
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -4254,3 +4254,222 @@ Final verification:
 - Prisma migrate status: database schema is up to date, 50 migrations.
 
 Phase 10.11 — GLOBAL SCORE NORMALIZATION ENGINE is COMPLETE / PASS. Next: Phase 10.12 — Agency + Super Admin Global Leaderboards.
+
+### Phase 10.12 Implementation - PASS
+
+AGENCY + SUPER ADMIN GLOBAL LEADERBOARDS implementation is pass.
+
+Implemented:
+
+- Agency Global Leaderboard API and UI on the existing Agency dashboard route.
+- Agency Top 10 Subaccounts ranked by normalized Global Score with server-side Subaccount search.
+- Agency Subaccount -> Users drilldown using active WorkspaceMembership rows only.
+- Platform/Super Admin Global Leaderboard UI on the existing `/super-admin/dashboard` route.
+- Platform tabs for Agencies, Subaccounts, and Users.
+- Platform Agency -> Subaccounts and Subaccount -> Users drilldown using server-generated filtered leaderboard queries.
+- Permission keys `gamification.global_leaderboard.view_agency` and `gamification.global_leaderboard.view_platform`.
+- Migration `0051_phase10_12_global_leaderboard_permissions` creates Global Leaderboard permissions and grants Agency leaderboard view to Agency Owner/Admin only.
+- English and Tamil labels for Global Leaderboard surfaces.
+
+Key invariants:
+
+- Global leaderboards use normalized Global Score only.
+- Workspace and Department leaderboards remain local XP.
+- Agency ranks its own Subaccounts only.
+- Platform ranks Agencies, Subaccounts, and WorkspaceMembership users.
+- Agency score is the sum of normalized Workspace activity.
+- Subaccount score is the sum of signed APPLIED normalized Global Score events.
+- User ranking unit is WorkspaceMembership; users are not deduplicated across tenants.
+- `DENSE_RANK()` is used for ties with deterministic display tie breakers.
+- User privacy is enforced before ranking; `OPT_OUT` users are excluded from user rows.
+- `ANONYMOUS` users are ranked but identifying data is redacted.
+- `OPT_OUT` and inactive users still contribute to organization totals through historical Global Score events.
+- Inactive users are excluded from user leaderboards while historical work remains in organization totals.
+- Queries are set-based, bounded, and paginated where required.
+- No cross-Agency or cross-Workspace drilldown leakage.
+- No mutable rank storage, rank rewards, rank notifications, Redis leaderboard authority, or Phase 10.13+ scope.
+- Existing feature/governance service is only an entitlement resolver; no production Platform -> Agency -> Workspace Gamification governance UI was added or faked in Phase 10.12.
+
+Verification:
+
+- Focused Gamification service tests: 87/87.
+- API unit: 156/156.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass after rerun; first rerun had one existing Phase 7.2 web timeout that passed on immediate retry.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase1012_clean`, all 51 migrations applied through `0051_phase10_12_global_leaderboard_permissions`.
+- Prisma migrate status: database schema is up to date, 51 migrations.
+
+Phase 10.12 AGENCY + SUPER ADMIN GLOBAL LEADERBOARDS Implementation is pass; the next step is Phase 10.12 Focused Refinement + Final Verification, and Phase 10.13 must not start automatically.
+
+### Phase 10.12 Focused Refinement + Final Verification - PASS
+
+Phase 10.12 — AGENCY + SUPER ADMIN GLOBAL LEADERBOARDS is COMPLETE / PASS.
+
+Final invariants:
+
+- Agency and Platform leaderboards use normalized Global Score only.
+- Workspace and Department leaderboards remain local XP.
+- Agency sees only its own Subaccounts.
+- Platform tabs are Agencies, Subaccounts, and Users.
+- User ranking unit is WorkspaceMembership; users are not merged by User id.
+- `DENSE_RANK()` handles ties with deterministic display ordering.
+- `OPT_OUT` memberships are excluded before user ranking.
+- `ANONYMOUS` identity is redacted.
+- Inactive memberships are excluded from user ranking.
+- Inactive and `OPT_OUT` historical work still contributes to organization totals.
+- Organization scores are signed APPLIED Global Score event sums.
+- Queries are set-based and server paginated.
+- Drilldowns enforce scope server-side.
+- No mutable rank authority, Redis rank authority, rank rewards, or rank notifications were introduced.
+- No fake Gamification governance UI was introduced; production governance integration remains deferred until real module inheritance support exists.
+- Phase 7 through Phase 10.11 remain green.
+- No Phase 10.13+ scope was started.
+
+Focused refinement:
+
+- Added a focused guardrail test proving global leaderboard page and page-size inputs are bounded before platform query execution.
+
+Final verification:
+
+- Focused Gamification service tests: 92/92.
+- API unit: 161/161.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase1012_final_verify_20260922`, all 51 migrations applied through `0051_phase10_12_global_leaderboard_permissions`.
+- Prisma migrate status: database schema is up to date, 51 migrations.
+
+Phase 10.12 AGENCY + SUPER ADMIN GLOBAL LEADERBOARDS is COMPLETE / PASS. Next: Phase 10.13 — Developer Dashboard — Gamification Control Center, and it must not start automatically.
+
+### Phase 10.13 Implementation - PASS
+
+DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER implementation is pass.
+
+Implemented:
+
+- Developer-only Gamification Control Center mounted on the existing `/developer/dashboard` route.
+- Internal read-only diagnostics APIs under `/developer/gamification/*`.
+- Permission key `gamification.developer.diagnostics`.
+- Permission-based `DeveloperDiagnosticsGuard`; access is never granted by role name.
+- Overview health cards for XP events, skipped XP events, ledgers, Global Score, normalization baselines, reconciliation, achievements, streaks, leaderboards, OTP challenges, and reset grants.
+- Point Rule Inspector showing Workspace defaults, Department overrides, and effective source.
+- XP Event Monitor with Work XP Event rows, linked XP ledger entries, detail lookup, filters, and bounded pagination.
+- Normalization Monitor for immutable baselines and Global Score events.
+- Leaderboard Diagnostics showing local XP authority for Workspace/Department and normalized Global Score authority for Agency/Platform.
+- Reconciliation Monitor reading Phase 10.10 persisted reconciliation records and statuses.
+- XP/RP Ledger Health visibility for totals, duplicate idempotency groups, and negative balance groups without repair actions.
+- Achievement/Streak health visibility.
+- Security diagnostics for OTP/reset health with secret fields redacted.
+- Bounded and sanitized gamification audit view.
+- English and Tamil UI labels.
+
+Key invariants:
+
+- Developer Gamification Control Center is internal-only.
+- Developer access is permission-based and never role-name-based.
+- Workspace/Agency users without `gamification.developer.diagnostics` cannot access developer diagnostics.
+- Cross-tenant diagnostics remain safe through permission enforcement plus service-level scoped filters.
+- The UI and APIs are diagnostic-first and do not mutate immutable gamification history.
+- No Fix All, Auto Repair, auto-normalize, auto-backfill, or auto-reconcile behavior was introduced.
+- XP/RP ledgers, Work XP Events, Global Score Events, normalization baselines, and reconciliation records remain immutable history.
+- OTP/security diagnostics do not expose OTP digests, password hashes, JWT secrets, provider secrets, SMTP secrets, or raw authorization tokens.
+- Diagnostic queries are bounded and paginated where large result sets are exposed.
+- No Phase 20 governance UI or Phase 10.14+ scope was introduced.
+
+Verification:
+
+- Focused Developer Diagnostics guard tests: 4/4.
+- Focused Gamification service tests: 92/92.
+- API unit: 165/165.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase1013_impl_clean_20260922`, all 52 migrations applied through `0052_phase10_13_developer_gamification_diagnostics`.
+- Prisma migrate status: database schema is up to date, 52 migrations.
+
+Phase 10.13 DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER Implementation is pass; the next step is Phase 10.13 Focused Refinement + Final Verification, and Phase 10.14 must not start automatically.
+
+### Phase 10.13 Focused Refinement + Final Verification - PASS
+
+Phase 10.13 — DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER is COMPLETE / PASS.
+
+Focused refinement:
+
+- Point Rule Inspector now returns explicit Workspace default, Department override, and effective rule diagnostics.
+- Added focused Developer diagnostics service coverage for effective Point Rules, bounded XP Event monitor reads, linked XP ledger detail, warning-based normalization health, stored baseline/event snapshots, leaderboard metric authority, security redaction, and sanitized AuditLog output.
+- Test Prisma doubles were expanded only for the new read-only Developer diagnostics paths.
+
+Final invariants:
+
+- Developer Gamification diagnostics are internal-only.
+- Access uses explicit `gamification.developer.diagnostics` permission, never role names.
+- Normal Workspace, Agency, and platform users cannot access Developer diagnostics without explicit permission.
+- Cross-tenant diagnostics exist only behind Developer authorization.
+- Dashboard behavior is diagnostic-first and read-only.
+- No automatic repair, Fix All, auto-backfill, auto-normalize, or auto-reconcile exists.
+- Overview health uses real system state.
+- Expected legacy/operational conditions are distinguished from active anomalies.
+- Point Rule Inspector shows Workspace default, Department override, and effective rule.
+- XP Event Monitor uses immutable Work XP Event snapshots and linked XP ledger entries.
+- Normalization monitor uses stored baseline/event snapshots.
+- Leaderboard diagnostics clearly separate LOCAL XP and NORMALIZED GLOBAL SCORE authority.
+- Reconciliation monitor reuses Phase 10.10 semantics.
+- XP/RP ledger health is read-only.
+- Achievement/Streak health is read-only.
+- OTP/reset diagnostics expose no secrets.
+- AuditLog diagnostics are bounded and sanitized.
+- Large lists are paginated and date bounded.
+- Diagnostics are set-based and avoid N+1 source hydration.
+- No Phase 20 Isolated Space implementation exists.
+- No Phase 10.14 scope was started.
+- Phase 7 through Phase 10.12 remain green.
+
+Final verification:
+
+- Developer Diagnostics guard focused tests: 4/4.
+- Gamification focused tests: 97/97.
+- API unit: 170/170.
+- Web unit: 127/127.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass after fixing one unused test-mock parameter found during refinement.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase1013_final_clean_20260922`, all 52 migrations applied through `0052_phase10_13_developer_gamification_diagnostics`.
+- Prisma migrate status: database schema is up to date, 52 migrations.
+
+Phase 10.13 DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER is COMPLETE / PASS. Next: Phase 10.14 — Complete Gamification UI Integration, and it must not start automatically.

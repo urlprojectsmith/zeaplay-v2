@@ -1,5 +1,5 @@
-import { DashboardFoundation } from '../../../components/dashboards/DashboardFoundation';
+import { DeveloperGamificationControlCenter } from '../../../components/developer/DeveloperGamificationControlCenter';
 
 export default function DeveloperDashboardPage() {
-  return <DashboardFoundation scope="developer" />;
+  return <DeveloperGamificationControlCenter />;
 }

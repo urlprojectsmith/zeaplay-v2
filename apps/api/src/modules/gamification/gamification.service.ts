@@ -39,7 +39,7 @@ import {
   RoleScope,
   WorkspaceStatus,
 } from '@prisma/client';
-import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { JwtTokenService } from '../../common/auth/jwt.service';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { safeWorkspaceTimezone } from '../../common/timezones';
@@ -64,6 +64,7 @@ import {
   UpdateGamificationLevelDto,
 } from './dto/gamification-level.dto';
 import {
+  GamificationGlobalLeaderboardQueryDto,
   UpdateGamificationLeaderboardConfigDto,
   UpdateGamificationLeaderboardPreferenceDto,
 } from './dto/gamification-leaderboard.dto';
@@ -87,6 +88,15 @@ import {
   GamificationXpReconciliationApplyDto,
   GamificationXpReconciliationPreviewDto,
 } from './dto/gamification-xp-control.dto';
+import {
+  DeveloperAuditQueryDto,
+  DeveloperGamificationPageQueryDto,
+  DeveloperLeaderboardDiagnosticsQueryDto,
+  DeveloperNormalizationEventsQueryDto,
+  DeveloperPointRuleInspectorQueryDto,
+  DeveloperReconciliationQueryDto,
+  DeveloperXpEventMonitorQueryDto,
+} from './dto/developer-gamification.dto';
 import {
   GamificationPointPreviewDto,
   GamificationPointRulesQueryDto,
@@ -1581,6 +1591,518 @@ export class GamificationService {
       _sum: { normalizedScore: true },
     });
     return result._sum.normalizedScore ?? 0;
+  }
+
+  async getAgencyGlobalLeaderboardSubaccounts(
+    tenant: AgencyTenantContext,
+    query: Pick<GamificationGlobalLeaderboardQueryDto, 'search'> = {},
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewAgency);
+    const search = normalizedSearch(query.search);
+    const searchFilter = search
+      ? Prisma.sql`AND w.name ILIKE ${`%${escapeLike(search)}%`}`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalSubaccountLeaderboardSqlRow[]>(Prisma.sql`
+      WITH workspace_scores AS (
+        SELECT
+          w.id AS workspace_id,
+          w.name AS workspace_name,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score,
+          COUNT(DISTINCT gse.recipient_membership_id)::int AS scored_users
+        FROM workspaces w
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = w.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        WHERE w.agency_id = ${tenant.agencyId}::uuid
+          ${searchFilter}
+        GROUP BY w.id, w.name
+      ),
+      ranked AS (
+        SELECT
+          workspace_id,
+          workspace_name,
+          global_score,
+          scored_users,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank
+        FROM workspace_scores
+      )
+      SELECT
+        workspace_id AS "workspaceId",
+        workspace_name AS "workspaceName",
+        global_score AS "globalScore",
+        scored_users AS "scoredUsers",
+        rank::int AS rank
+      FROM ranked
+      ORDER BY rank ASC, workspace_name ASC, workspace_id ASC
+      LIMIT 10
+    `);
+    return {
+      scope: 'AGENCY_SUBACCOUNTS',
+      period: 'ALL_TIME',
+      agencyId: tenant.agencyId,
+      globalScore: await this.getAgencyGlobalScoreFoundation(tenant.agencyId),
+      items: rows.map(globalSubaccountRow),
+    };
+  }
+
+  async getAgencyGlobalLeaderboardUsers(
+    tenant: AgencyTenantContext,
+    workspaceId: string,
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewAgency);
+    await this.assertWorkspaceInAgency(tenant.agencyId, workspaceId);
+    return this.getGlobalUserLeaderboard({
+      scope: 'AGENCY_SUBACCOUNT_USERS',
+      agencyId: tenant.agencyId,
+      workspaceId,
+      query,
+    });
+  }
+
+  async getPlatformGlobalLeaderboard(
+    tenant: AgencyTenantContext,
+    tab: 'agencies' | 'subaccounts' | 'users',
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewPlatform);
+    if (tab === 'agencies') return this.getPlatformGlobalAgencies(query);
+    if (tab === 'subaccounts') return this.getPlatformGlobalSubaccounts(query);
+    return this.getGlobalUserLeaderboard({
+      scope: 'PLATFORM_USERS',
+      agencyId: query.agencyId,
+      workspaceId: query.workspaceId,
+      query,
+    });
+  }
+
+  async getDeveloperGamificationHealth() {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const [
+      workTotal,
+      workSkipped,
+      xpEntries,
+      rewardPointEntries,
+      globalApplied,
+      globalSkipped,
+      insufficientBaselines,
+      latestBaseline,
+      reconciliations,
+      achievementAwards,
+      streakDays,
+      leaderboardConfigs,
+      otpChallenges,
+      resetGrants,
+    ] = await Promise.all([
+      this.prisma.gamificationWorkXpEvent.count(),
+      this.prisma.gamificationWorkXpEvent.count({
+        where: { outcome: GamificationWorkXpEventOutcome.SKIPPED },
+      }),
+      this.prisma.gamificationXpEntry.count(),
+      this.prisma.gamificationRewardPointEntry.count(),
+      this.prisma.gamificationGlobalScoreEvent.count({
+        where: { status: GamificationGlobalScoreEventStatus.APPLIED },
+      }),
+      this.prisma.gamificationGlobalScoreEvent.count({
+        where: { status: { not: GamificationGlobalScoreEventStatus.APPLIED } },
+      }),
+      this.prisma.gamificationGlobalScoreBaseline.count({
+        where: { status: GamificationGlobalScoreBaselineStatus.INSUFFICIENT_SAMPLE },
+      }),
+      this.prisma.gamificationGlobalScoreBaseline.findFirst({
+        orderBy: { calculatedAt: 'desc' },
+        select: { calculatedAt: true, status: true },
+      }),
+      this.prisma.gamificationXpReconciliation.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
+      this.prisma.gamificationAchievementAward.count(),
+      this.prisma.gamificationStreakDay.count(),
+      this.prisma.gamificationLeaderboardConfig.count(),
+      this.prisma.securityOtpChallenge.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
+      this.prisma.securityStepUpGrant.count({
+        where: {
+          purpose: SecurityStepUpPurpose.GAMIFICATION_RESET,
+          createdAt: { gte: sevenDaysAgo },
+        },
+      }),
+    ]);
+    const failedReconciliations =
+      reconciliations.find((item) => item.status === GamificationXpReconciliationStatus.FAILED)
+        ?._count._all ?? 0;
+    return {
+      generatedAt: new Date().toISOString(),
+      cards: [
+        healthCard('XP Engine', 'HEALTHY', workTotal, 'Work XP Events total'),
+        healthCard(
+          'Work XP Events',
+          workSkipped > 0 ? 'WARNING' : 'HEALTHY',
+          workSkipped,
+          'Skipped work events',
+        ),
+        healthCard('XP Ledger', 'HEALTHY', xpEntries, 'XP ledger entries'),
+        healthCard(
+          'Reward Point Ledger',
+          'HEALTHY',
+          rewardPointEntries,
+          'Reward Point ledger entries',
+        ),
+        healthCard(
+          'Global Normalization',
+          insufficientBaselines > 0 ? 'WARNING' : 'HEALTHY',
+          insufficientBaselines,
+          'Insufficient-sample baselines',
+        ),
+        healthCard(
+          'Global Score Events',
+          globalSkipped > 0 ? 'WARNING' : 'HEALTHY',
+          globalApplied,
+          'Applied global score events',
+        ),
+        healthCard(
+          'XP Reconciliation',
+          failedReconciliations > 0 ? 'WARNING' : 'HEALTHY',
+          failedReconciliations,
+          'Failed reconciliation attempts',
+        ),
+        healthCard('Achievement Evaluator', 'HEALTHY', achievementAwards, 'Achievement awards'),
+        healthCard('Streak Evaluator', 'HEALTHY', streakDays, 'Streak days'),
+        healthCard('Local Leaderboards', 'HEALTHY', leaderboardConfigs, 'Leaderboard configs'),
+        healthCard(
+          'Global Leaderboards',
+          'HEALTHY',
+          globalApplied,
+          'Normalized score authority rows',
+        ),
+        healthCard(
+          'OTP / Reset Security',
+          'HEALTHY',
+          otpChallenges + resetGrants,
+          'Recent OTP challenges and reset grants',
+        ),
+      ],
+      metrics: {
+        workTotal,
+        workSkipped,
+        globalApplied,
+        globalSkipped,
+        insufficientBaselines,
+        latestBaselineCalculatedAt: latestBaseline?.calculatedAt ?? null,
+        reconciliationStatusCounts: reconciliations,
+        recentOtpChallenges: otpChallenges,
+        recentResetGrants: resetGrants,
+      },
+    };
+  }
+
+  async getDeveloperPointRules(query: DeveloperPointRuleInspectorQueryDto) {
+    const where = developerPointRuleWhere(query);
+    const [completionRules, creationRules] = await Promise.all([
+      this.prisma.gamificationPointRule.findMany({
+        where,
+        orderBy: [
+          { workspaceId: 'asc' },
+          { departmentId: 'asc' },
+          { workType: 'asc' },
+          { category: 'asc' },
+        ],
+        take: 100,
+        select: developerCompletionPointRuleSelect,
+      }),
+      this.prisma.gamificationCreationPointRule.findMany({
+        where,
+        orderBy: [
+          { workspaceId: 'asc' },
+          { departmentId: 'asc' },
+          { workType: 'asc' },
+          { category: 'asc' },
+          { role: { name: 'asc' } },
+        ],
+        take: 100,
+        select: developerCreationPointRuleSelect,
+      }),
+    ]);
+    const mappedCompletionRules = completionRules.map((rule) => ({
+      ...rule,
+      effectiveSource: rule.departmentId ? 'DEPARTMENT_OVERRIDE' : 'WORKSPACE_DEFAULT',
+    }));
+    const mappedCreationRules = creationRules.map((rule) => ({
+      ...rule,
+      effectiveSource: rule.departmentId ? 'DEPARTMENT_OVERRIDE' : 'WORKSPACE_DEFAULT',
+    }));
+    return {
+      completionRules: mappedCompletionRules,
+      creationRules: mappedCreationRules,
+      effectiveCompletionRules: buildDeveloperEffectiveRules(mappedCompletionRules, [
+        'workspaceId',
+        'workType',
+        'category',
+      ]),
+      effectiveCreationRules: buildDeveloperEffectiveRules(mappedCreationRules, [
+        'workspaceId',
+        'workType',
+        'category',
+        'roleId',
+      ]),
+    };
+  }
+
+  async getDeveloperXpEvents(query: DeveloperXpEventMonitorQueryDto) {
+    const paging = developerPaging(query);
+    const where = developerWorkXpWhere(query);
+    const [items, total] = await Promise.all([
+      this.prisma.gamificationWorkXpEvent.findMany({
+        where,
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        skip: paging.offset,
+        take: paging.pageSize,
+        select: developerWorkXpEventSelect,
+      }),
+      this.prisma.gamificationWorkXpEvent.count({ where }),
+    ]);
+    return developerPage(items, total, paging);
+  }
+
+  async getDeveloperXpEventDetail(id: string) {
+    const event = await this.prisma.gamificationWorkXpEvent.findUnique({
+      where: { id },
+      select: developerWorkXpEventDetailSelect,
+    });
+    if (!event) throw new ForbiddenException('EVENT_NOT_FOUND');
+    return event;
+  }
+
+  async getDeveloperNormalizationBaselines(query: DeveloperGamificationPageQueryDto) {
+    const paging = developerPaging(query);
+    const [items, total] = await Promise.all([
+      this.prisma.gamificationGlobalScoreBaseline.findMany({
+        orderBy: [{ calculatedAt: 'desc' }, { id: 'desc' }],
+        skip: paging.offset,
+        take: paging.pageSize,
+      }),
+      this.prisma.gamificationGlobalScoreBaseline.count(),
+    ]);
+    return developerPage(items, total, paging);
+  }
+
+  async getDeveloperNormalizationEvents(query: DeveloperNormalizationEventsQueryDto) {
+    const paging = developerPaging(query);
+    const where = developerGlobalScoreWhere(query);
+    const [items, total] = await Promise.all([
+      this.prisma.gamificationGlobalScoreEvent.findMany({
+        where,
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        skip: paging.offset,
+        take: paging.pageSize,
+        select: developerGlobalScoreEventSelect,
+      }),
+      this.prisma.gamificationGlobalScoreEvent.count({ where }),
+    ]);
+    return developerPage(items, total, paging);
+  }
+
+  getDeveloperLeaderboardDiagnostics(query: DeveloperLeaderboardDiagnosticsQueryDto) {
+    const scope = query.scope ?? 'workspace';
+    return {
+      scope,
+      authority:
+        scope === 'workspace' || scope === 'department' ? 'LOCAL XP' : 'NORMALIZED GLOBAL SCORE',
+      rankSource:
+        scope === 'workspace' || scope === 'department'
+          ? 'Gamification XP ledger current balance'
+          : 'SUM of signed APPLIED GamificationGlobalScoreEvent.normalizedScore',
+      privacyBehavior:
+        scope === 'workspace' || scope === 'department'
+          ? 'Phase 10.6 local leaderboard privacy'
+          : 'Phase 10.12 global leaderboard privacy',
+      mutation: 'READ_ONLY_DIAGNOSTIC',
+    };
+  }
+
+  async getDeveloperReconciliation(query: DeveloperReconciliationQueryDto) {
+    const paging = developerPaging(query);
+    const where: Prisma.GamificationXpReconciliationWhereInput = {
+      ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+      ...(query.membershipId ? { membershipId: query.membershipId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      createdAt: developerDateRange(query),
+    };
+    const [items, total, statusCounts] = await Promise.all([
+      this.prisma.gamificationXpReconciliation.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paging.offset,
+        take: paging.pageSize,
+        select: developerReconciliationSelect,
+      }),
+      this.prisma.gamificationXpReconciliation.count({ where }),
+      this.prisma.gamificationXpReconciliation.groupBy({ by: ['status'], _count: { _all: true } }),
+    ]);
+    return { ...developerPage(items, total, paging), statusCounts };
+  }
+
+  async getDeveloperLedgerHealth() {
+    const [
+      xpEntries,
+      rewardPointEntries,
+      duplicateXpKeys,
+      duplicateRewardKeys,
+      xpNegative,
+      rpNegative,
+    ] = await Promise.all([
+      this.prisma.gamificationXpEntry.count(),
+      this.prisma.gamificationRewardPointEntry.count(),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+          SELECT COUNT(*)::bigint AS count FROM (
+            SELECT workspace_id, membership_id, idempotency_key
+            FROM gamification_xp_entries
+            WHERE idempotency_key IS NOT NULL
+            GROUP BY workspace_id, membership_id, idempotency_key
+            HAVING COUNT(*) > 1
+          ) duplicates
+        `),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+          SELECT COUNT(*)::bigint AS count FROM (
+            SELECT workspace_id, membership_id, idempotency_key
+            FROM gamification_reward_point_entries
+            WHERE idempotency_key IS NOT NULL
+            GROUP BY workspace_id, membership_id, idempotency_key
+            HAVING COUNT(*) > 1
+          ) duplicates
+        `),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+          SELECT COUNT(*)::bigint AS count FROM (
+            SELECT workspace_id, membership_id, SUM(amount) AS balance
+            FROM gamification_xp_entries
+            GROUP BY workspace_id, membership_id
+            HAVING SUM(amount) < 0
+          ) negatives
+        `),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+          SELECT COUNT(*)::bigint AS count FROM (
+            SELECT workspace_id, membership_id, SUM(amount) AS balance
+            FROM gamification_reward_point_entries
+            GROUP BY workspace_id, membership_id
+            HAVING SUM(amount) < 0
+          ) negatives
+        `),
+    ]);
+    return {
+      xp: {
+        status: Number(xpNegative[0]?.count ?? 0) > 0 ? 'ERROR' : 'HEALTHY',
+        entries: xpEntries,
+        duplicateIdempotencyKeys: Number(duplicateXpKeys[0]?.count ?? 0),
+        negativeBalances: Number(xpNegative[0]?.count ?? 0),
+      },
+      rewardPoints: {
+        status: Number(rpNegative[0]?.count ?? 0) > 0 ? 'ERROR' : 'HEALTHY',
+        entries: rewardPointEntries,
+        duplicateIdempotencyKeys: Number(duplicateRewardKeys[0]?.count ?? 0),
+        negativeBalances: Number(rpNegative[0]?.count ?? 0),
+      },
+      mutation: 'READ_ONLY_NO_AUTO_REPAIR',
+    };
+  }
+
+  async getDeveloperAchievementsStreaksHealth() {
+    const [achievementDefinitions, achievementAwards, badgeAwards, streakConfigs, streakDays] =
+      await Promise.all([
+        this.prisma.gamificationAchievementDefinition.count(),
+        this.prisma.gamificationAchievementAward.count(),
+        this.prisma.gamificationBadgeAward.count(),
+        this.prisma.gamificationStreakConfig.count(),
+        this.prisma.gamificationStreakDay.count(),
+      ]);
+    return {
+      status: 'HEALTHY',
+      achievementDefinitions,
+      achievementAwards,
+      badgeAwards,
+      streakConfigs,
+      streakDays,
+      mutation: 'READ_ONLY_NO_AUTO_AWARD',
+    };
+  }
+
+  async getDeveloperSecurityHealth() {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const [otpTotal, expired, consumed, invalidated, resetGrants] = await Promise.all([
+      this.prisma.securityOtpChallenge.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
+      this.prisma.securityOtpChallenge.count({
+        where: {
+          createdAt: { gte: sevenDaysAgo },
+          expiresAt: { lt: new Date() },
+          consumedAt: null,
+        },
+      }),
+      this.prisma.securityOtpChallenge.count({
+        where: { createdAt: { gte: sevenDaysAgo }, consumedAt: { not: null } },
+      }),
+      this.prisma.securityOtpChallenge.count({
+        where: { createdAt: { gte: sevenDaysAgo }, invalidatedAt: { not: null } },
+      }),
+      this.prisma.securityStepUpGrant.count({
+        where: {
+          purpose: SecurityStepUpPurpose.GAMIFICATION_RESET,
+          createdAt: { gte: sevenDaysAgo },
+        },
+      }),
+    ]);
+    return {
+      status: 'HEALTHY',
+      windowDays: 7,
+      otpChallenges: otpTotal,
+      expiredChallenges: expired,
+      consumedChallenges: consumed,
+      invalidatedChallenges: invalidated,
+      resetGrants,
+      redactedFields: [
+        'otpDigest',
+        'otpCode',
+        'otpPepper',
+        'providerSecrets',
+        'jwt',
+        'passwordHash',
+      ],
+    };
+  }
+
+  async getDeveloperAudit(query: DeveloperAuditQueryDto) {
+    const paging = developerPaging(query);
+    const where: Prisma.AuditLogWhereInput = {
+      ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+      ...(query.agencyId ? { agencyId: query.agencyId } : {}),
+      ...(query.action ? { action: { contains: query.action, mode: 'insensitive' } } : {}),
+      createdAt: developerDateRange(query),
+      OR: [
+        { entityType: { contains: 'gamification', mode: 'insensitive' } },
+        { action: { contains: 'gamification', mode: 'insensitive' } },
+        { action: { contains: 'xp', mode: 'insensitive' } },
+        { action: { contains: 'reward', mode: 'insensitive' } },
+      ],
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: paging.offset,
+        take: paging.pageSize,
+        select: {
+          id: true,
+          agencyId: true,
+          workspaceId: true,
+          userId: true,
+          action: true,
+          entityType: true,
+          entityId: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+    return developerPage(items, total, paging);
   }
 
   private async xpSourceBreakdown(workspaceId: string, membershipId: string) {
@@ -4154,6 +4676,237 @@ export class GamificationService {
     `);
   }
 
+  private async assertWorkspaceInAgency(agencyId: string, workspaceId: string) {
+    const workspace = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, agencyId },
+      select: { id: true },
+    });
+    if (!workspace) throw new ForbiddenException('WORKSPACE_NOT_IN_AGENCY');
+  }
+
+  private async getPlatformGlobalAgencies(query: GamificationGlobalLeaderboardQueryDto) {
+    const page = boundedPage(query.page);
+    const pageSize = boundedGlobalPageSize(query.pageSize);
+    const offset = (page - 1) * pageSize;
+    const search = normalizedSearch(query.search);
+    const searchFilter = search
+      ? Prisma.sql`AND a.name ILIKE ${`%${escapeLike(search)}%`}`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalAgencyLeaderboardSqlRow[]>(Prisma.sql`
+      WITH agency_scores AS (
+        SELECT
+          a.id AS agency_id,
+          a.name AS agency_name,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score,
+          COUNT(DISTINCT w.id)::int AS subaccounts,
+          COUNT(DISTINCT gse.recipient_membership_id)::int AS scored_users
+        FROM agencies a
+        JOIN workspaces w ON w.agency_id = a.id
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = w.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        WHERE 1 = 1
+          ${searchFilter}
+        GROUP BY a.id, a.name
+      ),
+      ranked AS (
+        SELECT
+          agency_id,
+          agency_name,
+          global_score,
+          subaccounts,
+          scored_users,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank,
+          COUNT(*) OVER ()::int AS total_count
+        FROM agency_scores
+      )
+      SELECT
+        agency_id AS "agencyId",
+        agency_name AS "agencyName",
+        global_score AS "globalScore",
+        subaccounts,
+        scored_users AS "scoredUsers",
+        rank::int AS rank,
+        total_count AS "totalCount"
+      FROM ranked
+      ORDER BY rank ASC, agency_name ASC, agency_id ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
+    return pagedGlobalLeaderboard(
+      'PLATFORM_AGENCIES',
+      page,
+      pageSize,
+      rows.map(globalAgencyRow),
+      totalFromRows(rows),
+    );
+  }
+
+  private async getPlatformGlobalSubaccounts(query: GamificationGlobalLeaderboardQueryDto) {
+    const page = boundedPage(query.page);
+    const pageSize = boundedGlobalPageSize(query.pageSize);
+    const offset = (page - 1) * pageSize;
+    const search = normalizedSearch(query.search);
+    const searchFilter = search
+      ? Prisma.sql`AND w.name ILIKE ${`%${escapeLike(search)}%`}`
+      : Prisma.empty;
+    const agencyFilter = query.agencyId
+      ? Prisma.sql`AND a.id = ${query.agencyId}::uuid`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalSubaccountLeaderboardSqlRow[]>(Prisma.sql`
+      WITH workspace_scores AS (
+        SELECT
+          w.id AS workspace_id,
+          w.name AS workspace_name,
+          a.id AS agency_id,
+          a.name AS agency_name,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score,
+          COUNT(DISTINCT gse.recipient_membership_id)::int AS scored_users
+        FROM workspaces w
+        JOIN agencies a ON a.id = w.agency_id
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = w.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        WHERE 1 = 1
+          ${searchFilter}
+          ${agencyFilter}
+        GROUP BY w.id, w.name, a.id, a.name
+      ),
+      ranked AS (
+        SELECT
+          workspace_id,
+          workspace_name,
+          agency_id,
+          agency_name,
+          global_score,
+          scored_users,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank,
+          COUNT(*) OVER ()::int AS total_count
+        FROM workspace_scores
+      )
+      SELECT
+        workspace_id AS "workspaceId",
+        workspace_name AS "workspaceName",
+        agency_id AS "agencyId",
+        agency_name AS "agencyName",
+        global_score AS "globalScore",
+        scored_users AS "scoredUsers",
+        rank::int AS rank,
+        total_count AS "totalCount"
+      FROM ranked
+      ORDER BY rank ASC, workspace_name ASC, workspace_id ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
+    return pagedGlobalLeaderboard(
+      'PLATFORM_SUBACCOUNTS',
+      page,
+      pageSize,
+      rows.map(globalSubaccountRow),
+      totalFromRows(rows),
+    );
+  }
+
+  private async getGlobalUserLeaderboard(input: {
+    scope: 'AGENCY_SUBACCOUNT_USERS' | 'PLATFORM_USERS';
+    agencyId?: string | null;
+    workspaceId?: string | null;
+    query: GamificationGlobalLeaderboardQueryDto;
+  }) {
+    const page = boundedPage(input.query.page);
+    const pageSize = boundedGlobalPageSize(input.query.pageSize);
+    const offset = (page - 1) * pageSize;
+    const search = normalizedSearch(input.query.search);
+    const searchFilter = search
+      ? Prisma.sql`
+          AND (
+            (COALESCE(pref.privacy_mode, 'ANONYMOUS') IN ('SHOW_NAME', 'SHOW_DISPLAY_NAME')
+              AND COALESCE(u.name, '') ILIKE ${`%${escapeLike(search)}%`})
+            OR w.name ILIKE ${`%${escapeLike(search)}%`}
+            OR a.name ILIKE ${`%${escapeLike(search)}%`}
+          )
+        `
+      : Prisma.empty;
+    const agencyFilter = input.agencyId
+      ? Prisma.sql`AND a.id = ${input.agencyId}::uuid`
+      : Prisma.empty;
+    const workspaceFilter = input.workspaceId
+      ? Prisma.sql`AND w.id = ${input.workspaceId}::uuid`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalUserLeaderboardSqlRow[]>(Prisma.sql`
+      WITH member_scores AS (
+        SELECT
+          wm.id AS membership_id,
+          w.id AS workspace_id,
+          w.name AS workspace_name,
+          a.id AS agency_id,
+          a.name AS agency_name,
+          COALESCE(u.name, '') AS name,
+          d.name AS department_name,
+          COALESCE(pref.privacy_mode, 'ANONYMOUS') AS privacy_mode,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score
+        FROM workspace_memberships wm
+        JOIN users u ON u.id = wm.user_id
+        JOIN workspaces w ON w.id = wm.workspace_id
+        JOIN agencies a ON a.id = w.agency_id
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = wm.workspace_id
+         AND gse.recipient_membership_id = wm.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        LEFT JOIN departments d
+          ON d.id = wm.department_id
+         AND d.workspace_id = wm.workspace_id
+        LEFT JOIN gamification_leaderboard_preferences pref
+          ON pref.workspace_id = wm.workspace_id
+         AND pref.membership_id = wm.id
+        WHERE wm.status = 'ACTIVE'
+          AND COALESCE(pref.privacy_mode, 'ANONYMOUS') <> 'OPT_OUT'
+          ${agencyFilter}
+          ${workspaceFilter}
+          ${searchFilter}
+        GROUP BY wm.id, w.id, w.name, a.id, a.name, u.name, d.name, pref.privacy_mode
+      ),
+      ranked AS (
+        SELECT
+          membership_id,
+          workspace_id,
+          workspace_name,
+          agency_id,
+          agency_name,
+          name,
+          department_name,
+          privacy_mode,
+          global_score,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank,
+          COUNT(*) OVER ()::int AS total_count
+        FROM member_scores
+      )
+      SELECT
+        membership_id AS "membershipId",
+        workspace_id AS "workspaceId",
+        workspace_name AS "workspaceName",
+        agency_id AS "agencyId",
+        agency_name AS "agencyName",
+        name,
+        department_name AS "departmentName",
+        privacy_mode AS "privacyMode",
+        global_score AS "globalScore",
+        rank::int AS rank,
+        total_count AS "totalCount"
+      FROM ranked
+      ORDER BY rank ASC, name ASC, membership_id ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
+    return pagedGlobalLeaderboard(
+      input.scope,
+      page,
+      pageSize,
+      rows.map(globalUserRow),
+      totalFromRows(rows),
+    );
+  }
+
   private async getLeaderboardConfigData(workspaceId: string) {
     const config = await this.prisma.gamificationLeaderboardConfig.findUnique({
       where: { workspaceId },
@@ -4208,6 +4961,345 @@ const gamificationLeaderboardPreferenceSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.GamificationLeaderboardPreferenceSelect;
+
+interface GlobalLeaderboardSqlBase {
+  globalScore: number | bigint | null;
+  rank: number | bigint;
+  totalCount?: number | bigint;
+}
+
+interface GlobalAgencyLeaderboardSqlRow extends GlobalLeaderboardSqlBase {
+  agencyId: string;
+  agencyName: string;
+  subaccounts: number | bigint;
+  scoredUsers: number | bigint;
+}
+
+interface GlobalSubaccountLeaderboardSqlRow extends GlobalLeaderboardSqlBase {
+  workspaceId: string;
+  workspaceName: string;
+  agencyId?: string | null;
+  agencyName?: string | null;
+  scoredUsers: number | bigint;
+}
+
+interface GlobalUserLeaderboardSqlRow extends GlobalLeaderboardSqlBase {
+  membershipId: string;
+  workspaceId: string;
+  workspaceName: string;
+  agencyId: string;
+  agencyName: string;
+  name: string | null;
+  departmentName: string | null;
+  privacyMode: GamificationLeaderboardPrivacyMode;
+}
+
+function pagedGlobalLeaderboard<T>(
+  scope: string,
+  page: number,
+  pageSize: number,
+  items: T[],
+  total: number,
+) {
+  return {
+    scope,
+    period: 'ALL_TIME',
+    items,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+function globalAgencyRow(row: GlobalAgencyLeaderboardSqlRow) {
+  return {
+    rank: toNumber(row.rank),
+    agencyId: row.agencyId,
+    agencyName: row.agencyName,
+    globalScore: toNumber(row.globalScore),
+    subaccounts: toNumber(row.subaccounts),
+    scoredUsers: toNumber(row.scoredUsers),
+  };
+}
+
+function globalSubaccountRow(row: GlobalSubaccountLeaderboardSqlRow) {
+  return {
+    rank: toNumber(row.rank),
+    workspaceId: row.workspaceId,
+    workspaceName: row.workspaceName,
+    agencyId: row.agencyId ?? null,
+    agencyName: row.agencyName ?? null,
+    globalScore: toNumber(row.globalScore),
+    scoredUsers: toNumber(row.scoredUsers),
+  };
+}
+
+function globalUserRow(row: GlobalUserLeaderboardSqlRow) {
+  const privacyMode = row.privacyMode ?? GamificationLeaderboardPrivacyMode.ANONYMOUS;
+  const hidden = privacyMode === GamificationLeaderboardPrivacyMode.ANONYMOUS;
+  return {
+    rank: toNumber(row.rank),
+    membershipId: hidden ? null : row.membershipId,
+    displayName: hidden ? 'Anonymous User' : safeMemberDisplayName(row.name),
+    workspaceId: row.workspaceId,
+    workspaceName: row.workspaceName,
+    agencyId: row.agencyId,
+    agencyName: row.agencyName,
+    departmentName: hidden ? null : row.departmentName,
+    privacyMode,
+    globalScore: toNumber(row.globalScore),
+  };
+}
+
+function totalFromRows(rows: GlobalLeaderboardSqlBase[]) {
+  return rows.length > 0 ? toNumber(rows[0]?.totalCount) : 0;
+}
+
+function boundedPage(page: number | undefined) {
+  return Math.max(1, Number.isFinite(page) ? Number(page) : 1);
+}
+
+function boundedGlobalPageSize(pageSize: number | undefined) {
+  return Math.min(100, Math.max(1, Number.isFinite(pageSize) ? Number(pageSize) : 20));
+}
+
+function toNumber(value: number | bigint | null | undefined) {
+  if (typeof value === 'bigint') return Number(value);
+  return Number(value ?? 0);
+}
+
+function normalizedSearch(search: string | undefined) {
+  const trimmed = search?.trim();
+  return trimmed ? trimmed.slice(0, 120) : '';
+}
+
+function escapeLike(value: string) {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+function healthCard(
+  title: string,
+  status: 'HEALTHY' | 'WARNING' | 'ERROR',
+  value: number,
+  summary: string,
+) {
+  return { title, status, value, summary };
+}
+
+function developerPaging(query: Pick<DeveloperGamificationPageQueryDto, 'page' | 'pageSize'>) {
+  const page = boundedPage(query.page);
+  const pageSize = boundedGlobalPageSize(query.pageSize);
+  return { page, pageSize, offset: (page - 1) * pageSize };
+}
+
+function developerPage<T>(items: T[], total: number, paging: ReturnType<typeof developerPaging>) {
+  return {
+    items,
+    page: paging.page,
+    pageSize: paging.pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / paging.pageSize)),
+  };
+}
+
+function buildDeveloperEffectiveRules<T extends { departmentId?: string | null }>(
+  rules: T[],
+  identityKeys: Array<keyof T>,
+) {
+  const effectiveRules: Array<{
+    workspaceDefault: T | null;
+    departmentOverride: T | null;
+    effectiveRule: T;
+    effectiveSource: 'WORKSPACE_DEFAULT' | 'DEPARTMENT_OVERRIDE';
+  }> = [];
+  const workspaceDefaults = new Map<string, T>();
+  for (const rule of rules) {
+    if (!rule.departmentId) workspaceDefaults.set(developerRuleIdentity(rule, identityKeys), rule);
+  }
+  for (const departmentOverride of rules.filter((rule) => Boolean(rule.departmentId))) {
+    const workspaceDefault = workspaceDefaults.get(
+      developerRuleIdentity(departmentOverride, identityKeys),
+    );
+    effectiveRules.push({
+      workspaceDefault: workspaceDefault ?? null,
+      departmentOverride,
+      effectiveRule: departmentOverride,
+      effectiveSource: 'DEPARTMENT_OVERRIDE',
+    });
+  }
+  for (const workspaceDefault of workspaceDefaults.values()) {
+    effectiveRules.push({
+      workspaceDefault,
+      departmentOverride: null,
+      effectiveRule: workspaceDefault,
+      effectiveSource: 'WORKSPACE_DEFAULT',
+    });
+  }
+  return effectiveRules;
+}
+
+function developerRuleIdentity<T>(rule: T, keys: Array<keyof T>) {
+  return keys.map((key) => String(rule[key] ?? '')).join('|');
+}
+
+function developerDateRange(query: Pick<DeveloperGamificationPageQueryDto, 'from' | 'to'>) {
+  const to = query.to ? new Date(query.to) : new Date();
+  const from = query.from ? new Date(query.from) : new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return { gte: from, lte: to };
+}
+
+function developerPointRuleWhere(query: DeveloperPointRuleInspectorQueryDto) {
+  return {
+    ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+    ...(query.departmentId ? { departmentId: query.departmentId } : {}),
+    ...(query.workType ? { workType: query.workType } : {}),
+    ...(query.category ? { category: query.category } : {}),
+    workspace: query.agencyId ? { agencyId: query.agencyId } : undefined,
+  } satisfies Prisma.GamificationPointRuleWhereInput &
+    Prisma.GamificationCreationPointRuleWhereInput;
+}
+
+function developerWorkXpWhere(query: DeveloperXpEventMonitorQueryDto) {
+  return {
+    ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+    ...(query.membershipId ? { recipientMembershipId: query.membershipId } : {}),
+    ...(query.workType ? { workType: query.workType } : {}),
+    ...(query.eventType ? { eventType: query.eventType } : {}),
+    ...(query.outcome ? { outcome: query.outcome } : {}),
+    occurredAt: developerDateRange(query),
+    workspace: query.agencyId ? { agencyId: query.agencyId } : undefined,
+  } satisfies Prisma.GamificationWorkXpEventWhereInput;
+}
+
+function developerGlobalScoreWhere(query: DeveloperNormalizationEventsQueryDto) {
+  return {
+    ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+    ...(query.membershipId ? { recipientMembershipId: query.membershipId } : {}),
+    ...(query.status ? { status: query.status } : {}),
+    occurredAt: developerDateRange(query),
+    workspace: query.agencyId ? { agencyId: query.agencyId } : undefined,
+  } satisfies Prisma.GamificationGlobalScoreEventWhereInput;
+}
+
+const developerCompletionPointRuleSelect = {
+  id: true,
+  workspaceId: true,
+  departmentId: true,
+  scopeType: true,
+  workType: true,
+  category: true,
+  isEnabled: true,
+  baseXp: true,
+  earlyBonusXp: true,
+  earlyThresholdMinutes: true,
+  latePenaltyPercent: true,
+  penaltyIntervalMinutes: true,
+  maxPenaltyXp: true,
+  workspace: { select: { name: true, agency: { select: { id: true, name: true } } } },
+  department: { select: { name: true } },
+} satisfies Prisma.GamificationPointRuleSelect;
+
+const developerCreationPointRuleSelect = {
+  id: true,
+  workspaceId: true,
+  departmentId: true,
+  scopeType: true,
+  workType: true,
+  category: true,
+  roleId: true,
+  isEnabled: true,
+  creationXp: true,
+  workspace: { select: { name: true, agency: { select: { id: true, name: true } } } },
+  department: { select: { name: true } },
+  role: { select: { name: true } },
+} satisfies Prisma.GamificationCreationPointRuleSelect;
+
+const developerWorkXpEventSelect = {
+  id: true,
+  workspaceId: true,
+  recipientMembershipId: true,
+  workType: true,
+  sourceEntityId: true,
+  sourceLabelSnapshot: true,
+  eventType: true,
+  categorySnapshot: true,
+  departmentNameSnapshot: true,
+  outcome: true,
+  skipReason: true,
+  netXpSnapshot: true,
+  completionCycle: true,
+  idempotencyKey: true,
+  occurredAt: true,
+  workspace: { select: { name: true, agency: { select: { id: true, name: true } } } },
+  recipientMembership: { select: { user: { select: { name: true } } } },
+  xpEntries: {
+    select: { id: true, amount: true, sourceType: true, sourceEvent: true, createdAt: true },
+  },
+} satisfies Prisma.GamificationWorkXpEventSelect;
+
+const developerWorkXpEventDetailSelect = {
+  ...developerWorkXpEventSelect,
+  ruleIdSnapshot: true,
+  ruleSourceSnapshot: true,
+  roleNameSnapshot: true,
+  creationXpSnapshot: true,
+  baseXpSnapshot: true,
+  bonusXpSnapshot: true,
+  penaltyXpSnapshot: true,
+  earlyThresholdMinutesSnapshot: true,
+  latePenaltyPercentSnapshot: true,
+  penaltyIntervalMinutesSnapshot: true,
+  maxPenaltyXpSnapshot: true,
+  dueAtSnapshot: true,
+  completedAtSnapshot: true,
+  reversalOfEventId: true,
+  reversalEvents: { select: { id: true, occurredAt: true } },
+  globalScoreEvent: {
+    select: {
+      id: true,
+      status: true,
+      normalizedScore: true,
+      baselineVersionSnapshot: true,
+      reversalOfGlobalScoreEventId: true,
+    },
+  },
+} satisfies Prisma.GamificationWorkXpEventSelect;
+
+const developerGlobalScoreEventSelect = {
+  id: true,
+  workspaceId: true,
+  recipientMembershipId: true,
+  workXpEventId: true,
+  workType: true,
+  sourceEntityId: true,
+  eventType: true,
+  scoreType: true,
+  categorySnapshot: true,
+  baselineVersionSnapshot: true,
+  eligibleWorkspaceCountSnapshot: true,
+  normalizedScore: true,
+  status: true,
+  occurredAt: true,
+  reversalOfGlobalScoreEventId: true,
+  workspace: { select: { name: true, agency: { select: { id: true, name: true } } } },
+} satisfies Prisma.GamificationGlobalScoreEventSelect;
+
+const developerReconciliationSelect = {
+  id: true,
+  workspaceId: true,
+  membershipId: true,
+  claimedXpSnapshot: true,
+  storedXpSnapshot: true,
+  currentXpBeforeSnapshot: true,
+  deltaSnapshot: true,
+  adjustmentAmount: true,
+  currentXpAfterSnapshot: true,
+  status: true,
+  createdAt: true,
+  workspace: { select: { name: true, agency: { select: { id: true, name: true } } } },
+  membership: { select: { user: { select: { name: true } } } },
+} satisfies Prisma.GamificationXpReconciliationSelect;
 
 const gamificationPointRuleSelect = {
   id: true,
@@ -5977,15 +7069,21 @@ function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
-function hasPermission(tenant: WorkspaceTenantContext, permission: string) {
+function hasPermission(tenant: WorkspaceTenantContext | AgencyTenantContext, permission: string) {
   return tenant.permissions.includes('*') || tenant.permissions.includes(permission);
 }
 
-function assertPermission(tenant: WorkspaceTenantContext, permission: string) {
+function assertPermission(
+  tenant: WorkspaceTenantContext | AgencyTenantContext,
+  permission: string,
+) {
   if (!hasPermission(tenant, permission)) throw new ForbiddenException('PERMISSION_DENIED');
 }
 
-function assertAnyPermission(tenant: WorkspaceTenantContext, permissions: string[]) {
+function assertAnyPermission(
+  tenant: WorkspaceTenantContext | AgencyTenantContext,
+  permissions: string[],
+) {
   if (!permissions.some((permission) => hasPermission(tenant, permission)))
     throw new ForbiddenException('PERMISSION_DENIED');
 }

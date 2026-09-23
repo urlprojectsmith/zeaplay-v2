@@ -134,6 +134,12 @@ const agencyPermissions = [
   'workspace.member.update',
   'feature.read',
   'feature.update',
+  'gamification.global_leaderboard.view_agency',
+];
+
+const platformPermissions = [
+  'gamification.global_leaderboard.view_platform',
+  'gamification.developer.diagnostics',
 ];
 
 async function main() {
@@ -312,7 +318,9 @@ async function main() {
 }
 
 async function seedPermissions() {
-  const allPermissions = [...new Set([...workspacePermissions, ...agencyPermissions])];
+  const allPermissions = [
+    ...new Set([...workspacePermissions, ...agencyPermissions, ...platformPermissions]),
+  ];
   for (const key of allPermissions) {
     await prisma.permission.upsert({
       where: { key },
