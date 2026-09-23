@@ -115,6 +115,8 @@ const workspacePermissions = [
   'automation.edit',
   'automation.publish',
   'automation.disable',
+  'automation.templates.view',
+  'automation.templates.manage',
   'project.read',
   'project.create',
   'project.update',
@@ -437,6 +439,8 @@ async function seedRoles() {
         'automation.edit',
         'automation.publish',
         'automation.disable',
+        'automation.templates.view',
+        'automation.templates.manage',
       ],
     },
     {

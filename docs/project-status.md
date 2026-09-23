@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 11.5 - Conditions, Branching + Variables Implementation PASS
-Next: Phase 11.5 Focused Refinement + Final Verification
+Current: Phase 11.7 - Workflow Templates + Clone + Draft/Publish Enhancements COMPLETE / PASS
+Next: Phase 11.8 - Execution Monitoring + Replay + Automation Security / Limits
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -5204,3 +5204,262 @@ Verification:
 - Shared development database migrate status: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, and `0057_phase11_5_conditions_branching_variables` remain pending intentionally; no shared-dev migration was applied.
 
 Phase 11.5 CONDITIONS, BRANCHING + VARIABLES Implementation is PASS. Next: Phase 11.5 Focused Refinement + Final Verification. Do not mark Phase 11.5 COMPLETE. Do not start Phase 11.6.
+
+### Phase 11.5 - Conditions, Branching + Variables Final Verification PASS
+
+Focused refinement fixed confirmed Phase 11.5 runtime-safety gaps and completed final verification.
+
+Issues found and fixed:
+
+- Resolved variable config size is now bounded after substitution, preventing oversized resolved Action/Condition/Branch payloads.
+- Runtime graph preflight now reuses publish validation against the captured WorkflowVersion graph before any action side effect can execute.
+- Malformed reachable Condition/Branch graph config now blocks the execution as `AUTOMATION_RUNTIME_UNSUPPORTED_GRAPH` before selected-path traversal starts.
+- Added focused regression coverage for oversized resolved configs and malformed reachable condition graphs after an action node.
+
+Final invariants:
+
+- Runtime supports `TRIGGER`, `ACTION`, `CONDITION`, and `BRANCH`.
+- `DELAY` remains unsupported.
+- Execution follows one deterministic selected path.
+- No parallel fan-out exists.
+- Variable resolution uses trusted persisted event, trigger payload, execution, and completed prior-step context only.
+- No arbitrary code, scripting, JavaScript expression engine, `eval`, `new Function`, or VM execution exists.
+- Prototype and dangerous path traversal are blocked.
+- Full references preserve safe primitive and array types.
+- String interpolation is scalar-only.
+- Missing variables fail safely except `EXISTS` / `NOT_EXISTS` absence checks.
+- Resolved Action payloads are revalidated before execution.
+- Conditions use strict typed operators.
+- `CONDITION` has exact `TRUE` / `FALSE` paths.
+- `BRANCH` uses ordered first-match semantics plus required `DEFAULT`.
+- Completed Condition/Branch decisions are persisted and reused on retry.
+- Unselected branch nodes never execute.
+- Merge nodes execute at most once on the selected path.
+- Unsupported reachable runtime graphs block before side effects.
+- Phase 11.4 queue, retry, idempotency, stale-running recovery, and automation-depth protections remain intact.
+- WorkflowVersion remains immutable runtime authority.
+- No Delay scheduler exists.
+- No visual builder exists yet.
+- No external Actions exist.
+- No Phase 11.6 scope started.
+- Phase 10 and Phase 11.1-11.4 remain green.
+
+Final verification:
+
+- Focused Phase 11.5/Automation tests: 36/36.
+- API unit: 216/216.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass on isolated database `zea_play_phase115_final_verify_20260923`.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase115_final_verify_20260923`, all 57 migrations applied through `0057_phase11_5_conditions_branching_variables`.
+- Clean Prisma migrate status: database schema was up to date on isolated scratch database, 57 migrations.
+- Shared development database migrate status: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, and `0057_phase11_5_conditions_branching_variables` remain pending intentionally; no shared-dev migration was applied.
+
+Phase 11.5 CONDITIONS, BRANCHING + VARIABLES is COMPLETE / PASS. Next: Phase 11.6 - Visual Workflow Builder UI. Do not start Phase 11.6 automatically.
+
+### Phase 11.6 - Visual Workflow Builder UI Implementation PASS
+
+Implemented the main visual workflow builder UI for workspace automations.
+
+Implementation scope:
+
+- Added `/workspace/automations/:workflowId` builder route.
+- Added React Flow canvas support for workflow graph viewing and draft editing.
+- Added visual node palette for Action, Condition, and Branch nodes.
+- Kept Delay unavailable and non-executable.
+- Loaded existing Draft workflow versions as editable authority.
+- Loaded published-only workflows as read-only until an explicit draft is created.
+- Preserved published WorkflowVersion immutability; no published version mutation path was added.
+- Serialized builder graph definitions back to existing backend draft validation endpoints.
+- Stored visual node positions in `settings.ui.positions` only.
+- Added node inspector controls for Trigger, Action, Condition, and Branch configuration.
+- Added safe variable picker hints for trigger/event/execution data only.
+- Added explicit Save Draft and Publish flows; Save Draft does not publish.
+- Added permission-based UI gating for `automation.edit` and `automation.publish`, with backend guards remaining authoritative.
+- Added English and Tamil labels for the builder surface.
+- Replaced workflow-list inline draft controls with navigation into the builder.
+
+Builder/runtime invariants:
+
+- Workspace Automations now have a visual workflow builder.
+- Existing Draft versions remain the editable authority.
+- Published versions remain immutable and read-only in the builder.
+- Builder supports Trigger, Action, Condition, and Branch nodes.
+- Delay remains unavailable and unsupported.
+- No parallel Action or Trigger fan-out is exposed.
+- Graph connections mirror backend DAG/runtime rules before save or publish.
+- Condition nodes require explicit TRUE and FALSE paths.
+- Branch nodes require ordered cases plus DEFAULT.
+- Action palette exposes only executable actions.
+- `ADD_TICKET_TAG` is not selectable from the builder action palette.
+- Variable picker exposes safe data references only and no secrets.
+- Workflow definitions remain validated by the backend draft endpoint.
+- Save Draft does not publish.
+- Publishing remains explicit.
+- Frontend does not reimplement runtime execution semantics.
+- Permission capabilities control visible edit/publish actions.
+- Workspace switch clears selected/dirty builder state and refetches by workspace-scoped query key.
+- No Run Now, retry, replay, external Action, template, or clone scope was added.
+- No Phase 11.7 scope started.
+
+Verification:
+
+- Focused Phase 11.6 web tests: 6/6.
+- Web unit: 139/139.
+- API unit: 216/216.
+- Worker unit: 13/13.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm --filter @zea-play/web lint`: pass after final UI text cleanup.
+- `pnpm --filter @zea-play/web typecheck`: pass after final UI text cleanup.
+- `pnpm --filter @zea-play/web exec vitest run app/phase11-6.test.tsx`: pass after final UI text cleanup.
+- No backend or Prisma schema changes were made.
+- No database migration was added.
+- `pnpm prisma:validate` was not required for this UI-only phase.
+- Shared development database migrations remain untouched intentionally.
+
+Phase 11.6 VISUAL WORKFLOW BUILDER UI Implementation is PASS. Next: Phase 11.6 Focused Refinement + Final Verification. Do not mark Phase 11.6 COMPLETE yet. Do not start Phase 11.7.
+
+### Phase 11.6 - Visual Workflow Builder UI Final Verification PASS
+
+Focused refinement fixed confirmed builder validation and state-safety gaps, then completed final verification.
+
+Issues found and fixed:
+
+- Imported or stale graph data now receives client structural validation for trigger incoming edges, graph cycles, unsupported Condition edge labels, duplicate/unsupported Branch edge keys, duplicate Branch case keys, unsupported Actions, required Action fields, and unsafe/malformed variable references.
+- Read-only published views now ignore graph mutation callbacks defensively in addition to disabling drag/connect/delete/config controls.
+- Workspace switching now clears canvas nodes, edges, selected node, dirty state, saved timestamp, and pending publish dialog state before refetch.
+- Publish confirmation now has an immediate in-flight guard to prevent duplicate rapid-click publish requests.
+- Condition `EXISTS` / `NOT_EXISTS` changes and save serialization remove hidden stale `right` operands.
+- Focused Phase 11.6 coverage was expanded for graph round-trip semantics, status trigger config, Branch case/default edges, invalid variables, unavailable actions, duplicate Branch mappings, permission gating, dirty save-before-publish order, and duplicate publish guarding.
+
+Final invariants:
+
+- Visual builder is the primary Draft editing UI.
+- Workflow list and builder routes are Workspace scoped.
+- Draft remains the editable authority.
+- Published versions remain immutable and read-only.
+- Builder supports Trigger, Action, Condition, and Branch only.
+- Delay remains unavailable.
+- No parallel fan-out is exposed.
+- Graph rules mirror backend runtime contracts.
+- Condition uses explicit TRUE/FALSE edges.
+- Branch uses ordered cases plus DEFAULT.
+- Action palette exposes only executable Actions.
+- Unavailable `ADD_TICKET_TAG` is hidden.
+- Safe variable picker only exposes supported non-secret data.
+- Manual variable references remain backend validated, with client detection for obvious malformed or unsafe refs.
+- Draft save never publishes.
+- Publish is explicit and structurally validated.
+- Backend remains final graph/config authority.
+- Builder state is not persisted as local authority.
+- Workspace switch clears builder state.
+- Query keys are Workspace/Workflow scoped.
+- Responsive/mobile builder behavior is usable through stacked panels below desktop widths and no page-level horizontal overflow was introduced.
+- Themes, i18n, and accessibility affordances were verified through tests/build and token-based UI.
+- No Run Now, retry, or replay controls exist.
+- No Phase 11.7 scope started.
+- Phase 10 and Phase 11.1-11.5 remain green.
+
+Final verification:
+
+- Focused Phase 11.6 web tests: 10/10.
+- API unit: 216/216.
+- Web unit: 143/143.
+- Worker unit: 13/13.
+- API integration: 103/103 on isolated migrated database `zea_play_phase116_final_verify_20260923`.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass on isolated migrated database with direct Postgres URL override.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase116_final_verify_20260923`, all 57 migrations applied through `0057_phase11_5_conditions_branching_variables`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 57 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, and `0057_phase11_5_conditions_branching_variables` remain pending intentionally; no shared-dev migration was applied.
+
+Phase 11.6 VISUAL WORKFLOW BUILDER UI is COMPLETE / PASS. Next: Phase 11.7 - Workflow Templates + Clone + Draft/Publish Enhancements. Do not start Phase 11.7 automatically.
+
+### Phase 11.7 - Workflow Templates + Clone + Draft/Publish Enhancements COMPLETE / PASS
+
+Implemented:
+
+- Added workspace-scoped `AutomationWorkflowTemplate` persistence with immutable definition snapshots, source workflow/version metadata, soft archive support, and composite workspace foreign keys.
+- Added `automation.templates.view` and `automation.templates.manage` permissions to the permission catalog and default workspace admin seed grants.
+- Added `0059_phase11_7_one_active_draft` partial unique index so each Workflow can have at most one active Draft version at the database layer.
+- Added workflow clone API that selects draft/current/historical source versions, validates source definitions, remaps cloned node ids, rewrites `steps.<nodeId>` variable references, creates a new draft workflow, and records audit metadata.
+- Added automation template APIs for list, get, save from workflow/version, create workflow from template, and archive.
+- Added create-draft-from-published-version API guarded by current-draft conflict checks.
+- Added isolated authoring utilities for definition snapshots and clone remapping.
+- Added Automations UI tabs for Workflows and Templates, including read-only template preview, create-from-template, and template archive actions.
+- Added visual builder actions for Clone, Save Template, Version History, historical read-only preview, create draft from published version, and publish dialog next-version display.
+
+Security invariants:
+
+- Workflow cloning is same-Workspace only and creates an independent Workflow plus Draft.
+- Runtime/execution history is never cloned: DomainEvents, TriggerMatches, Executions, StepExecutions, and Audit history remain independent.
+- Template, clone, and historical version operations are Workspace scoped through route tenant context plus service-level `(id, workspaceId)` filters.
+- Create-from-template and clone create fresh node ids, remap edges, and remap `steps.<nodeId>` variable references before validation.
+- Templates are Workspace-scoped, validated, non-executable definition snapshots.
+- Template-created Workflows start as Draft and later Template edits never mutate already-created Workflows.
+- Archived Templates cannot be newly used.
+- Template definitions and cloned/template-created definitions pass the existing automation graph validator before persistence/use.
+- Published versions remain immutable.
+- Historical versions are read-only.
+- Historical restore creates a Draft from the selected published version and never rewrites history.
+- Restored Drafts publish as new immutable version numbers.
+- The one-active-Draft rule is enforced by service checks and the database partial unique index.
+- Permissions remain capability-based, not role-name based.
+- Audit metadata records ids/counts only, not full workflow graph payloads.
+- Existing Phase 11 runtime paths for Domain Events, trigger matching, action execution, BullMQ, retry/idempotency, conditions, branches, variables, and automation depth remain unchanged.
+- No Phase 11.8 execution monitoring, replay/retry UI, dead-letter management UI, analytics, quotas, or security-limit UI was started.
+- Phase 10 and Phase 11.1 through 11.6 remain green.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 11.7 API tests: 7/7.
+- Focused Phase 11.7 web regression: template preview is read-only and does not create workflows/drafts.
+- `pnpm test`: pass. API 222/222, web 144/144, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase117_final_verify_20260923`, API integration 103/103.
+- `pnpm --filter @zea-play/worker test`: pass, worker 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Targeted security/scope search over Phase 11.7 touched API/web/migration surface found no Run/Retry/Replay/monitoring/Phase 11.8 code and no execution-history clone path.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase117_final_verify_20260923`, all 59 migrations applied through `0059_phase11_7_one_active_draft`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 59 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, `0057_phase11_5_conditions_branching_variables`, `0058_phase11_7_workflow_templates`, and `0059_phase11_7_one_active_draft` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- No shared development database migration was applied.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log noise, and one moderate audit advisory while high threshold passes.
+
+Phase 11.7 WORKFLOW TEMPLATES + CLONE + DRAFT/PUBLISH ENHANCEMENTS is COMPLETE / PASS. Next: Phase 11.8 - Execution Monitoring + Replay + Automation Security / Limits. Do not start Phase 11.8 automatically.

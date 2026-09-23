@@ -644,12 +644,13 @@ model Workspace {
   auditLogs                          AuditLog[]
   securityStepUpGrants               SecurityStepUpGrant[]               @relation("SecurityStepUpGrantWorkspace")
   securityOtpChallenges              SecurityOtpChallenge[]              @relation("SecurityOtpChallengeWorkspace")
-  automationWorkflows                 AutomationWorkflow[]
-  automationWorkflowVersions          AutomationWorkflowVersion[]
-  automationDomainEvents              AutomationDomainEvent[]
-  automationTriggerMatches            AutomationTriggerMatch[]
-  automationExecutions                AutomationExecution[]
-  automationStepExecutions            AutomationStepExecution[]
+  automationWorkflows                AutomationWorkflow[]
+  automationWorkflowVersions         AutomationWorkflowVersion[]
+  automationWorkflowTemplates        AutomationWorkflowTemplate[]
+  automationDomainEvents             AutomationDomainEvent[]
+  automationTriggerMatches           AutomationTriggerMatch[]
+  automationExecutions               AutomationExecution[]
+  automationStepExecutions           AutomationStepExecution[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -793,6 +794,7 @@ model WorkspaceMembership {
   automationWorkflowsCreated         AutomationWorkflow[]               @relation("AutomationWorkflowCreator")
   automationWorkflowsUpdated         AutomationWorkflow[]               @relation("AutomationWorkflowUpdater")
   automationWorkflowVersionsCreated  AutomationWorkflowVersion[]        @relation("AutomationWorkflowVersionCreator")
+  automationWorkflowTemplatesCreated AutomationWorkflowTemplate[]       @relation("AutomationWorkflowTemplateCreator")
   automationDomainEventsActed        AutomationDomainEvent[]            @relation("AutomationDomainEventActor")
 
   @@unique([userId, workspaceId])
@@ -2674,11 +2676,12 @@ model AutomationWorkflow {
   createdAt                DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace              Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  activePublishedVersion AutomationWorkflowVersion?  @relation("ActiveAutomationWorkflowVersion", fields: [activePublishedVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdByMembership    WorkspaceMembership         @relation("AutomationWorkflowCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  updatedByMembership    WorkspaceMembership?        @relation("AutomationWorkflowUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  versions               AutomationWorkflowVersion[] @relation("AutomationWorkflowVersions")
+  workspace              Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  activePublishedVersion AutomationWorkflowVersion?   @relation("ActiveAutomationWorkflowVersion", fields: [activePublishedVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership    WorkspaceMembership          @relation("AutomationWorkflowCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  updatedByMembership    WorkspaceMembership?         @relation("AutomationWorkflowUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  versions               AutomationWorkflowVersion[]  @relation("AutomationWorkflowVersions")
+  sourceTemplates        AutomationWorkflowTemplate[] @relation("AutomationWorkflowTemplateSourceWorkflow")
   triggerMatches         AutomationTriggerMatch[]
 
   @@unique([id, workspaceId])
@@ -2705,10 +2708,11 @@ model AutomationWorkflowVersion {
   updatedAt             DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(6)
   publishedAt           DateTime?                      @map("published_at") @db.Timestamptz(6)
 
-  workflow            AutomationWorkflow   @relation("AutomationWorkflowVersions", fields: [workflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdByMembership WorkspaceMembership  @relation("AutomationWorkflowVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  activeForWorkflows  AutomationWorkflow[] @relation("ActiveAutomationWorkflowVersion")
+  workflow            AutomationWorkflow           @relation("AutomationWorkflowVersions", fields: [workflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace           Workspace                    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdByMembership WorkspaceMembership          @relation("AutomationWorkflowVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  activeForWorkflows  AutomationWorkflow[]         @relation("ActiveAutomationWorkflowVersion")
+  sourceTemplates     AutomationWorkflowTemplate[] @relation("AutomationWorkflowTemplateSourceVersion")
   triggerMatches      AutomationTriggerMatch[]
   executions          AutomationExecution[]
   stepExecutions      AutomationStepExecution[]
@@ -2718,6 +2722,36 @@ model AutomationWorkflowVersion {
   @@index([workflowId, state])
   @@index([workspaceId, createdAt])
   @@map("automation_workflow_versions")
+}
+
+model AutomationWorkflowTemplate {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId             String    @map("workspace_id") @db.Uuid
+  name                    String    @db.VarChar(120)
+  description             String?   @db.VarChar(500)
+  definitionVersion       String    @default("1") @map("definition_version") @db.VarChar(20)
+  triggerDefinition       Json      @map("trigger_definition")
+  nodesDefinition         Json      @map("nodes_definition")
+  edgesDefinition         Json      @map("edges_definition")
+  settingsDefinition      Json      @map("settings_definition")
+  definitionSizeBytes     Int       @default(0) @map("definition_size_bytes")
+  sourceWorkflowId        String?   @map("source_workflow_id") @db.Uuid
+  sourceWorkflowVersionId String?   @map("source_workflow_version_id") @db.Uuid
+  createdByMembershipId   String    @map("created_by_membership_id") @db.Uuid
+  archivedAt              DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace             Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  sourceWorkflow        AutomationWorkflow?        @relation("AutomationWorkflowTemplateSourceWorkflow", fields: [sourceWorkflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  sourceWorkflowVersion AutomationWorkflowVersion? @relation("AutomationWorkflowTemplateSourceVersion", fields: [sourceWorkflowVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership   WorkspaceMembership        @relation("AutomationWorkflowTemplateCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, archivedAt, updatedAt], map: "automation_templates_workspace_archive_updated_idx")
+  @@index([workspaceId, sourceWorkflowId], map: "automation_templates_workspace_source_workflow_idx")
+  @@index([workspaceId, sourceWorkflowVersionId], map: "automation_templates_workspace_source_version_idx")
+  @@map("automation_workflow_templates")
 }
 
 model AutomationDomainEvent {
@@ -2736,8 +2770,8 @@ model AutomationDomainEvent {
   idempotencyKey    String                          @map("idempotency_key") @db.VarChar(240)
   createdAt         DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  workspace       Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  actorMembership WorkspaceMembership?      @relation("AutomationDomainEventActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace       Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  actorMembership WorkspaceMembership?     @relation("AutomationDomainEventActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   triggerMatches  AutomationTriggerMatch[]
   executions      AutomationExecution[]
 

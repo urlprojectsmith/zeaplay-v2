@@ -34,6 +34,7 @@ import {
   AutomationWorkflowParamsDto,
   AutomationWorkflowQueryDto,
   AutomationWorkflowVersionParamsDto,
+  CloneAutomationWorkflowDto,
   CreateAutomationWorkflowDto,
   UpdateAutomationDraftDto,
   UpdateAutomationWorkflowDto,
@@ -68,6 +69,16 @@ export class AutomationController {
     @Body() dto: CreateAutomationWorkflowDto,
   ) {
     return this.automation.create(tenant, dto);
+  }
+
+  @Post(':workflowId/clone')
+  @RequirePermissions(PermissionKeys.automationView, PermissionKeys.automationCreate)
+  clone(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+    @Body() dto: CloneAutomationWorkflowDto,
+  ) {
+    return this.automation.cloneWorkflow(tenant, params.workflowId, dto);
   }
 
   @Get('events')
@@ -197,5 +208,14 @@ export class AutomationController {
     @Param() params: AutomationWorkflowVersionParamsDto,
   ) {
     return this.automation.version(tenant, params.workflowId, params.versionId);
+  }
+
+  @Post(':workflowId/versions/:versionId/create-draft')
+  @RequirePermissions(PermissionKeys.automationEdit)
+  createDraftFromVersion(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowVersionParamsDto,
+  ) {
+    return this.automation.createDraftFromVersion(tenant, params.workflowId, params.versionId);
   }
 }

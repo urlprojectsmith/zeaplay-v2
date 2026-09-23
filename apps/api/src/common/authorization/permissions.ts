@@ -125,6 +125,8 @@ export const PermissionKeys = {
   automationEdit: 'automation.edit',
   automationPublish: 'automation.publish',
   automationDisable: 'automation.disable',
+  automationTemplatesView: 'automation.templates.view',
+  automationTemplatesManage: 'automation.templates.manage',
   projectRead: 'project.read',
   projectCreate: 'project.create',
   projectUpdate: 'project.update',

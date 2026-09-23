@@ -79,8 +79,55 @@ export interface AutomationWorkflowVersion {
   publishedAt: string | null;
 }
 
+export interface AutomationWorkflowTemplate {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string | null;
+  definitionVersion: string;
+  triggerDefinition?: { triggerType?: AutomationTriggerType };
+  nodesDefinition?: AutomationNodeDefinition[];
+  edgesDefinition?: AutomationEdgeDefinition[];
+  settingsDefinition?: Record<string, unknown>;
+  definitionSizeBytes: number;
+  sourceWorkflowId: string | null;
+  sourceWorkflowVersionId: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AutomationNodeType = 'TRIGGER' | 'ACTION' | 'CONDITION' | 'BRANCH' | 'DELAY';
+
+export interface AutomationNodeDefinition {
+  nodeId: string;
+  type: AutomationNodeType;
+  config: Record<string, unknown>;
+}
+
+export interface AutomationEdgeDefinition {
+  fromNodeId: string;
+  toNodeId: string;
+  branchKey?: string | null;
+}
+
+export interface AutomationDefinitionPayload {
+  trigger: Record<string, unknown>;
+  nodes: AutomationNodeDefinition[];
+  edges: AutomationEdgeDefinition[];
+  settings: Record<string, unknown>;
+  expectedUpdatedAtMs?: number;
+}
+
 export interface AutomationListResponse {
   items: AutomationWorkflow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AutomationTemplateListResponse {
+  items: AutomationWorkflowTemplate[];
   total: number;
   page: number;
   pageSize: number;
@@ -114,12 +161,35 @@ export const automationKeys = {
   all: (workspaceId: string | null) => ['workspace', workspaceId, 'automations'] as const,
   list: (workspaceId: string | null, page: number) =>
     ['workspace', workspaceId, 'automations', page] as const,
+  detail: (workspaceId: string | null, workflowId: string | null) =>
+    ['workspace', workspaceId, 'automations', workflowId] as const,
+  templates: (workspaceId: string | null, page: number) =>
+    ['workspace', workspaceId, 'automation-templates', page] as const,
+  templateDetail: (workspaceId: string | null, templateId: string | null) =>
+    ['workspace', workspaceId, 'automation-templates', templateId] as const,
 };
 
 export async function listWorkspaceAutomations(workspaceId: string, page = 1) {
   const response = await apiClient.request<AutomationListResponse>(
     `/workspaces/${workspaceId}/automations?page=${page}&pageSize=20`,
   );
+  return response.data;
+}
+
+export async function getWorkspaceAutomation(workspaceId: string, workflowId: string) {
+  const response = await apiClient.request<AutomationWorkflow>(
+    `/workspaces/${workspaceId}/automations/${workflowId}`,
+  );
+  return response.data;
+}
+
+export async function listAutomationVersions(workspaceId: string, workflowId: string, page = 1) {
+  const response = await apiClient.request<{
+    items: AutomationWorkflowVersion[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/workspaces/${workspaceId}/automations/${workflowId}/versions?page=${page}&pageSize=50`);
   return response.data;
 }
 
@@ -144,6 +214,80 @@ export async function createWorkspaceAutomation(
   return response.data;
 }
 
+export async function cloneWorkspaceAutomation(
+  workspaceId: string,
+  workflowId: string,
+  body: { name?: string; sourceVersionId?: string },
+) {
+  const response = await apiClient.request<AutomationWorkflow>(
+    `/workspaces/${workspaceId}/automations/${workflowId}/clone`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function createAutomationDraftFromVersion(
+  workspaceId: string,
+  workflowId: string,
+  versionId: string,
+) {
+  const response = await apiClient.request<AutomationWorkflowVersion>(
+    `/workspaces/${workspaceId}/automations/${workflowId}/versions/${versionId}/create-draft`,
+    { method: 'POST' },
+  );
+  return response.data;
+}
+
+export async function listAutomationTemplates(workspaceId: string, page = 1) {
+  const response = await apiClient.request<AutomationTemplateListResponse>(
+    `/workspaces/${workspaceId}/automation-templates?page=${page}&pageSize=20`,
+  );
+  return response.data;
+}
+
+export async function getAutomationTemplate(workspaceId: string, templateId: string) {
+  const response = await apiClient.request<AutomationWorkflowTemplate>(
+    `/workspaces/${workspaceId}/automation-templates/${templateId}`,
+  );
+  return response.data;
+}
+
+export async function createAutomationTemplate(
+  workspaceId: string,
+  body: {
+    name: string;
+    description?: string | null;
+    sourceWorkflowId: string;
+    sourceWorkflowVersionId?: string;
+  },
+) {
+  const response = await apiClient.request<AutomationWorkflowTemplate>(
+    `/workspaces/${workspaceId}/automation-templates`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function useAutomationTemplate(
+  workspaceId: string,
+  templateId: string,
+  body: { name?: string; description?: string | null },
+) {
+  const response = await apiClient.request<AutomationWorkflow>(
+    `/workspaces/${workspaceId}/automation-templates/${templateId}/use`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return response.data;
+}
+
+export async function archiveAutomationTemplate(workspaceId: string, templateId: string) {
+  const response = await apiClient.request<AutomationWorkflowTemplate>(
+    `/workspaces/${workspaceId}/automation-templates/${templateId}`,
+    { method: 'DELETE' },
+  );
+  return response.data;
+}
+
 export async function updateAutomationDraft(
   workspaceId: string,
   workflowId: string,
@@ -158,6 +302,18 @@ export async function updateAutomationDraft(
       method: 'PATCH',
       body: JSON.stringify(definitionPayload({ triggerType, action, condition, branch })),
     },
+  );
+  return response.data;
+}
+
+export async function updateAutomationDraftDefinition(
+  workspaceId: string,
+  workflowId: string,
+  body: AutomationDefinitionPayload,
+) {
+  const response = await apiClient.request<AutomationWorkflowVersion>(
+    `/workspaces/${workspaceId}/automations/${workflowId}/draft`,
+    { method: 'PATCH', body: JSON.stringify(body) },
   );
   return response.data;
 }

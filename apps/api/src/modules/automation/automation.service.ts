@@ -10,16 +10,24 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AUTOMATION_DEFINITION_VERSION, defaultAutomationDefinition } from './automation.constants';
 import {
+  cloneAutomationDefinitionForAuthoring,
+  definitionFromVersionSnapshot,
+} from './automation-authoring.utils';
+import {
   AutomationDefinition,
   toPrismaJson,
   validateAutomationDefinition,
 } from './automation-graph.validator';
 import {
+  AutomationTemplateQueryDto,
   AutomationVersionQueryDto,
   AutomationWorkflowQueryDto,
+  CloneAutomationWorkflowDto,
+  CreateAutomationTemplateDto,
   CreateAutomationWorkflowDto,
   UpdateAutomationDraftDto,
   UpdateAutomationWorkflowDto,
+  UseAutomationTemplateDto,
 } from './dto/automation.dto';
 
 @Injectable()
@@ -123,6 +131,59 @@ export class AutomationService {
     await this.record(tenant, 'automation.workflow_created', workflow.id, {
       name: workflow.name,
       status: workflow.status,
+    });
+    return serializeWorkflowDetail(workflow);
+  }
+
+  async cloneWorkflow(
+    tenant: WorkspaceTenantContext,
+    workflowId: string,
+    dto: CloneAutomationWorkflowDto,
+  ) {
+    const source = await this.sourceVersionForAuthoring(
+      tenant.workspaceId,
+      workflowId,
+      dto.sourceVersionId,
+    );
+    const baseDefinition = validateAutomationDefinition(
+      definitionFromVersionSnapshot(source.version),
+    );
+    const cloned = cloneAutomationDefinitionForAuthoring(baseDefinition.definition);
+    const validated = validateAutomationDefinition(cloned.definition);
+    const name = normalizeName(dto.name ?? `${source.workflow.name} Copy`);
+    const workflow = await this.prisma
+      .$transaction(
+        async (tx) => {
+          const created = await tx.automationWorkflow.create({
+            data: {
+              workspaceId: tenant.workspaceId,
+              name,
+              description: source.workflow.description,
+              createdByMembershipId: this.requireWorkspaceMembership(tenant),
+              updatedByMembershipId: this.requireWorkspaceMembership(tenant),
+            },
+            select: { id: true },
+          });
+          await tx.automationWorkflowVersion.create({
+            data: versionCreateData(
+              created.id,
+              tenant,
+              validated.definition,
+              validated.definitionSizeBytes,
+            ),
+          });
+          return tx.automationWorkflow.findUniqueOrThrow({
+            where: { id: created.id },
+            select: workflowDetailSelect,
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch(handleAutomationWriteError);
+    await this.record(tenant, 'automation.workflow_cloned', workflow.id, {
+      sourceWorkflowId: workflowId,
+      sourceVersionId: source.version.id,
+      nodeCount: validated.definition.nodes.length,
     });
     return serializeWorkflowDetail(workflow);
   }
@@ -250,6 +311,62 @@ export class AutomationService {
     return serializeVersion(result);
   }
 
+  async createDraftFromVersion(
+    tenant: WorkspaceTenantContext,
+    workflowId: string,
+    versionId: string,
+  ) {
+    const result = await this.prisma
+      .$transaction(
+        async (tx) => {
+          const workflow = await tx.automationWorkflow.findFirst({
+            where: { id: workflowId, workspaceId: tenant.workspaceId, archivedAt: null },
+            select: { id: true },
+          });
+          if (!workflow) throw new NotFoundException('Automation workflow not found.');
+          const existingDraft = await tx.automationWorkflowVersion.findFirst({
+            where: { workflowId, workspaceId: tenant.workspaceId, state: 'DRAFT' },
+            select: { id: true },
+          });
+          if (existingDraft) {
+            throw new ConflictException('Archive or publish the current draft before restoring.');
+          }
+          const source = await tx.automationWorkflowVersion.findFirst({
+            where: {
+              id: versionId,
+              workflowId,
+              workspaceId: tenant.workspaceId,
+              state: 'PUBLISHED',
+            },
+            select: versionSelect,
+          });
+          if (!source) throw new NotFoundException('Published automation version not found.');
+          const validated = validateAutomationDefinition(definitionFromVersionSnapshot(source));
+          const draft = await tx.automationWorkflowVersion.create({
+            data: versionCreateData(
+              workflowId,
+              tenant,
+              validated.definition,
+              validated.definitionSizeBytes,
+            ),
+            select: versionSelect,
+          });
+          await tx.automationWorkflow.update({
+            where: { id: workflowId },
+            data: { updatedByMembershipId: this.requireWorkspaceMembership(tenant) },
+          });
+          return draft;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch(handleAutomationWriteError);
+    await this.record(tenant, 'automation.draft_created_from_version', workflowId, {
+      sourceVersionId: versionId,
+      draftVersionId: result.id,
+    });
+    return serializeVersion(result);
+  }
+
   async disable(tenant: WorkspaceTenantContext, workflowId: string) {
     const workflow = await this.findWorkflowForMutation(tenant.workspaceId, workflowId);
     if (!workflow.activePublishedVersionId) {
@@ -299,12 +416,188 @@ export class AutomationService {
     return serializeWorkflowDetail(updated);
   }
 
+  async listTemplates(tenant: WorkspaceTenantContext, query: AutomationTemplateQueryDto) {
+    const page = query.page;
+    const pageSize = query.pageSize;
+    const where: Prisma.AutomationWorkflowTemplateWhereInput = {
+      workspaceId: tenant.workspaceId,
+      archivedAt: query.includeArchived ? undefined : null,
+      ...(query.search
+        ? { name: { contains: query.search.trim(), mode: Prisma.QueryMode.insensitive } }
+        : {}),
+    };
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.automationWorkflowTemplate.count({ where }),
+      this.prisma.automationWorkflowTemplate.findMany({
+        where,
+        select: templateSummarySelect,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { items: items.map(serializeTemplateSummary), total, page, pageSize };
+  }
+
+  async getTemplate(tenant: WorkspaceTenantContext, templateId: string) {
+    const template = await this.prisma.automationWorkflowTemplate.findFirst({
+      where: { id: templateId, workspaceId: tenant.workspaceId, archivedAt: null },
+      select: templateDetailSelect,
+    });
+    if (!template) throw new NotFoundException('Automation workflow template not found.');
+    return serializeTemplateDetail(template);
+  }
+
+  async createTemplate(tenant: WorkspaceTenantContext, dto: CreateAutomationTemplateDto) {
+    const source = await this.sourceVersionForAuthoring(
+      tenant.workspaceId,
+      dto.sourceWorkflowId,
+      dto.sourceWorkflowVersionId,
+    );
+    const validated = validateAutomationDefinition(definitionFromVersionSnapshot(source.version));
+    const template = await this.prisma.automationWorkflowTemplate.create({
+      data: {
+        workspaceId: tenant.workspaceId,
+        name: normalizeName(dto.name),
+        description: normalizeDescription(dto.description),
+        definitionVersion: source.version.definitionVersion,
+        triggerDefinition: toPrismaJson(validated.definition.trigger),
+        nodesDefinition: toPrismaJson(validated.definition.nodes),
+        edgesDefinition: toPrismaJson(validated.definition.edges),
+        settingsDefinition: toPrismaJson(validated.definition.settings),
+        definitionSizeBytes: validated.definitionSizeBytes,
+        sourceWorkflowId: source.workflow.id,
+        sourceWorkflowVersionId: source.version.id,
+        createdByMembershipId: this.requireWorkspaceMembership(tenant),
+      },
+      select: templateDetailSelect,
+    });
+    await this.recordTemplate(tenant, 'automation.template_created', template.id, {
+      sourceWorkflowId: source.workflow.id,
+      sourceVersionId: source.version.id,
+      nodeCount: validated.definition.nodes.length,
+    });
+    return serializeTemplateDetail(template);
+  }
+
+  async useTemplate(
+    tenant: WorkspaceTenantContext,
+    templateId: string,
+    dto: UseAutomationTemplateDto,
+  ) {
+    const template = await this.prisma.automationWorkflowTemplate.findFirst({
+      where: { id: templateId, workspaceId: tenant.workspaceId, archivedAt: null },
+      select: templateDetailSelect,
+    });
+    if (!template) throw new NotFoundException('Automation workflow template not found.');
+    const baseDefinition = validateAutomationDefinition(templateDefinition(template));
+    const cloned = cloneAutomationDefinitionForAuthoring(baseDefinition.definition);
+    const validated = validateAutomationDefinition(cloned.definition);
+    const name = normalizeName(dto.name ?? template.name);
+    const workflow = await this.prisma
+      .$transaction(
+        async (tx) => {
+          const created = await tx.automationWorkflow.create({
+            data: {
+              workspaceId: tenant.workspaceId,
+              name,
+              description:
+                dto.description === undefined
+                  ? template.description
+                  : normalizeDescription(dto.description),
+              createdByMembershipId: this.requireWorkspaceMembership(tenant),
+              updatedByMembershipId: this.requireWorkspaceMembership(tenant),
+            },
+            select: { id: true },
+          });
+          await tx.automationWorkflowVersion.create({
+            data: versionCreateData(
+              created.id,
+              tenant,
+              validated.definition,
+              validated.definitionSizeBytes,
+            ),
+          });
+          return tx.automationWorkflow.findUniqueOrThrow({
+            where: { id: created.id },
+            select: workflowDetailSelect,
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      )
+      .catch(handleAutomationWriteError);
+    await this.recordTemplate(tenant, 'automation.template_used', template.id, {
+      workflowId: workflow.id,
+      nodeCount: validated.definition.nodes.length,
+    });
+    return serializeWorkflowDetail(workflow);
+  }
+
+  async archiveTemplate(tenant: WorkspaceTenantContext, templateId: string) {
+    const template = await this.prisma.automationWorkflowTemplate.findFirst({
+      where: { id: templateId, workspaceId: tenant.workspaceId, archivedAt: null },
+      select: { id: true },
+    });
+    if (!template) throw new NotFoundException('Automation workflow template not found.');
+    const updated = await this.prisma.automationWorkflowTemplate.update({
+      where: { id: templateId },
+      data: { archivedAt: new Date() },
+      select: templateDetailSelect,
+    });
+    await this.recordTemplate(tenant, 'automation.template_archived', templateId);
+    return serializeTemplateDetail(updated);
+  }
+
   private async assertWorkflowExists(workspaceId: string, workflowId: string) {
     const workflow = await this.prisma.automationWorkflow.findFirst({
       where: { id: workflowId, workspaceId, archivedAt: null },
       select: { id: true },
     });
     if (!workflow) throw new NotFoundException('Automation workflow not found.');
+  }
+
+  private async sourceVersionForAuthoring(
+    workspaceId: string,
+    workflowId: string,
+    sourceVersionId?: string,
+  ) {
+    const workflow = await this.prisma.automationWorkflow.findFirst({
+      where: { id: workflowId, workspaceId, archivedAt: null },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        activePublishedVersionId: true,
+      },
+    });
+    if (!workflow) throw new NotFoundException('Automation workflow not found.');
+    const version = sourceVersionId
+      ? await this.prisma.automationWorkflowVersion.findFirst({
+          where: { id: sourceVersionId, workflowId, workspaceId },
+          select: versionSelect,
+        })
+      : await this.prisma.automationWorkflowVersion.findFirst({
+          where: { workflowId, workspaceId, state: 'DRAFT' },
+          select: versionSelect,
+        });
+    if (sourceVersionId && !version) {
+      throw new NotFoundException('Automation workflow version not found.');
+    }
+    if (version) return { workflow, version };
+    if (!workflow.activePublishedVersionId) {
+      throw new BadRequestException('Workflow has no draft or published version to use.');
+    }
+    const active = await this.prisma.automationWorkflowVersion.findFirst({
+      where: {
+        id: workflow.activePublishedVersionId,
+        workflowId,
+        workspaceId,
+        state: 'PUBLISHED',
+      },
+      select: versionSelect,
+    });
+    if (!active) throw new NotFoundException('Automation workflow version not found.');
+    return { workflow, version: active };
   }
 
   private async findWorkflowForMutation(workspaceId: string, workflowId: string) {
@@ -380,6 +673,23 @@ export class AutomationService {
       metadata: toPrismaJson(metadata),
     });
   }
+
+  private recordTemplate(
+    tenant: WorkspaceTenantContext,
+    action: string,
+    templateId: string,
+    metadata: Record<string, unknown> = {},
+  ) {
+    return this.audit.record({
+      agencyId: tenant.agencyId,
+      workspaceId: tenant.workspaceId,
+      userId: tenant.userId,
+      action,
+      entityType: 'AutomationWorkflowTemplate',
+      entityId: templateId,
+      metadata: toPrismaJson(metadata),
+    });
+  }
 }
 
 const versionSelect = {
@@ -431,11 +741,46 @@ const workflowDetailSelect = {
   },
 } satisfies Prisma.AutomationWorkflowSelect;
 
+const templateSummarySelect = {
+  id: true,
+  workspaceId: true,
+  name: true,
+  description: true,
+  definitionVersion: true,
+  definitionSizeBytes: true,
+  sourceWorkflowId: true,
+  sourceWorkflowVersionId: true,
+  createdByMembershipId: true,
+  archivedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.AutomationWorkflowTemplateSelect;
+
+const templateDetailSelect = {
+  ...templateSummarySelect,
+  triggerDefinition: true,
+  nodesDefinition: true,
+  edgesDefinition: true,
+  settingsDefinition: true,
+  sourceWorkflow: {
+    select: { id: true, name: true, status: true },
+  },
+  sourceWorkflowVersion: {
+    select: { id: true, versionNumber: true, state: true, publishedAt: true },
+  },
+} satisfies Prisma.AutomationWorkflowTemplateSelect;
+
 type WorkflowSummary = Prisma.AutomationWorkflowGetPayload<{
   select: typeof workflowSummarySelect;
 }>;
 type WorkflowDetail = Prisma.AutomationWorkflowGetPayload<{ select: typeof workflowDetailSelect }>;
 type VersionRecord = Prisma.AutomationWorkflowVersionGetPayload<{ select: typeof versionSelect }>;
+type TemplateSummary = Prisma.AutomationWorkflowTemplateGetPayload<{
+  select: typeof templateSummarySelect;
+}>;
+type TemplateDetail = Prisma.AutomationWorkflowTemplateGetPayload<{
+  select: typeof templateDetailSelect;
+}>;
 
 function serializeWorkflowSummary(workflow: WorkflowSummary) {
   const { versions, ...summary } = workflow;
@@ -460,6 +805,23 @@ function serializeWorkflowDetail(workflow: WorkflowDetail) {
 
 function serializeVersion(version: VersionRecord) {
   return version;
+}
+
+function serializeTemplateSummary(template: TemplateSummary) {
+  return template;
+}
+
+function serializeTemplateDetail(template: TemplateDetail) {
+  return template;
+}
+
+function templateDefinition(template: TemplateDetail): AutomationDefinition {
+  return {
+    trigger: template.triggerDefinition as Record<string, unknown>,
+    nodes: template.nodesDefinition as unknown as AutomationDefinition['nodes'],
+    edges: template.edgesDefinition as unknown as AutomationDefinition['edges'],
+    settings: template.settingsDefinition as Record<string, unknown>,
+  };
 }
 
 function triggerTypeFromJson(value: Prisma.JsonValue | null | undefined) {
