@@ -25,10 +25,14 @@ import {
 } from '../../services/global-gamification';
 
 const pageSize = 20;
+type AgencyGamificationTab = 'overview' | 'leaderboard';
 
 export function AgencyGlobalLeaderboardPage() {
   const { locale, t } = useLanguage();
   const { accessToken, selectedAgencyId, agencies } = useSessionStore();
+  const [activeTab, setActiveTab] = useState<AgencyGamificationTab>(() =>
+    readGlobalTab('overview', ['overview', 'leaderboard']),
+  );
   const [search, setSearch] = useState('');
   const [selectedWorkspace, setSelectedWorkspace] =
     useState<GlobalSubaccountLeaderboardItem | null>(null);
@@ -67,7 +71,21 @@ export function AgencyGlobalLeaderboardPage() {
     <PageContainer>
       <PageHeader
         title={t(locale, 'globalLeaderboard.title')}
-        description={selectedAgency?.name ?? t(locale, 'dashboard.noAgencySelected')}
+        description={
+          selectedAgency
+            ? `${selectedAgency.name} - ${t(locale, 'globalLeaderboard.normalizedScoreNote')}`
+            : t(locale, 'dashboard.noAgencySelected')
+        }
+      />
+      <GlobalTabList
+        activeTab={activeTab}
+        tabs={['overview', 'leaderboard']}
+        onChange={(tab) => {
+          setActiveTab(tab as AgencyGamificationTab);
+          writeGlobalTab(tab);
+          setSelectedWorkspace(null);
+          setPage(1);
+        }}
       />
       <Card>
         <CardHeader>
@@ -83,65 +101,83 @@ export function AgencyGlobalLeaderboardPage() {
           )}
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle>{t(locale, 'globalLeaderboard.topSubaccounts')}</CardTitle>
-            <Input
-              className="sm:max-w-xs"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder={t(locale, 'common.search')}
-              aria-label={t(locale, 'common.search')}
-            />
-          </div>
-        </CardHeader>
-        <CardContent>
-          {subaccountsQuery.isLoading ? (
-            <TableSkeleton />
-          ) : subaccountsQuery.isError ? (
-            <EmptyState title={t(locale, 'globalLeaderboard.unableToLoadLeaderboard')} />
-          ) : (subaccountsQuery.data?.items.length ?? 0) === 0 ? (
-            <EmptyState title={t(locale, 'globalLeaderboard.noLeaderboardData')} />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]">
-                    <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.rank')}</th>
-                    <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.subaccount')}</th>
-                    <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.globalScore')}</th>
-                    <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.scoredUsers')}</th>
-                    <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.action')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {subaccountsQuery.data?.items.map((item) => (
-                    <tr key={item.workspaceId} className="border-b border-[hsl(var(--border))]">
-                      <td className="py-3 pr-3 font-medium">#{item.rank}</td>
-                      <td className="py-3 pr-3">{item.workspaceName}</td>
-                      <td className="py-3 pr-3">{formatScore(item.globalScore)}</td>
-                      <td className="py-3 pr-3">{item.scoredUsers}</td>
-                      <td className="py-3 pr-3">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            setSelectedWorkspace(item);
-                            setPage(1);
-                          }}
-                        >
-                          {t(locale, 'globalLeaderboard.viewUsers')}
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {activeTab === 'overview' ? (
+        <div className="grid gap-4 md:grid-cols-3">
+          <MetricCard
+            label={t(locale, 'globalLeaderboard.normalizedScore')}
+            value={t(locale, 'globalLeaderboard.normalizedScoreNote')}
+          />
+          <MetricCard
+            label={t(locale, 'globalLeaderboard.subaccounts')}
+            value={formatScore(subaccountsQuery.data?.items.length ?? 0)}
+          />
+          <MetricCard
+            label={t(locale, 'globalLeaderboard.topSubaccounts')}
+            value={subaccountsQuery.data?.items[0]?.workspaceName ?? '-'}
+          />
+        </div>
+      ) : null}
+      {activeTab === 'leaderboard' ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle>{t(locale, 'globalLeaderboard.topSubaccounts')}</CardTitle>
+              <Input
+                className="sm:max-w-xs"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={t(locale, 'common.search')}
+                aria-label={t(locale, 'common.search')}
+              />
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            {subaccountsQuery.isLoading ? (
+              <TableSkeleton />
+            ) : subaccountsQuery.isError ? (
+              <EmptyState title={t(locale, 'globalLeaderboard.unableToLoadLeaderboard')} />
+            ) : (subaccountsQuery.data?.items.length ?? 0) === 0 ? (
+              <EmptyState title={t(locale, 'globalLeaderboard.noLeaderboardData')} />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]">
+                      <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.rank')}</th>
+                      <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.subaccount')}</th>
+                      <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.globalScore')}</th>
+                      <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.scoredUsers')}</th>
+                      <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.action')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subaccountsQuery.data?.items.map((item) => (
+                      <tr key={item.workspaceId} className="border-b border-[hsl(var(--border))]">
+                        <td className="py-3 pr-3 font-medium">#{item.rank}</td>
+                        <td className="py-3 pr-3">{item.workspaceName}</td>
+                        <td className="py-3 pr-3">{formatScore(item.globalScore)}</td>
+                        <td className="py-3 pr-3">{item.scoredUsers}</td>
+                        <td className="py-3 pr-3">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setSelectedWorkspace(item);
+                              setPage(1);
+                            }}
+                          >
+                            {t(locale, 'globalLeaderboard.viewUsers')}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
       {selectedWorkspace ? (
         <UserDrilldown
           title={selectedWorkspace.workspaceName}
@@ -154,6 +190,48 @@ export function AgencyGlobalLeaderboardPage() {
         />
       ) : null}
     </PageContainer>
+  );
+}
+
+export function GlobalTabList({
+  activeTab,
+  tabs,
+  onChange,
+}: {
+  activeTab: string;
+  tabs: string[];
+  onChange: (tab: string) => void;
+}) {
+  const { locale, t } = useLanguage();
+  return (
+    <div role="tablist" aria-label={t(locale, 'globalLeaderboard.title')} className="flex gap-2">
+      {tabs.map((tab) => (
+        <Button
+          key={tab}
+          role="tab"
+          aria-selected={activeTab === tab}
+          variant={activeTab === tab ? 'primary' : 'secondary'}
+          onClick={() => onChange(tab)}
+        >
+          {tab === 'leaderboard'
+            ? t(locale, 'globalLeaderboard.title')
+            : t(locale, `globalLeaderboard.${tab}`)}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-2xl font-semibold">{value}</p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -288,4 +366,21 @@ export function TableSkeleton() {
 
 export function formatScore(value: number) {
   return new Intl.NumberFormat().format(value);
+}
+
+export function readGlobalTab<T extends string>(fallback: T, validTabs: readonly T[]): T {
+  if (typeof window === 'undefined') return fallback;
+  const tab = new URLSearchParams(window.location.search).get('tab') as T | null;
+  return tab && validTabs.includes(tab) ? tab : fallback;
+}
+
+export function writeGlobalTab(tab: string) {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (tab === 'overview') {
+    url.searchParams.delete('tab');
+  } else {
+    url.searchParams.set('tab', tab);
+  }
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
 }

@@ -1,0 +1,145 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
+import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
+import { PermissionGuard } from '../../common/authorization/permission.guard';
+import { PermissionKeys } from '../../common/authorization/permissions';
+import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
+import {
+  AGENCY_HEADER,
+  CurrentWorkspaceTenant,
+  WORKSPACE_HEADER,
+} from '../../common/tenant/tenant-context.decorator';
+import { WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
+import { AutomationService } from './automation.service';
+import {
+  AutomationVersionQueryDto,
+  AutomationWorkflowParamsDto,
+  AutomationWorkflowQueryDto,
+  AutomationWorkflowVersionParamsDto,
+  CreateAutomationWorkflowDto,
+  UpdateAutomationDraftDto,
+  UpdateAutomationWorkflowDto,
+} from './dto/automation.dto';
+
+@ApiTags('workspace automations')
+@ApiBearerAuth()
+@ApiHeader({ name: AGENCY_HEADER, required: true })
+@ApiHeader({ name: WORKSPACE_HEADER, required: true })
+@UseGuards(JwtAuthGuard, WorkspaceTenantGuard, PermissionGuard)
+@Controller('workspaces/:workspaceId/automations')
+export class AutomationController {
+  constructor(private readonly automation: AutomationService) {}
+
+  @Get()
+  @RequirePermissions(PermissionKeys.automationView)
+  list(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Query() query: AutomationWorkflowQueryDto,
+  ) {
+    return this.automation.list(tenant, query);
+  }
+
+  @Post()
+  @RequirePermissions(PermissionKeys.automationCreate)
+  create(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Body() dto: CreateAutomationWorkflowDto,
+  ) {
+    return this.automation.create(tenant, dto);
+  }
+
+  @Get(':workflowId')
+  @RequirePermissions(PermissionKeys.automationView)
+  get(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+  ) {
+    return this.automation.get(tenant, params.workflowId);
+  }
+
+  @Patch(':workflowId')
+  @RequirePermissions(PermissionKeys.automationEdit)
+  update(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+    @Body() dto: UpdateAutomationWorkflowDto,
+  ) {
+    return this.automation.update(tenant, params.workflowId, dto);
+  }
+
+  @Patch(':workflowId/draft')
+  @RequirePermissions(PermissionKeys.automationEdit)
+  updateDraft(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+    @Body() dto: UpdateAutomationDraftDto,
+  ) {
+    return this.automation.updateDraft(tenant, params.workflowId, dto);
+  }
+
+  @Post(':workflowId/publish')
+  @RequirePermissions(PermissionKeys.automationPublish)
+  publish(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+  ) {
+    return this.automation.publish(tenant, params.workflowId);
+  }
+
+  @Post(':workflowId/disable')
+  @RequirePermissions(PermissionKeys.automationDisable)
+  disable(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+  ) {
+    return this.automation.disable(tenant, params.workflowId);
+  }
+
+  @Post(':workflowId/enable')
+  @RequirePermissions(PermissionKeys.automationDisable)
+  enable(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+  ) {
+    return this.automation.enable(tenant, params.workflowId);
+  }
+
+  @Delete(':workflowId')
+  @RequirePermissions(PermissionKeys.automationDisable)
+  archive(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+  ) {
+    return this.automation.archive(tenant, params.workflowId);
+  }
+
+  @Get(':workflowId/versions')
+  @RequirePermissions(PermissionKeys.automationView)
+  versions(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowParamsDto,
+    @Query() query: AutomationVersionQueryDto,
+  ) {
+    return this.automation.versions(tenant, params.workflowId, query);
+  }
+
+  @Get(':workflowId/versions/:versionId')
+  @RequirePermissions(PermissionKeys.automationView)
+  version(
+    @CurrentWorkspaceTenant() tenant: WorkspaceTenantContext,
+    @Param() params: AutomationWorkflowVersionParamsDto,
+  ) {
+    return this.automation.version(tenant, params.workflowId, params.versionId);
+  }
+}

@@ -243,7 +243,12 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           },
           { labelKey: 'navigation.rolesPermissions', href: '/workspace/roles', icon: Shield },
           { labelKey: 'navigation.statusManagement', href: '/workspace/statuses', icon: Gauge },
-          disabled('navigation.automation', Rocket),
+          {
+            labelKey: 'navigation.automation',
+            href: '/workspace/automations',
+            icon: Rocket,
+            requiredPermissions: ['automation.view'],
+          },
           disabled('navigation.docs', FileText),
           disabled('navigation.forms', ScrollText),
           disabled('navigation.goals', Goal),

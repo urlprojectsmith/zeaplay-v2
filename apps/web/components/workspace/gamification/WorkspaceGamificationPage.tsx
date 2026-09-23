@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
 import { Button, EmptyState, Skeleton } from '@zea-play/ui';
@@ -95,16 +95,16 @@ import {
 const pageSize = 10;
 const tabs = [
   'overview',
+  'points',
   'levels',
   'badges',
   'achievements',
   'streaks',
   'rewards',
   'leaderboard',
-  'points',
   'xpControl',
-  'admin',
   'history',
+  'admin',
 ] as const;
 const criterionTypes: GamificationAchievementCriterionType[] = [
   'XP_TOTAL_AT_LEAST',
@@ -113,6 +113,30 @@ const criterionTypes: GamificationAchievementCriterionType[] = [
   'TICKET_RESOLVED_COUNT',
 ];
 type GamificationTab = (typeof tabs)[number];
+type HistoryFilter =
+  'ALL' | 'XP' | 'ACHIEVEMENTS' | 'STREAKS' | 'MANUAL_ADJUSTMENTS' | 'RESET' | 'RECONCILIATION';
+
+const tabParams: Record<GamificationTab, string> = {
+  overview: 'overview',
+  points: 'point-management',
+  levels: 'levels',
+  badges: 'badges',
+  achievements: 'achievements',
+  streaks: 'streaks',
+  rewards: 'rewards',
+  leaderboard: 'leaderboard',
+  xpControl: 'xp-control',
+  history: 'history',
+  admin: 'admin-controls',
+};
+const tabAliases: Record<string, GamificationTab> = {
+  points: 'points',
+  'point-management': 'points',
+  xpControl: 'xpControl',
+  'xp-control': 'xpControl',
+  admin: 'admin',
+  'admin-controls': 'admin',
+};
 
 const pointWorkTypes: GamificationPointWorkType[] = ['TASK', 'PROJECT', 'TICKET'];
 const pointCategories: Record<GamificationPointWorkType, GamificationPointCategory[]> = {
@@ -139,6 +163,49 @@ const xpLogCategories: GamificationXpLogCategory[] = [
   'RECONCILIATION',
   'LEGACY',
 ];
+const historyFilters: HistoryFilter[] = [
+  'ALL',
+  'XP',
+  'ACHIEVEMENTS',
+  'STREAKS',
+  'MANUAL_ADJUSTMENTS',
+  'RESET',
+  'RECONCILIATION',
+];
+
+function readInitialTab(): GamificationTab {
+  if (typeof window === 'undefined') return 'overview';
+  const rawTab = new URLSearchParams(window.location.search).get('tab') ?? '';
+  return tabFromParam(rawTab);
+}
+
+function tabFromParam(value: string): GamificationTab {
+  if ((tabs as readonly string[]).includes(value)) return value as GamificationTab;
+  return tabAliases[value] ?? 'overview';
+}
+
+function setActiveTabAndUrl(
+  tab: GamificationTab,
+  setActiveTab: Dispatch<SetStateAction<GamificationTab>>,
+) {
+  setActiveTab(tab);
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (tab === 'overview') {
+    url.searchParams.delete('tab');
+  } else {
+    url.searchParams.set('tab', tabParams[tab]);
+  }
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function historyFilterParams(filter: HistoryFilter) {
+  if (filter === 'ACHIEVEMENTS') return { sourceType: 'ACHIEVEMENT' as const };
+  if (filter === 'STREAKS') return { sourceType: 'STREAK' as const };
+  if (filter === 'MANUAL_ADJUSTMENTS') return { sourceType: 'MANUAL' as const };
+  if (filter === 'RESET' || filter === 'RECONCILIATION') return { sourceType: 'SYSTEM' as const };
+  return {};
+}
 
 export function WorkspaceGamificationPage() {
   const { locale } = useLanguage();
@@ -149,12 +216,18 @@ export function WorkspaceGamificationPage() {
       .flatMap((agency) => agency.workspaces)
       .find((workspace) => workspace.id === state.selectedWorkspaceId),
   );
-  const [activeTab, setActiveTab] = useState<GamificationTab>('overview');
+  const [activeTab, setActiveTab] = useState<GamificationTab>(() => readInitialTab());
   const [page, setPage] = useState(1);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('ALL');
+  const previousWorkspaceId = useRef<string | null>(selectedWorkspaceId);
 
   useEffect(() => {
-    setActiveTab('overview');
+    if (previousWorkspaceId.current === selectedWorkspaceId) return;
+    previousWorkspaceId.current = selectedWorkspaceId;
+    setActiveTabAndUrl('overview', setActiveTab);
     setPage(1);
+    setHistoryFilter('ALL');
+    setPointDepartmentId(null);
   }, [selectedWorkspaceId]);
 
   const rolesQuery = useQuery({
@@ -211,17 +284,17 @@ export function WorkspaceGamificationPage() {
 
   useEffect(() => {
     if (rolesQuery.isFetched && !canView && canViewXpControl) {
-      setActiveTab('xpControl');
+      setActiveTabAndUrl('xpControl', setActiveTab);
     } else if (rolesQuery.isFetched && !canView && canUseAdminControls) {
-      setActiveTab('admin');
+      setActiveTabAndUrl('admin', setActiveTab);
     } else if (rolesQuery.isFetched && !canView && canUsePointManagement) {
-      setActiveTab('points');
+      setActiveTabAndUrl('points', setActiveTab);
     } else if (activeTab === 'admin' && !canUseAdminControls) {
-      setActiveTab('overview');
+      setActiveTabAndUrl('overview', setActiveTab);
     } else if (activeTab === 'xpControl' && !canViewXpControl) {
-      setActiveTab('overview');
+      setActiveTabAndUrl('overview', setActiveTab);
     } else if (activeTab === 'points' && !canUsePointManagement) {
-      setActiveTab('overview');
+      setActiveTabAndUrl('overview', setActiveTab);
     }
   }, [
     activeTab,
@@ -238,8 +311,17 @@ export function WorkspaceGamificationPage() {
     enabled: Boolean(accessToken && selectedWorkspaceId && canView),
   });
   const historyQuery = useQuery({
-    queryKey: gamificationKeys.history(selectedWorkspaceId, { page, pageSize }),
-    queryFn: () => getMyGamificationXpHistory(selectedWorkspaceId as string, { page, pageSize }),
+    queryKey: gamificationKeys.history(selectedWorkspaceId, {
+      page,
+      pageSize,
+      ...historyFilterParams(historyFilter),
+    }),
+    queryFn: () =>
+      getMyGamificationXpHistory(selectedWorkspaceId as string, {
+        page,
+        pageSize,
+        ...historyFilterParams(historyFilter),
+      }),
     enabled: Boolean(accessToken && selectedWorkspaceId && canView && activeTab === 'history'),
   });
   const levelsQuery = useQuery({
@@ -346,7 +428,10 @@ export function WorkspaceGamificationPage() {
     queryKey: gamificationKeys.workspaceLeaderboard(selectedWorkspaceId),
     queryFn: () => getWorkspaceGamificationLeaderboard(selectedWorkspaceId as string),
     enabled: Boolean(
-      accessToken && selectedWorkspaceId && canViewLeaderboards && activeTab === 'leaderboard',
+      accessToken &&
+      selectedWorkspaceId &&
+      canViewLeaderboards &&
+      (activeTab === 'overview' || activeTab === 'leaderboard'),
     ),
   });
   const departmentLeaderboardQuery = useQuery({
@@ -420,7 +505,7 @@ export function WorkspaceGamificationPage() {
               activeTab === tab ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
             ].join(' ')}
             onClick={() => {
-              setActiveTab(tab);
+              setActiveTabAndUrl(tab, setActiveTab);
               setPage(1);
             }}
           >
@@ -439,7 +524,7 @@ export function WorkspaceGamificationPage() {
                         : tab === 'leaderboard'
                           ? t(locale, 'gamification.leaderboard')
                           : tab === 'points'
-                            ? t(locale, 'gamification.points')
+                            ? t(locale, 'gamification.pointManagement')
                             : tab === 'xpControl'
                               ? t(locale, 'gamification.xpControlCenter')
                               : tab === 'admin'
@@ -459,10 +544,18 @@ export function WorkspaceGamificationPage() {
             summary={summaryQuery.data}
             rewardPointSummary={rewardPointSummaryQuery.data}
             streakSummary={streakSummaryQuery.data}
+            leaderboardPosition={workspaceLeaderboardQuery.data?.me}
             isLoading={
-              summaryQuery.isLoading || rewardPointSummaryQuery.isLoading || rolesQuery.isLoading
+              summaryQuery.isLoading ||
+              rewardPointSummaryQuery.isLoading ||
+              rolesQuery.isLoading ||
+              workspaceLeaderboardQuery.isLoading
             }
-            isError={summaryQuery.isError || rewardPointSummaryQuery.isError}
+            isError={
+              summaryQuery.isError ||
+              rewardPointSummaryQuery.isError ||
+              workspaceLeaderboardQuery.isError
+            }
           />
         ) : activeTab === 'levels' ? (
           <LevelsPanel
@@ -577,8 +670,13 @@ export function WorkspaceGamificationPage() {
             page={historyQuery.data?.page ?? page}
             pageSize={historyQuery.data?.pageSize ?? pageSize}
             total={historyQuery.data?.total ?? 0}
+            filter={historyFilter}
             isLoading={historyQuery.isLoading}
             isError={historyQuery.isError}
+            onFilterChange={(filter) => {
+              setHistoryFilter(filter);
+              setPage(1);
+            }}
             onPageChange={setPage}
           />
         )}
@@ -1162,12 +1260,14 @@ function OverviewPanel({
   summary,
   rewardPointSummary,
   streakSummary,
+  leaderboardPosition,
   isLoading,
   isError,
 }: {
   summary: GamificationXpSummary | undefined;
   rewardPointSummary: GamificationRewardPointSummary | undefined;
   streakSummary: GamificationStreakSummary | undefined;
+  leaderboardPosition: GamificationLeaderboardResponse['me'] | undefined;
   isLoading: boolean;
   isError: boolean;
 }) {
@@ -1205,7 +1305,15 @@ function OverviewPanel({
         />
         <XpCard
           label={t(locale, 'gamification.currentRewardPoints')}
-          value={`${rewardPointSummary?.currentRewardPoints ?? 0} RP`}
+          value={`${rewardPointSummary?.currentRewardPoints ?? 0} ${t(locale, 'gamification.rewardPoints')}`}
+        />
+        <XpCard
+          label={t(locale, 'gamification.localLeaderboardPosition')}
+          value={
+            leaderboardPosition?.included && leaderboardPosition.rank
+              ? `#${leaderboardPosition.rank} / ${leaderboardPosition.currentXp ?? 0} XP`
+              : t(locale, 'gamification.notIncluded')
+          }
         />
         <XpCard label={t(locale, 'gamification.entryCount')} value={String(data.entryCount)} />
         <XpCard
@@ -3481,45 +3589,68 @@ function HistoryPanel({
   page,
   pageSize,
   total,
+  filter,
   isLoading,
   isError,
+  onFilterChange,
   onPageChange,
 }: {
   items: GamificationXpEntry[];
   page: number;
   pageSize: number;
   total: number;
+  filter: HistoryFilter;
   isLoading: boolean;
   isError: boolean;
+  onFilterChange: (filter: HistoryFilter) => void;
   onPageChange: (page: number) => void;
 }) {
   const { locale } = useLanguage();
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  if (isLoading) return <Skeleton className="h-40 w-full" />;
-  if (isError) return <EmptyState title={t(locale, 'gamification.unableToLoadHistory')} />;
-  if (items.length === 0) return <EmptyState title={t(locale, 'gamification.noXpActivity')} />;
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        {items.map((item) => (
-          <article key={item.id} className="rounded-md border bg-card p-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="font-medium">{formatXpAmount(item.amount)}</p>
-                <p className="text-sm text-muted-foreground">
-                  {entryTypeLabel(locale, item.entryType)} /{' '}
-                  {sourceTypeLabel(locale, item.sourceType)}
-                </p>
+      <label className="grid max-w-sm gap-1 text-sm font-medium">
+        {t(locale, 'gamification.historyFilter')}
+        <select
+          className="rounded-md border bg-background px-3 py-2 text-sm"
+          value={filter}
+          onChange={(event) => onFilterChange(event.target.value as HistoryFilter)}
+        >
+          {historyFilters.map((item) => (
+            <option key={item} value={item}>
+              {historyFilterLabel(locale, item)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {isLoading ? (
+        <Skeleton className="h-40 w-full" />
+      ) : isError ? (
+        <EmptyState title={t(locale, 'gamification.unableToLoadHistory')} />
+      ) : items.length === 0 ? (
+        <EmptyState title={t(locale, 'gamification.noXpActivity')} />
+      ) : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <article key={item.id} className="rounded-md border bg-card p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="font-medium">{formatXpAmount(item.amount)}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {entryTypeLabel(locale, item.entryType)} /{' '}
+                    {sourceTypeLabel(locale, item.sourceType)}
+                  </p>
+                </div>
+                <time className="text-sm text-muted-foreground">{formatDate(item.createdAt)}</time>
               </div>
-              <time className="text-sm text-muted-foreground">{formatDate(item.createdAt)}</time>
-            </div>
-            <p className="mt-2 text-sm">
-              {sourceEventLabel(locale, item.sourceEvent)}
-              {item.reason ? ` - ${item.reason}` : ''}
-            </p>
-          </article>
-        ))}
-      </div>
+              <p className="mt-2 text-sm">
+                {sourceEventLabel(locale, item.sourceEvent)}
+                {item.reason ? ` - ${item.reason}` : ''}
+              </p>
+            </article>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {t(locale, 'gamification.page')} {page} / {pageCount}
@@ -3622,6 +3753,19 @@ function xpControlStatusLabel(locale: 'en' | 'ta', status: GamificationXpControl
     RECONCILED: t(locale, 'gamification.statusReconciled'),
   };
   return labels[status];
+}
+
+function historyFilterLabel(locale: 'en' | 'ta', filter: HistoryFilter) {
+  const labels: Record<HistoryFilter, string> = {
+    ALL: t(locale, 'gamification.allHistory'),
+    XP: t(locale, 'gamification.xp'),
+    ACHIEVEMENTS: t(locale, 'gamification.achievements'),
+    STREAKS: t(locale, 'gamification.streaks'),
+    MANUAL_ADJUSTMENTS: t(locale, 'gamification.adminAdjustments'),
+    RESET: t(locale, 'gamification.adminReset'),
+    RECONCILIATION: t(locale, 'gamification.reconciliation'),
+  };
+  return labels[filter];
 }
 
 function xpLogCategoryLabel(locale: 'en' | 'ta', category: GamificationXpLogCategory) {

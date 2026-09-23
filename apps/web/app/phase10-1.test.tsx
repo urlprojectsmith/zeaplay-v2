@@ -304,6 +304,7 @@ vi.mock('../services/workspace-gamification', () => ({
 describe('Phase 10 gamification page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState(null, '', '/workspace/gamification');
     useSessionStore.setState({
       accessToken: 'access-token',
       csrfToken: 'csrf-token',
@@ -885,7 +886,7 @@ describe('Phase 10 gamification page', () => {
     renderGamificationPage();
 
     expect(getGamificationPointManagement).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole('tab', { name: 'Points' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'Point Management' }));
 
     await waitFor(() =>
       expect(getGamificationPointManagement).toHaveBeenCalledWith('workspace-1', null),
@@ -960,6 +961,44 @@ describe('Phase 10 gamification page', () => {
     expect(getMyDepartmentGamificationLeaderboard).toHaveBeenCalledWith('workspace-1');
     expect(screen.getAllByText('Your Position')).toHaveLength(2);
     expect(screen.getAllByText('You')).toHaveLength(1);
+  });
+
+  it('keeps tab state in the URL and restores a shared tab link on refresh', async () => {
+    const firstRender = renderGamificationPage();
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Point Management' }));
+    expect(window.location.search).toContain('tab=point-management');
+    firstRender.unmount();
+
+    window.history.replaceState(null, '', '/workspace/gamification?tab=leaderboard');
+    renderGamificationPage();
+
+    expect(await screen.findByRole('tab', { name: 'Leaderboard' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(await screen.findByText('Workspace Leaderboard')).toBeInTheDocument();
+  });
+
+  it('falls back to Overview for an invalid shared tab link', async () => {
+    window.history.replaceState(null, '', '/workspace/gamification?tab=unknown');
+
+    renderGamificationPage();
+
+    expect(await screen.findByRole('tab', { name: 'Overview' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(await screen.findByText('Current XP')).toBeInTheDocument();
+  });
+
+  it('keeps XP, Reward Points, and local XP leaderboard labels distinct', async () => {
+    renderGamificationPage();
+
+    expect(await screen.findByText('Current XP')).toBeInTheDocument();
+    expect(await screen.findByText('Current Reward Points')).toBeInTheDocument();
+    expect(await screen.findByText('Local Leaderboard Position')).toBeInTheDocument();
+    expect(await screen.findByText('#1 / 125 XP')).toBeInTheDocument();
   });
 
   it('shows admin adjustment and reset controls only for matching permissions', async () => {

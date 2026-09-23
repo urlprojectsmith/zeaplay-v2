@@ -31,6 +31,7 @@ import {
 } from '../../services/developer-gamification';
 import { PageContainer } from '../layout/PageContainer';
 import { PageHeader } from '../layout/PageHeader';
+import { readGlobalTab, writeGlobalTab } from '../gamification/AgencyGlobalLeaderboardPage';
 
 type DeveloperGamificationTab =
   | 'overview'
@@ -59,7 +60,9 @@ const tabs: DeveloperGamificationTab[] = [
 
 export function DeveloperGamificationControlCenter() {
   const { locale, t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<DeveloperGamificationTab>('overview');
+  const [activeTab, setActiveTab] = useState<DeveloperGamificationTab>(() =>
+    readGlobalTab('overview', tabs),
+  );
   const [page, setPage] = useState(1);
   const [workspaceId, setWorkspaceId] = useState('');
   const [search, setSearch] = useState('');
@@ -79,6 +82,9 @@ export function DeveloperGamificationControlCenter() {
         title={t(locale, 'developerGamification.title')}
         description={t(locale, 'developerGamification.description')}
       />
+      <p className="rounded-md border bg-[hsl(var(--muted))] p-3 text-sm text-[hsl(var(--muted-foreground))]">
+        {t(locale, 'developerGamification.readOnlyNotice')}
+      </p>
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3">
@@ -96,10 +102,11 @@ export function DeveloperGamificationControlCenter() {
                   size="sm"
                   onClick={() => {
                     setActiveTab(tab);
+                    writeGlobalTab(tab);
                     setPage(1);
                   }}
                 >
-                  {t(locale, `developerGamification.tabs.${tab}`)}
+                  {developerTabLabel(locale, t, tab)}
                 </Button>
               ))}
             </div>
@@ -350,6 +357,26 @@ function SkeletonGrid() {
 function ErrorState() {
   const { locale, t } = useLanguage();
   return <EmptyState title={t(locale, 'developerGamification.unableToLoad')} />;
+}
+
+function developerTabLabel(
+  locale: 'en' | 'ta',
+  translateLabel: ReturnType<typeof useLanguage>['t'],
+  tab: DeveloperGamificationTab,
+) {
+  const labels: Record<DeveloperGamificationTab, string> = {
+    overview: translateLabel(locale, 'developerGamification.overviewTab'),
+    pointRules: translateLabel(locale, 'developerGamification.pointRulesTab'),
+    xpEvents: translateLabel(locale, 'developerGamification.xpEventsTab'),
+    normalization: translateLabel(locale, 'developerGamification.normalizationTab'),
+    leaderboards: translateLabel(locale, 'developerGamification.leaderboardsTab'),
+    reconciliation: translateLabel(locale, 'developerGamification.reconciliationTab'),
+    ledgers: translateLabel(locale, 'developerGamification.ledgersTab'),
+    achievements: translateLabel(locale, 'developerGamification.achievementsTab'),
+    security: translateLabel(locale, 'developerGamification.securityTab'),
+    audit: translateLabel(locale, 'developerGamification.auditTab'),
+  };
+  return labels[tab];
 }
 
 function formatCell(value: unknown) {

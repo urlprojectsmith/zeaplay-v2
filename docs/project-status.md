@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 10.13 — DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER COMPLETE / PASS
-Next: Phase 10.14 — Complete Gamification UI Integration
+Current: Phase 11.1 - Automation Core + Workflow Model Implementation PASS
+Next: Phase 11.1 Focused Refinement + Final Verification
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -4473,3 +4473,260 @@ Final verification:
 - Prisma migrate status: database schema is up to date, 52 migrations.
 
 Phase 10.13 DEVELOPER DASHBOARD — GAMIFICATION CONTROL CENTER is COMPLETE / PASS. Next: Phase 10.14 — Complete Gamification UI Integration, and it must not start automatically.
+
+### Phase 10.14 Implementation - PASS
+
+COMPLETE GAMIFICATION UI INTEGRATION implementation is pass.
+
+Implemented:
+
+- Workspace Gamification remains one canonical `/workspace/gamification` page with URL-backed tabs.
+- Workspace tab order and labeling now cover Overview, Point Management, Levels, Badges, Achievements, Streaks, Rewards, Leaderboard, XP Control Center, History, and Admin Controls.
+- Workspace Overview clearly separates Current XP, Reward Points, achievements, badges, streaks, and local leaderboard position.
+- Workspace History remains bounded and server-backed with useful filters over existing XP history categories.
+- Agency Gamification now has Overview and Global Leaderboard surfaces using normalized Global Score labeling.
+- Super Admin Gamification now has Overview, Global Leaderboard, and informational Governance Status on the existing `/super-admin` route family.
+- Developer Gamification Control Center keeps the Phase 10.13 read-only diagnostics tabs and adds URL-backed tab state plus an explicit diagnostics-only notice.
+- Shared Global leaderboard tab helpers keep Agency, Platform, and Developer tab state consistent.
+- English and Tamil user-visible strings were added for the new integration labels.
+
+Implementation invariants:
+
+- Workspace uses local XP and Reward Point systems; Workspace/Department leaderboard rows remain current XP.
+- Agency and Platform leaderboards use normalized Global Score only.
+- Developer Gamification remains diagnostic/read-only and has no mutation controls.
+- XP, Reward Points, and Global Score are clearly differentiated in UI labels.
+- Existing Phase 10 business rules and APIs are reused rather than duplicated.
+- Tab/action visibility remains permission-based, and backend authorization remains authoritative.
+- Workspace context switching clears tab/filter/page/Department state that could otherwise leak stale data.
+- Agency context switching clears leaderboard, selected Subaccount, filters, and pagination.
+- Tenant-scoped query keys include Workspace or Agency context and relevant filter/page parameters.
+- Active-tab data remains lazy/bounded where practical; no all-tab eager load was introduced.
+- Loading/error/empty states continue to use existing UI primitives.
+- Light/Dark/Colorful themes continue to use theme tokens.
+- English/Tamil i18n is covered for new labels.
+- Responsive table overflow and semantic tab/table labels remain in place.
+- No fake module governance switch was introduced; governance is informational only.
+- No backend business logic, database migration, Phase 10.15, Phase 11, or Phase 20 scope was introduced.
+
+Verification:
+
+- Focused Phase 10.14 workspace UI tests: 11/11.
+- Web unit: 129/129.
+- API unit: 170/170.
+- Worker unit: 13/13.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- Prisma validate was not run because no backend/schema files were changed in Phase 10.14 implementation.
+
+Phase 10.14 COMPLETE GAMIFICATION UI INTEGRATION Implementation is pass; the next step is Phase 10.14 Focused Refinement + Final Verification, and Phase 10.15 must not start automatically.
+
+### Phase 10.14 Focused Refinement + Final Verification - PASS
+
+Phase 10.14 - COMPLETE GAMIFICATION UI INTEGRATION is COMPLETE / PASS.
+
+Focused refinement:
+
+- Restored Super Admin Gamification to the final Overview, Global Leaderboard, and Governance Status surface, with Agencies/Subaccounts/Users inside Global Leaderboard.
+- Added focused Phase 10.14 frontend coverage for Agency Global Score labels, Platform Global Score/governance structure, Developer read-only diagnostics, and invalid Workspace tab fallback.
+- Fixed Developer Control Center tab labels to use flat English/Tamil i18n keys supported by the project translator.
+
+Final invariants:
+
+- Workspace Gamification uses one canonical tabbed `/workspace/gamification` page.
+- All completed Workspace Gamification modules are integrated.
+- Workspace and Department leaderboards remain local XP.
+- Agency and Platform leaderboards use normalized Global Score.
+- Developer Gamification remains internal diagnostic/read-only.
+- XP, Reward Points, and Global Score remain clearly distinct.
+- UI reuses existing Phase 10 backend authority.
+- No Gamification formulas or security rules are duplicated in frontend.
+- Tab/action visibility is permission-driven.
+- Backend remains authorization authority.
+- Workspace and Agency switches cannot leak stale data.
+- Query keys are properly tenant/context scoped.
+- Active-tab loading avoids unnecessary all-tab requests.
+- History/event views remain bounded.
+- Loading/error/empty states are consistent.
+- Responsive behavior is covered by existing responsive UI patterns and E2E width coverage.
+- Accessibility is covered through semantic tabs, tables, labels, dialogs, and existing E2E/RTL coverage.
+- Light/Dark/Colorful themes remain token-based and verified by existing web tests.
+- English/Tamil coverage is verified for changed labels.
+- No fake governance switch exists.
+- No Phase 10.15 work was started.
+- Phase 7 through Phase 10.13 remain green.
+
+Final verification:
+
+- Focused Phase 10.14 frontend tests: 15/15.
+- API unit: 170/170.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Prisma migrate status: database schema is up to date, 52 migrations.
+
+Phase 10.14 COMPLETE GAMIFICATION UI INTEGRATION is COMPLETE / PASS. Next: Phase 10.15 - Final Gamification Security + Performance + Regression Audit, and it must not start automatically.
+
+### Phase 10.15 Main Audit - PASS
+
+FINAL GAMIFICATION SECURITY + PERFORMANCE + REGRESSION AUDIT main audit is pass.
+
+Audit invariants:
+
+- Phase 10 security boundaries verified.
+- Tenant and Agency isolation verified.
+- Authorization remains permission-based and backend-authoritative.
+- XP, Reward Point, Work XP, Global Score, and applied reconciliation ledgers remain append-only/immutable.
+- Point Management formula authority remains server-side.
+- Work XP lifecycle/reversal semantics remain idempotent and recompletion-safe.
+- XP reset security remains password plus OTP step-up protected.
+- Achievement, badge, streak, reward, local leaderboard, global leaderboard, and Developer diagnostics regressions were audited.
+- Global Score normalization remains separate from local XP.
+- Developer diagnostics remain internal and read-only.
+- Critical write paths remain idempotent/concurrency-safe.
+- History, leaderboard, and diagnostic queries remain bounded/paginated.
+- Sensitive fields remain redacted from Developer diagnostics and audit responses.
+- No Phase 11 scope started.
+
+Verification:
+
+- Focused Gamification API/security/regression tests: 104/104.
+- Focused Gamification web/regression tests: 15/15.
+- API unit: 170/170.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+
+Phase 10.15 Main Audit is pass; next step Phase 10.15 Refinement + Final Verification; Phase 11 not started.
+
+### Phase 10.15 Final Verification - PASS
+
+Phase 10.15 - FINAL GAMIFICATION SECURITY + PERFORMANCE + REGRESSION AUDIT is COMPLETE / PASS.
+
+Final Phase 10 invariants:
+
+- Phase 10.1-10.15 complete.
+- XP, Reward Points, and Global Score remain separate immutable systems.
+- Workspace and Department ranking uses local XP.
+- Agency and Platform ranking uses normalized Global Score.
+- Work lifecycle XP is event-driven and idempotent.
+- Reopen and recompletion semantics are protected.
+- Reset remains password plus Email OTP protected.
+- Reconciliation remains human-confirmed, stale-safe, and append-only.
+- Global Score is historically snapshotted and not backfilled.
+- Developer diagnostics remain internal/read-only.
+- Authorization remains permission-based.
+- Tenant and Agency isolation verified.
+- Critical concurrency paths are protected by transactions, idempotency keys, and database constraints.
+- Large queries remain bounded/set-based.
+- Gamification UI is integrated across Workspace, Agency, Super Admin, and Developer surfaces.
+- No Phase 11 implementation exists yet.
+
+Final verification:
+
+- Focused Phase 10 API/security/regression tests: 104/104.
+- Focused Phase 10 web/security/regression tests: 15/15.
+- API unit: 170/170.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- API integration: 103/103.
+- Worker integration: 13/13.
+- E2E: 21/21.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- `pnpm test:integration`: pass.
+- `pnpm test:e2e`: pass.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase1015_final_clean_20260922`, all 52 migrations applied through `0052_phase10_13_developer_gamification_diagnostics`.
+- Prisma migrate status: database schema is up to date, 52 migrations.
+
+PHASE 10 - GAMIFICATION, XP, REWARDS & GLOBAL SCORING is COMPLETE / PASS. Next: Phase 11 - Automation & Workflow Engine, and Phase 11 must not start automatically.
+
+### Phase 11.1 Implementation - PASS
+
+Phase 11.1 - AUTOMATION CORE + WORKFLOW MODEL Implementation is pass.
+
+Implemented:
+
+- Workspace-scoped Automation Workflow identity and version snapshot models.
+- `AutomationWorkflow` mutable identity separate from `AutomationWorkflowVersion` definition history.
+- Workflow lifecycle states for Draft, Published, Disabled, and Archived.
+- Version lifecycle states for Draft, Published, and Archived.
+- Exactly one active Draft version per workflow through database partial uniqueness.
+- Published version numbers scoped per workflow and assigned transactionally on publish.
+- DB-level protection against updating or deleting published workflow versions.
+- Typed workflow JSON snapshot foundation for trigger, nodes, edges, and settings.
+- Initial internal trigger/action/condition/variable-reference validation foundation.
+- Acyclic graph validation with unique node ids and valid edge references.
+- Secret-like workflow config key rejection.
+- Workspace-scoped read and mutation APIs with capability permissions.
+- Bounded workflow and version list APIs with server pagination.
+- Audit events for create, draft update, publish, disable, enable, and archive.
+- Minimal `/workspace/automations` UI, sidebar entry, and English/Tamil labels.
+
+Implementation invariants:
+
+- Automations are Workspace scoped.
+- PostgreSQL is workflow authority.
+- Redis/BullMQ is not workflow authority.
+- Stable Workflow identity is separate from immutable published versions.
+- New workflows begin as Draft.
+- Exactly one Trigger root is supported.
+- Published versions are immutable.
+- Edits create/use Draft rather than mutate published history.
+- Publishing creates and activates an immutable numbered version safely.
+- Disable/enable preserves published history.
+- Workflow graph is validated and acyclic.
+- Workflow definitions are typed and bounded.
+- No arbitrary JavaScript execution exists.
+- No secrets are stored directly in workflow definitions.
+- Permissions are capability-based, never role-name based.
+- Cross-Workspace workflow access is blocked by tenant guard and service-level workspace filters.
+- Workflow mutations are audited with bounded metadata.
+- No trigger execution exists yet.
+- No action execution exists yet.
+- No BullMQ automation execution exists yet.
+- No external integration/webhook execution exists yet.
+- No Phase 11.2+ scope was started.
+
+Verification:
+
+- Focused Automation graph validator tests: 9/9.
+- API unit: 179/179.
+- Web unit: 133/133.
+- Worker unit: 13/13.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase111_clean_20260923`, all 53 migrations applied through `0053_phase11_1_automation_core`.
+- Prisma migrate status: database schema is up to date on isolated scratch database, 53 migrations.
+
+Phase 11.1 AUTOMATION CORE + WORKFLOW MODEL Implementation is pass; the next step is Phase 11.1 Focused Refinement + Final Verification. Phase 11.2 must not start automatically.

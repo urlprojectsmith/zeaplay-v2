@@ -373,6 +373,61 @@ enum GamificationGlobalScoreEventStatus {
   SKIPPED_UNSUPPORTED_EVENT
 }
 
+enum AutomationWorkflowStatus {
+  DRAFT
+  PUBLISHED
+  DISABLED
+  ARCHIVED
+}
+
+enum AutomationWorkflowVersionState {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AutomationWorkflowNodeType {
+  TRIGGER
+  CONDITION
+  ACTION
+  DELAY
+  BRANCH
+}
+
+enum AutomationTriggerType {
+  TASK_CREATED
+  TASK_STATUS_CHANGED
+  TASK_COMPLETED
+  PROJECT_CREATED
+  PROJECT_STATUS_CHANGED
+  PROJECT_COMPLETED
+  TICKET_CREATED
+  TICKET_STATUS_CHANGED
+  TICKET_RESOLVED
+}
+
+enum AutomationActionType {
+  CREATE_TASK
+  UPDATE_TASK
+  ASSIGN_TASK
+  CHANGE_TASK_STATUS
+  ADD_TASK_TAG
+  UPDATE_PROJECT
+  CHANGE_PROJECT_STATUS
+  ASSIGN_TICKET
+  CHANGE_TICKET_STATUS
+  ADD_TICKET_TAG
+}
+
+enum AutomationConditionOperator {
+  EQUALS
+  NOT_EQUALS
+  IN
+  NOT_IN
+  EXISTS
+  NOT_EXISTS
+}
+
 model SystemHealth {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   component String   @db.VarChar(120)
@@ -556,6 +611,8 @@ model Workspace {
   auditLogs                          AuditLog[]
   securityStepUpGrants               SecurityStepUpGrant[]               @relation("SecurityStepUpGrantWorkspace")
   securityOtpChallenges              SecurityOtpChallenge[]              @relation("SecurityOtpChallengeWorkspace")
+  automationWorkflows                 AutomationWorkflow[]
+  automationWorkflowVersions          AutomationWorkflowVersion[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -696,6 +753,9 @@ model WorkspaceMembership {
   gamificationLeaderboardPreference  GamificationLeaderboardPreference? @relation("GamificationLeaderboardPreferenceTarget")
   securityStepUpGrants               SecurityStepUpGrant[]              @relation("SecurityStepUpGrantTarget")
   securityOtpChallenges              SecurityOtpChallenge[]             @relation("SecurityOtpChallengeTarget")
+  automationWorkflowsCreated         AutomationWorkflow[]               @relation("AutomationWorkflowCreator")
+  automationWorkflowsUpdated         AutomationWorkflow[]               @relation("AutomationWorkflowUpdater")
+  automationWorkflowVersionsCreated  AutomationWorkflowVersion[]        @relation("AutomationWorkflowVersionCreator")
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -2559,6 +2619,61 @@ model ProcessingJob {
   @@index([assetId, status])
   @@index([status, createdAt])
   @@map("processing_jobs")
+}
+
+model AutomationWorkflow {
+  id                       String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId              String                   @map("workspace_id") @db.Uuid
+  name                     String                   @db.VarChar(120)
+  description              String?                  @db.VarChar(500)
+  status                   AutomationWorkflowStatus @default(DRAFT)
+  activePublishedVersionId String?                  @map("active_published_version_id") @db.Uuid
+  createdByMembershipId    String                   @map("created_by_membership_id") @db.Uuid
+  updatedByMembershipId    String?                  @map("updated_by_membership_id") @db.Uuid
+  archivedAt               DateTime?                @map("archived_at") @db.Timestamptz(6)
+  createdAt                DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace              Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  activePublishedVersion AutomationWorkflowVersion?  @relation("ActiveAutomationWorkflowVersion", fields: [activePublishedVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership    WorkspaceMembership         @relation("AutomationWorkflowCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  updatedByMembership    WorkspaceMembership?        @relation("AutomationWorkflowUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  versions               AutomationWorkflowVersion[] @relation("AutomationWorkflowVersions")
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, archivedAt])
+  @@index([workspaceId, activePublishedVersionId])
+  @@map("automation_workflows")
+}
+
+model AutomationWorkflowVersion {
+  id                    String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowId            String                         @map("workflow_id") @db.Uuid
+  workspaceId           String                         @map("workspace_id") @db.Uuid
+  versionNumber         Int?                           @map("version_number")
+  state                 AutomationWorkflowVersionState @default(DRAFT)
+  definitionVersion     String                         @default("1") @map("definition_version") @db.VarChar(20)
+  triggerDefinition     Json                           @map("trigger_definition")
+  nodesDefinition       Json                           @map("nodes_definition")
+  edgesDefinition       Json                           @map("edges_definition")
+  settingsDefinition    Json                           @map("settings_definition")
+  definitionSizeBytes   Int                            @default(0) @map("definition_size_bytes")
+  createdByMembershipId String                         @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  publishedAt           DateTime?                      @map("published_at") @db.Timestamptz(6)
+
+  workflow            AutomationWorkflow   @relation("AutomationWorkflowVersions", fields: [workflowId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdByMembership WorkspaceMembership  @relation("AutomationWorkflowVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  activeForWorkflows  AutomationWorkflow[] @relation("ActiveAutomationWorkflowVersion")
+
+  @@unique([id, workspaceId])
+  @@unique([workflowId, versionNumber])
+  @@index([workflowId, state])
+  @@index([workspaceId, createdAt])
+  @@map("automation_workflow_versions")
 }
 
 model FeatureDefinition {
