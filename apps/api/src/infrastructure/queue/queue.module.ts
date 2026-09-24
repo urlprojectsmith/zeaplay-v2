@@ -10,6 +10,7 @@ import {
   TASK_RECURRENCE_QUEUE,
   TICKET_SLA_QUEUE,
   WEBHOOK_DELIVERY_QUEUE,
+  INBOUND_WEBHOOK_MAINTENANCE_QUEUE,
 } from './queue.constants';
 
 const env = validateEnvironment(process.env);
@@ -40,6 +41,7 @@ const env = validateEnvironment(process.env);
     BullModule.registerQueue({ name: NOTIFICATION_REMINDER_QUEUE }),
     BullModule.registerQueue({ name: STORAGE_RETENTION_QUEUE }),
     BullModule.registerQueue({ name: WEBHOOK_DELIVERY_QUEUE }),
+    BullModule.registerQueue({ name: INBOUND_WEBHOOK_MAINTENANCE_QUEUE }),
   ],
   exports: [BullModule],
 })

@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 14.2 — OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY Implementation — PASS
-Next: Phase 14.2 Focused Refinement + Final Verification
+Current: Phase 14.3 — INBOUND WEBHOOKS + VERIFICATION + NORMALIZATION + IDEMPOTENCY COMPLETE / PASS
+Next: Phase 14.4 — External Integration Framework + Credentials + Provider Adapters
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -6859,3 +6859,251 @@ Warnings:
 Phase 14.2 OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY Implementation is PASS.
 
 Next: Phase 14.2 Focused Refinement + Final Verification. Do not mark Phase 14.2 COMPLETE. Do not start Phase 14.3.
+
+### Phase 14.2 - OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY COMPLETE / PASS
+
+Focused refinement fixes:
+
+- Bound outbound connections to the DNS result validated by SSRF checks by replacing dispatcher `fetch` with Node `http`/`https` requests and a custom `lookup` callback.
+- Kept TLS verification enabled for HTTPS and preserved hostname/SNI while continuing to disallow redirects.
+- Bounded stored webhook response snippets while streaming response bodies instead of buffering full responses.
+- Added migration `0070_phase14_2_webhook_final_hardening` with `WebhookEvent.sourceAutomationDomainEventId` and a Workspace-scoped uniqueness constraint.
+- Deduplicated automation-domain webhook capture by source domain event id and made duplicate races return the existing event without creating new deliveries.
+- Added webhook payload size enforcement for canonical captured events and test events.
+- Reduced the active event registry to currently backed canonical events only: Task created/status changed/completed, Project created/status changed, Ticket created/status changed/resolved, and `webhook.test`.
+- Wrapped automation-domain webhook capture so webhook capture failures do not break canonical automation-domain event behavior.
+- Corrected terminal retry classification: permanent 4xx failures finish as `FAILED`, while exhausted retryable failures become `DEAD_LETTERED`.
+- Made manual retry atomically claim retryable failed/dead-letter deliveries and requeue the same delivery id.
+- Added bounded retention cleanup for old terminal deliveries and orphan webhook events through the recovery job path.
+
+Final invariants:
+
+- Webhook subscriptions, events, and deliveries are Workspace-scoped and database-authoritative.
+- Management APIs remain internal JWT/RBAC Workspace APIs guarded by `webhooks.*` permissions.
+- Signing secrets are high-entropy, server-generated, encrypted at rest, and shown only once on create/rotate.
+- Queue payloads contain only `deliveryId`; secrets, endpoint URLs, event payloads, and tenant data are loaded from Postgres by the worker.
+- Delivery signing uses HMAC-SHA256 over the exact `timestamp.rawBody` string sent on the wire.
+- Delivery headers include event id, delivery id, event type, timestamp, attempt, and signature.
+- Endpoint validation blocks non-HTTPS by default, credentials in URLs, localhost/private/link-local/multicast/reserved/metadata ranges, and unsafe DNS results.
+- Development local HTTP remains available only behind `WEBHOOK_ALLOW_LOCAL_HTTP` outside production.
+- DNS validation and actual connection target are bound in the dispatcher to reduce rebinding risk.
+- Redirects are not followed, TLS verification is not disabled, and no custom header injection surface was added.
+- Response snippets, request timeouts, retry delays, payload size, delivery history pages, and retention cleanup batches are bounded.
+- Delivery claims use database compare-and-set state transitions to avoid duplicate concurrent sends.
+- At-least-once delivery is preserved; receivers must treat delivery ids and event ids as idempotency anchors.
+- Recovery requeues stale processing deliveries and performs bounded retention cleanup.
+- AuditLog covers subscription create/update/disable/rotate/test/manual retry actions without recording secrets.
+- Logging uses safe ids and error codes only; signing secrets, plaintext payloads, and endpoint response bodies are not logged.
+- No inbound webhook endpoint, OAuth authorization server, provider webhook, GraphQL endpoint, or Phase 14.3 scope was added.
+
+Final verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused API webhook tests: pass, `webhooks.service.spec.ts` 6/6.
+- Focused worker webhook delivery tests: pass, `webhook-delivery.processor.spec.ts` 4/4.
+- Focused web settings tests: pass, `phase14-1.test.tsx` plus app tests 155/155.
+- `pnpm test`: pass on rerun, all 17 package test tasks successful. API 350/350, worker 22/22, web 155/155.
+- Root `pnpm test:integration`: worker integration passed 22/22; API integration failed only against the stale shared development database because relation `automation_trigger_matches` is missing there.
+- API integration on isolated migrated scratch database `zea_play_phase14_2_verify_20260924201531`: pass, 103/103.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with the known Next ESLint plugin warning only.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the requested high threshold.
+- `git diff --check`: pass.
+- Clean isolated migration deploy/status on `zea_play_phase14_2_verify_20260924201531`: pass, all 70 migrations applied through `0070_phase14_2_webhook_final_hardening`, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0070` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected one-time plaintext secret handling, encrypted-secret storage/use, signature header construction, unrelated Cloud Drive authorization redirect, existing wildcard permission helper, centralized webhook dispatcher `http`/`https` request usage, bounded response snippets, and webhook UI display paths. No worker webhook `fetch`, TLS-disable flag, inbound/provider webhook, GraphQL, frontend secret persistence, routine endpoint logging, unsupported active event registry values, or direct Task/Project/Ticket/Public API webhook send path was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- The first full `pnpm test` run had one transient older Phase 7.2 web timeout under load; the exact test passed in isolation and the full rerun passed.
+- Known acceptable warnings remain: Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma tips, worker/API test log noise, and one moderate audit advisory below the high threshold.
+
+Phase 14.2 OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY is COMPLETE / PASS.
+
+Next: Phase 14.3 - Inbound Webhooks + Verification + Normalization + Idempotency. Do not start Phase 14.3 automatically.
+
+### Phase 14.3 - INBOUND WEBHOOKS + VERIFICATION + NORMALIZATION + IDEMPOTENCY Implementation - PASS
+
+Implemented:
+
+- Added dedicated non-JWT/non-API-key public ingress route `POST /api/v1/inbound/:publicId` with route-specific raw JSON body handling before global JSON parsing.
+- Added `GENERIC_HMAC_V1` inbound source storage, management APIs, generated public ids, generated signing secrets, encrypted secret persistence, immediate rotation, and disabled-source handling.
+- Added durable inbound event and normalized inbound event persistence with source/workspace scoping, raw body hashes, status metadata, normalized type/version/data fields, and bounded retention indexes.
+- Added exact-byte HMAC verification over `timestamp + "." + rawBody`, required timestamp freshness, required external event ids, and constant-time signature comparison.
+- Added durable idempotency by `(sourceId, externalEventId)`: identical body replays return the stored event, while reused event ids with different body hashes are rejected.
+- Added provider-neutral normalization for the generic contract only; malformed JSON or invalid generic contracts persist failed-normalization records and do not mutate business entities.
+- Added source/workspace Redis-backed rate limits with non-production fallback behavior and production fail-closed behavior on rate-limit store failure.
+- Added inbound maintenance queue constants and worker cleanup processor for bounded retention cleanup under an advisory lock.
+- Added internal Workspace settings UI for source creation, one-time secret copy/clear, endpoint copy, event history, rotation, disabling, and English/Tamil labels.
+- Added `docs/inbound-webhooks.md` with endpoint, headers, signing formula, replay/idempotency behavior, generic payload contract, rotation behavior, rate limits, and retry guidance.
+
+Security invariants:
+
+- Inbound webhook workspace identity is derived only from the stored source; payload workspace ids are ignored.
+- Inbound routes do not accept JWT/API-key authorization as the source of trust.
+- Signing secrets are server-generated, encrypted at rest, and returned in plaintext only for create/rotate responses.
+- Invalid signatures, raw request bodies, and plaintext secrets are not logged.
+- Raw body size, source names, event ids, normalized fields, history pages, and retention cleanup are bounded.
+- Unsupported content encodings and non-JSON content types are rejected.
+- Disabled or unknown sources fail closed.
+- Source create is capped per Workspace and protected by Workspace RBAC permissions `inbound_webhooks.view`, `inbound_webhooks.create`, and `inbound_webhooks.manage`.
+- No Task, Project, Ticket, or Public API resource mutation is performed from inbound webhook receipt.
+- No Automation external-trigger execution is performed in Phase 14.3.
+- No provider-specific adapters, OAuth provider webhooks, GraphQL endpoint, marketplace behavior, or Phase 14.4 scope was added.
+
+Verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm --filter @zea-play/config build`: pass.
+- `pnpm --filter @zea-play/config test`: pass, 5/5.
+- `pnpm format`: pass after `pnpm format:write`.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass, all 17 package typecheck tasks successful.
+- API typecheck: pass.
+- Worker typecheck: pass.
+- Web typecheck: pass.
+- Focused inbound API tests: pass, `inbound-webhooks.service.spec.ts` 10/10.
+- Focused inbound web settings tests: pass, `phase14-1.test.tsx` plus app tests 156/156.
+- Focused rerun of the older Phase 7.2 ticket test that timed out during the full suite: pass, 1/1.
+- `pnpm test`: API 360/360 and worker 22/22 passed; web had one older Phase 7.2 ticket UI test timeout under full-suite load, and that exact test passed in isolation immediately after.
+- Clean isolated migration deploy/status on `zea_play_phase14_3_impl_verify_20260924204553`: pass, all 71 migrations applied through `0071_phase14_3_inbound_webhooks`, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0071` remain pending intentionally; no shared-dev migration was applied.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security search: pass after review. Hits were expected route docs, Swagger/auth references outside inbound trust, one-time plaintext secret handling, encrypted-secret persistence/use, raw-body hashing/signing/parsing paths, unsupported content-encoding checks, UI copy/display paths, and explicit docs noting no Automation execution. No provider adapter implementation, GraphQL, direct Task/Project/Ticket mutation, frontend secret persistence, payload Workspace trust path, API-key/JWT inbound authorization path, or Phase 14.4 implementation was found.
+
+Warnings:
+
+- This is Implementation PASS only. Phase 14.3 Focused Refinement + Final Verification still owns integration/E2E/build/audit/final regression.
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Full `pnpm test` did not get a clean all-package pass in this implementation turn because one older Phase 7.2 web test timed out under load; the exact timed-out test passed in isolation, and focused Phase 14.3 API/web tests passed.
+- Inbound cleanup processor and queue constants are present; final refinement should verify production scheduling cadence with the broader worker audit.
+
+Phase 14.3 INBOUND WEBHOOKS + VERIFICATION + NORMALIZATION + IDEMPOTENCY Implementation is PASS.
+
+Next: Phase 14.3 Focused Refinement + Final Verification. Do not mark Phase 14.3 COMPLETE. Do not start Phase 14.4.
+
+### Phase 14.3 - INBOUND WEBHOOKS + VERIFICATION + NORMALIZATION + IDEMPOTENCY COMPLETE / PASS
+
+Focused refinement fixes:
+
+- Added API-side repeatable inbound webhook cleanup scheduling through `InboundWebhookMaintenanceSchedulerService`.
+- Registered hourly bounded cleanup jobs on the inbound maintenance queue with deterministic job identity and payload-free job metadata.
+- Hardened scheduler startup so unavailable queue connections log a safe warning without breaking unrelated API startup paths; production cleanup still schedules normally when Redis queue is available.
+- Preserved worker-side bounded cleanup under advisory lock through `InboundWebhookMaintenanceProcessor`.
+- Made failed-normalization retries return the stored safe normalization error code instead of a generic replacement.
+- Expanded focused inbound coverage for malformed signatures, stale/future/malformed timestamps, duplicate replay with fresh timestamp, body drift, duplicate create races, failed-normalization replay stability, source/workspace rate limits, production limiter fail-closed behavior, scheduler registration, and worker cleanup locking.
+- Updated `docs/inbound-webhooks.md` to document unsupported compression, body limit config, payload Workspace non-authority, retention/idempotency semantics, safe error codes, and scheduled bounded cleanup.
+
+Final invariants:
+
+- `/api/v1/inbound/:publicId` is the canonical inbound ingress.
+- Inbound auth is separate from JWT and Phase 14.1 API keys.
+- `GENERIC_HMAC_V1` is the only real inbound adapter.
+- Source public ID is routing identity, not authentication.
+- Signing secret is server-generated, encrypted at rest, and shown once.
+- Immediate secret rotation invalidates the prior secret.
+- Verification uses HMAC-SHA256 over timestamp plus exact raw request bytes.
+- Raw-body parsing is scoped to `/api/v1/inbound` and does not regress other APIs.
+- Body/header sizes and content encoding are bounded.
+- Timestamp freshness is checked before duplicate replay handling.
+- Sender external event ID is required and bounded.
+- Source plus external event ID is durable idempotency identity.
+- Same ID/body replay reuses the existing event.
+- Same ID with different body is rejected.
+- Timestamp is not part of idempotency identity.
+- Workspace derives only from stored inbound source.
+- Payload Workspace fields never control tenant context.
+- Verified events normalize into a provider-neutral durable representation.
+- Inbound events do not mutate Tasks, Projects, or Tickets.
+- Inbound events do not trigger Automation in Phase 14.3.
+- Inbound source and Workspace rate limits are enforced.
+- Production does not silently disable rate limiting.
+- Routine logs never contain raw body, signature, or secret values.
+- Retention cleanup is actually scheduled and worker-driven.
+- Cleanup is bounded and multi-instance safe.
+- Event history is Workspace-scoped and paginated.
+- Phase 14.1 public API remains isolated.
+- Phase 14.2 outbound webhook system remains isolated and green.
+- No concrete provider adapters or marketplace behavior exists yet.
+- No Phase 14.4 implementation was started.
+- Phase 10-13 and 14.1-14.2 remain green.
+- Full final `pnpm test` passed cleanly.
+
+Final verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, all 17 tasks successful.
+- `pnpm typecheck`: pass, all 17 tasks successful.
+- Focused inbound API tests: pass, inbound service/scheduler/rate-limit specs 20/20.
+- Focused source/signature/timestamp/idempotency/normalization/rate-limit/auth-separation/retention coverage: pass.
+- Focused worker retention tests: pass, inbound maintenance plus storage retention plus outbound webhook delivery 11/11.
+- Focused web settings/history tests: pass, `phase14-1.test.tsx` plus app tests 156/156.
+- First full `pnpm test` attempt repeated the known older Phase 7.2 web timeout under load; the exact failing test passed in isolation and the full web package passed 156/156.
+- Final clean `pnpm test`: pass, all 17 package tasks successful. API 371/371, worker 24/24, web 156/156.
+- Root `pnpm test:integration`: worker integration passed 24/24; API integration failed against stale shared development DB because relation `automation_trigger_matches` is missing there, as expected.
+- API integration on isolated migrated scratch database `zea_play_phase14_3_final_verify_20260924`: pass, 103/103.
+- Standalone worker integration: pass, 24/24, covering Phase 13 storage retention, Phase 14.2 outbound webhook worker, and Phase 14.3 inbound maintenance worker.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with the known Next ESLint plugin warning only.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the requested high threshold.
+- Clean isolated migration deploy/status on `zea_play_phase14_3_final_verify_20260924`: pass, all 71 migrations applied through `0071_phase14_3_inbound_webhooks`, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0071` remain pending intentionally; no shared-dev migration was applied.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security search: pass after review. Hits were expected Swagger docs, Workspace-scoped management UI/service paths, one-time secret state/copy, exact raw-body HMAC code, internal JWT guards only on management routes, bounded content-encoding checks, and documentation/test references. No raw body logging, signature logging, expected HMAC logging, frontend secret persistence, public inbound JWT/API-key guard, payload Workspace authority path, timestamp-based idempotency identity, duplicate-before-freshness handling, JSON stringify before signature verification, unbounded inbound body/header path, gzip decompression support, eval/new Function/vm use, direct Task/Project/Ticket mutation, gamification mutation, notification send, Automation execution, provider-specific inbound adapter, marketplace, GraphQL, or Phase 14.4 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma tips, worker/API test log noise, one moderate audit advisory below the high threshold, stale shared dev DB, and no live Phase 13 cloud provider verification.
+- PgBouncer did not route the scratch database name for API integration, so authoritative scratch integration used direct Postgres `5432`.
+
+Phase 14.3 INBOUND WEBHOOKS + VERIFICATION + NORMALIZATION + IDEMPOTENCY is COMPLETE / PASS.
+
+Next: Phase 14.4 - External Integration Framework + Credentials + Provider Adapters. Do not start Phase 14.4 automatically.
+
+---
+
+## Phase 14.4 External Integration Framework + Credentials + Provider Adapters - Implementation Status
+
+Phase 14.4 implementation scope is PASS.
+
+Implemented:
+
+- Added workspace-scoped integration persistence for approved providers only: `GOHIGHLEVEL`, `SLACK`, `WEBEX`, and `GENERIC_REST`.
+- Added encrypted credential storage, safe connection serialization, connection caps, action execution records, idempotency records, OAuth state foundation tables, and bounded cleanup.
+- Added RBAC permissions for integration view/create/manage/execute and seeded them into workspace roles.
+- Added provider registry and adapters for HighLevel contacts/opportunities, Slack channels/messages, Webex spaces/messages, and Generic REST fixed-base relative-path actions.
+- Added provider HTTP timeout, redirect rejection, bounded response reads, rate limiting, safe error codes, and Generic REST SSRF/path/header restrictions.
+- Added Workspace Settings UI and web service client for provider listing, connection creation, testing, disconnecting, and scoped action execution.
+- Added `docs/external-integrations.md`.
+
+Verification:
+
+- `pnpm prisma:validate`: pass.
+- `pnpm prisma:generate`: pass.
+- `pnpm --filter @zea-play/config build`: pass.
+- `pnpm --filter @zea-play/api typecheck`: pass.
+- `pnpm --filter @zea-play/web typecheck`: pass.
+- `pnpm --filter @zea-play/api test -- --runTestsByPath src/modules/integrations/integration-credential.service.spec.ts src/modules/integrations/integration-generic-rest-security.service.spec.ts`: pass, 3/3.
+- `pnpm --filter @zea-play/config test`: pass, 5/5.
+
+Notes:
+
+- No shared development database migration was applied.
+- No live provider credential verification was performed.
+- Background sync, arbitrary connector scripts, marketplace/provider expansion, and Phase 14.5 work remain out of scope.
+
+Phase 14.4 EXTERNAL INTEGRATION FRAMEWORK + CREDENTIALS + PROVIDER ADAPTERS is IMPLEMENTATION PASS.
+
+Next: Phase 14.4 Focused Refinement + Final Verification. Do not start Phase 14.5 automatically.

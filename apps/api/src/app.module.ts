@@ -31,6 +31,8 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
 import { CalendarModule } from './modules/calendar/calendar.module';
 import { CloudDrivesModule } from './modules/cloud-drives/cloud-drives.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
+import { InboundWebhooksModule } from './modules/inbound-webhooks/inbound-webhooks.module';
+import { IntegrationsModule } from './modules/integrations/integrations.module';
 
 @Module({
   imports: [
@@ -55,6 +57,8 @@ import { PublicApiModule } from './modules/public-api/public-api.module';
     CalendarModule,
     CloudDrivesModule,
     PublicApiModule,
+    InboundWebhooksModule,
+    IntegrationsModule,
     TagsModule,
     AgenciesModule,
     WorkspacesModule,

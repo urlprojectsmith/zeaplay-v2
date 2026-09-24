@@ -1,6 +1,6 @@
 import compression from 'compression';
 import helmet from 'helmet';
-import { json, urlencoded } from 'express';
+import { json, raw, urlencoded } from 'express';
 import { HttpStatus, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -17,6 +17,13 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.use(helmet());
   app.use(compression());
+  app.use(
+    '/api/v1/inbound',
+    raw({
+      type: 'application/json',
+      limit: env.INBOUND_WEBHOOK_MAX_BODY_BYTES,
+    }),
+  );
   app.use(json({ limit: env.REQUEST_BODY_LIMIT }));
   app.use(urlencoded({ extended: false, limit: env.REQUEST_BODY_LIMIT }));
   app.enableCors({ origin: parseCorsOrigins(env.CORS_ORIGINS), credentials: true });

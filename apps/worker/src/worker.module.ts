@@ -11,6 +11,7 @@ import { StorageRetentionProcessor } from './processors/storage-retention.proces
 import { TaskRecurrenceProcessor } from './processors/task-recurrence.processor';
 import { TicketSlaProcessor } from './processors/ticket-sla.processor';
 import { WebhookDeliveryProcessor } from './processors/webhook-delivery.processor';
+import { InboundWebhookMaintenanceProcessor } from './processors/inbound-webhook-maintenance.processor';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { WebhookDeliveryProcessor } from './processors/webhook-delivery.processo
     TicketSlaProcessor,
     StorageRetentionProcessor,
     WebhookDeliveryProcessor,
+    InboundWebhookMaintenanceProcessor,
   ],
 })
 export class WorkerModule {}

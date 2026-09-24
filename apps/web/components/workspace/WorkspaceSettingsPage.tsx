@@ -42,6 +42,26 @@ import {
   type WebhookEventType,
   type WorkspaceWebhookCreateResult,
 } from '../../services/workspace-webhooks';
+import {
+  createWorkspaceInboundWebhook,
+  disableWorkspaceInboundWebhook,
+  listWorkspaceInboundWebhookEvents,
+  listWorkspaceInboundWebhooks,
+  rotateWorkspaceInboundWebhookSecret,
+  workspaceInboundWebhookKeys,
+  type WorkspaceInboundWebhookCreateResult,
+} from '../../services/workspace-inbound-webhooks';
+import {
+  createWorkspaceIntegration,
+  disconnectWorkspaceIntegration,
+  executeWorkspaceIntegrationAction,
+  listWorkspaceIntegrationProviders,
+  listWorkspaceIntegrations,
+  testWorkspaceIntegration,
+  workspaceIntegrationKeys,
+  type IntegrationAuthType,
+  type IntegrationProvider,
+} from '../../services/workspace-integrations';
 import { useSessionStore } from '../../stores/session';
 
 const COMMON_TIMEZONES = [
@@ -72,6 +92,13 @@ const cloudProviders: Array<{ value: CloudDriveProvider; labelKey: string }> = [
   { value: 'DROPBOX', labelKey: 'dropbox' },
 ];
 
+const integrationProviders: IntegrationProvider[] = [
+  'GOHIGHLEVEL',
+  'SLACK',
+  'WEBEX',
+  'GENERIC_REST',
+];
+
 export function WorkspaceSettingsPage() {
   const { locale, t } = useLanguage();
   const queryClient = useQueryClient();
@@ -97,6 +124,22 @@ export function WorkspaceSettingsPage() {
   const [revealedWebhookSecret, setRevealedWebhookSecret] =
     useState<WorkspaceWebhookCreateResult | null>(null);
   const [selectedWebhookId, setSelectedWebhookId] = useState<string | null>(null);
+  const [inboundWebhookName, setInboundWebhookName] = useState('');
+  const [revealedInboundWebhookSecret, setRevealedInboundWebhookSecret] =
+    useState<WorkspaceInboundWebhookCreateResult | null>(null);
+  const [selectedInboundWebhookId, setSelectedInboundWebhookId] = useState<string | null>(null);
+  const [integrationProvider, setIntegrationProvider] =
+    useState<IntegrationProvider>('GOHIGHLEVEL');
+  const [integrationAuthType, setIntegrationAuthType] =
+    useState<IntegrationAuthType>('BEARER_TOKEN');
+  const [integrationName, setIntegrationName] = useState('');
+  const [integrationToken, setIntegrationToken] = useState('');
+  const [integrationBaseUrl, setIntegrationBaseUrl] = useState('');
+  const [integrationLocationId, setIntegrationLocationId] = useState('');
+  const [integrationTestPath, setIntegrationTestPath] = useState('/');
+  const [integrationAction, setIntegrationAction] = useState('');
+  const [integrationActionInput, setIntegrationActionInput] = useState('{}');
+  const [integrationActionResult, setIntegrationActionResult] = useState<string | null>(null);
   const settingsQuery = useQuery({
     queryKey: ['workspace', workspaceId, 'settings'],
     queryFn: () => getWorkspaceSettings(workspaceId as string),
@@ -134,6 +177,19 @@ export function WorkspaceSettingsPage() {
   const canCreateWebhooks = permissionsReady && hasPermission(permissions, 'webhooks.create');
   const canManageWebhooks = permissionsReady && hasPermission(permissions, 'webhooks.manage');
   const canRetryWebhooks = permissionsReady && hasPermission(permissions, 'webhooks.retry');
+  const canViewInboundWebhooks =
+    permissionsReady && hasPermission(permissions, 'inbound_webhooks.view');
+  const canCreateInboundWebhooks =
+    permissionsReady && hasPermission(permissions, 'inbound_webhooks.create');
+  const canManageInboundWebhooks =
+    permissionsReady && hasPermission(permissions, 'inbound_webhooks.manage');
+  const canViewIntegrations = permissionsReady && hasPermission(permissions, 'integrations.view');
+  const canCreateIntegrations =
+    permissionsReady && hasPermission(permissions, 'integrations.create');
+  const canManageIntegrations =
+    permissionsReady && hasPermission(permissions, 'integrations.manage');
+  const canExecuteIntegrations =
+    permissionsReady && hasPermission(permissions, 'integrations.execute');
   const apiKeysQuery = useQuery({
     queryKey: workspaceApiKeyKeys.list(workspaceId),
     queryFn: () => listWorkspaceApiKeys(workspaceId as string),
@@ -149,6 +205,27 @@ export function WorkspaceSettingsPage() {
     queryFn: () =>
       listWorkspaceWebhookDeliveries(workspaceId as string, selectedWebhookId as string),
     enabled: Boolean(workspaceId && selectedWebhookId && canViewWebhooks),
+  });
+  const inboundWebhooksQuery = useQuery({
+    queryKey: workspaceInboundWebhookKeys.list(workspaceId),
+    queryFn: () => listWorkspaceInboundWebhooks(workspaceId as string),
+    enabled: Boolean(workspaceId && canViewInboundWebhooks),
+  });
+  const inboundWebhookEventsQuery = useQuery({
+    queryKey: workspaceInboundWebhookKeys.events(workspaceId, selectedInboundWebhookId),
+    queryFn: () =>
+      listWorkspaceInboundWebhookEvents(workspaceId as string, selectedInboundWebhookId as string),
+    enabled: Boolean(workspaceId && selectedInboundWebhookId && canViewInboundWebhooks),
+  });
+  const integrationProvidersQuery = useQuery({
+    queryKey: workspaceIntegrationKeys.providers(workspaceId),
+    queryFn: () => listWorkspaceIntegrationProviders(workspaceId as string),
+    enabled: Boolean(workspaceId && canViewIntegrations),
+  });
+  const integrationsQuery = useQuery({
+    queryKey: workspaceIntegrationKeys.list(workspaceId),
+    queryFn: () => listWorkspaceIntegrations(workspaceId as string),
+    enabled: Boolean(workspaceId && canViewIntegrations),
   });
   const browserTimezone = useMemo(() => {
     try {
@@ -309,6 +386,92 @@ export function WorkspaceSettingsPage() {
       void queryClient.invalidateQueries({
         queryKey: workspaceWebhookKeys.deliveries(workspaceId, selectedWebhookId),
       });
+    },
+  });
+  const createInboundWebhookMutation = useMutation({
+    mutationFn: () =>
+      createWorkspaceInboundWebhook(workspaceId as string, {
+        name: inboundWebhookName,
+        type: 'GENERIC_HMAC_V1',
+      }),
+    onSuccess: (result) => {
+      setRevealedInboundWebhookSecret(result);
+      setInboundWebhookName('');
+      void queryClient.invalidateQueries({
+        queryKey: workspaceInboundWebhookKeys.list(workspaceId),
+      });
+    },
+  });
+  const rotateInboundWebhookMutation = useMutation({
+    mutationFn: (sourceId: string) =>
+      rotateWorkspaceInboundWebhookSecret(workspaceId as string, sourceId),
+    onSuccess: (result) => {
+      setRevealedInboundWebhookSecret(result);
+      void queryClient.invalidateQueries({
+        queryKey: workspaceInboundWebhookKeys.list(workspaceId),
+      });
+    },
+  });
+  const disableInboundWebhookMutation = useMutation({
+    mutationFn: (sourceId: string) =>
+      disableWorkspaceInboundWebhook(workspaceId as string, sourceId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workspaceInboundWebhookKeys.list(workspaceId),
+      });
+    },
+  });
+  const createIntegrationMutation = useMutation({
+    mutationFn: () =>
+      createWorkspaceIntegration(workspaceId as string, {
+        provider: integrationProvider,
+        name: integrationName,
+        authType: integrationAuthType,
+        credentials:
+          integrationAuthType === 'API_KEY'
+            ? { apiKey: integrationToken }
+            : { token: integrationToken },
+        configuration: buildIntegrationConfiguration(
+          integrationProvider,
+          integrationBaseUrl,
+          integrationTestPath,
+          integrationLocationId,
+        ),
+      }),
+    onSuccess: () => {
+      setIntegrationName('');
+      setIntegrationToken('');
+      setIntegrationBaseUrl('');
+      setIntegrationLocationId('');
+      setIntegrationTestPath('/');
+      void queryClient.invalidateQueries({ queryKey: workspaceIntegrationKeys.list(workspaceId) });
+    },
+  });
+  const testIntegrationMutation = useMutation({
+    mutationFn: (integrationId: string) =>
+      testWorkspaceIntegration(workspaceId as string, integrationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceIntegrationKeys.list(workspaceId) });
+    },
+  });
+  const disconnectIntegrationMutation = useMutation({
+    mutationFn: (integrationId: string) =>
+      disconnectWorkspaceIntegration(workspaceId as string, integrationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceIntegrationKeys.list(workspaceId) });
+    },
+  });
+  const executeIntegrationMutation = useMutation({
+    mutationFn: (input: { integrationId: string; capability: string }) =>
+      executeWorkspaceIntegrationAction(
+        workspaceId as string,
+        input.integrationId,
+        input.capability,
+        parseJsonInput(integrationActionInput),
+      ),
+    onSuccess: (result) => {
+      setIntegrationActionResult(JSON.stringify(result.summary, null, 2));
+      void queryClient.invalidateQueries({ queryKey: workspaceIntegrationKeys.list(workspaceId) });
     },
   });
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -755,6 +918,441 @@ export function WorkspaceSettingsPage() {
       </section>
       <section className="grid gap-4 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4">
         <header>
+          <h2 className="text-lg font-semibold">{t(locale, 'inboundWebhooks.title')}</h2>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {t(locale, 'inboundWebhooks.description')}
+          </p>
+        </header>
+        <form
+          className="grid gap-3 rounded-md border border-[hsl(var(--border))] p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canCreateInboundWebhooks) createInboundWebhookMutation.mutate();
+          }}
+        >
+          <label className="grid gap-2 text-sm font-medium">
+            {t(locale, 'inboundWebhooks.name')}
+            <input
+              className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+              disabled={!canCreateInboundWebhooks}
+              maxLength={100}
+              value={inboundWebhookName}
+              onChange={(event) => setInboundWebhookName(event.target.value)}
+            />
+          </label>
+          <div className="grid gap-1 rounded-md border border-[hsl(var(--border))] p-3 text-xs text-[hsl(var(--muted-foreground))]">
+            <span className="font-medium text-[hsl(var(--foreground))]">
+              {t(locale, 'inboundWebhooks.genericHmac')}
+            </span>
+            <span>{t(locale, 'inboundWebhooks.headerEventId')}</span>
+            <span>{t(locale, 'inboundWebhooks.headerTimestamp')}</span>
+            <span>{t(locale, 'inboundWebhooks.headerSignature')}</span>
+            <code className="break-all rounded-md bg-[hsl(var(--muted))] p-2">
+              v1=HMAC_SHA256(secret, timestamp + &quot;.&quot; + rawBody)
+            </code>
+          </div>
+          {createInboundWebhookMutation.isError ? (
+            <p className="text-sm text-[hsl(var(--destructive))]">
+              {t(locale, 'inboundWebhooks.createFailed')}
+            </p>
+          ) : null}
+          <div className="flex justify-end">
+            <Button
+              disabled={
+                createInboundWebhookMutation.isPending ||
+                !inboundWebhookName.trim() ||
+                !canCreateInboundWebhooks
+              }
+              type="submit"
+            >
+              {t(locale, 'inboundWebhooks.create')}
+            </Button>
+          </div>
+        </form>
+        {revealedInboundWebhookSecret ? (
+          <div className="grid gap-3 rounded-md border border-[hsl(var(--primary))] p-3">
+            <p className="text-sm font-medium">{t(locale, 'inboundWebhooks.shownOnce')}</p>
+            <label className="grid gap-2 text-sm font-medium">
+              {t(locale, 'inboundWebhooks.endpointUrl')}
+              <code className="break-all rounded-md bg-[hsl(var(--muted))] p-3 text-xs">
+                {revealedInboundWebhookSecret.endpointUrl}
+              </code>
+            </label>
+            <label className="grid gap-2 text-sm font-medium">
+              {t(locale, 'inboundWebhooks.signingSecret')}
+              <code className="break-all rounded-md bg-[hsl(var(--muted))] p-3 text-xs">
+                {revealedInboundWebhookSecret.plaintextSecret}
+              </code>
+            </label>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  void navigator.clipboard.writeText(revealedInboundWebhookSecret.endpointUrl);
+                }}
+              >
+                {t(locale, 'inboundWebhooks.copyEndpoint')}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  void navigator.clipboard.writeText(revealedInboundWebhookSecret.plaintextSecret);
+                }}
+              >
+                {t(locale, 'inboundWebhooks.copySecret')}
+              </Button>
+              <Button type="button" onClick={() => setRevealedInboundWebhookSecret(null)}>
+                {t(locale, 'inboundWebhooks.savedSecret')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {!permissionsReady ? (
+          <div className="h-16 animate-pulse rounded-md bg-[hsl(var(--muted))]" />
+        ) : !canViewInboundWebhooks ? (
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {t(locale, 'common.permissionDenied')}
+          </p>
+        ) : inboundWebhooksQuery.isLoading ? (
+          <div className="h-16 animate-pulse rounded-md bg-[hsl(var(--muted))]" />
+        ) : inboundWebhooksQuery.isError ? (
+          <p className="text-sm text-[hsl(var(--destructive))]">
+            {t(locale, 'inboundWebhooks.loadFailed')}
+          </p>
+        ) : (
+          <div className="grid gap-2">
+            {(inboundWebhooksQuery.data?.items ?? []).map((source) => (
+              <div
+                key={source.id}
+                className="grid gap-3 rounded-md border border-[hsl(var(--border))] p-3"
+              >
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
+                  <div className="grid gap-1">
+                    <span className="text-sm font-medium">{source.name}</span>
+                    <span className="break-all text-xs text-[hsl(var(--muted-foreground))]">
+                      {source.endpointUrl}
+                    </span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {t(locale, 'inboundWebhooks.sourceType')}: {source.type}
+                    </span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {t(locale, 'inboundWebhooks.lastReceived')}:{' '}
+                      {formatDate(source.lastReceivedAt)}
+                    </span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {t(locale, 'inboundWebhooks.lastVerified')}:{' '}
+                      {formatDate(source.lastVerifiedAt)}
+                    </span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {t(locale, 'inboundWebhooks.lastFailure')}: {formatDate(source.lastFailureAt)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-md border border-[hsl(var(--border))] px-2 py-1 text-xs">
+                      {t(locale, `inboundWebhooks.status${source.status}`)}
+                    </span>
+                    <Button
+                      disabled={rotateInboundWebhookMutation.isPending || !canManageInboundWebhooks}
+                      onClick={() => rotateInboundWebhookMutation.mutate(source.id)}
+                      type="button"
+                      variant="outline"
+                    >
+                      {t(locale, 'inboundWebhooks.rotateSecret')}
+                    </Button>
+                    <Button
+                      disabled={
+                        disableInboundWebhookMutation.isPending ||
+                        source.status !== 'ACTIVE' ||
+                        !canManageInboundWebhooks
+                      }
+                      onClick={() => disableInboundWebhookMutation.mutate(source.id)}
+                      type="button"
+                      variant="outline"
+                    >
+                      {t(locale, 'inboundWebhooks.disable')}
+                    </Button>
+                    <Button
+                      onClick={() =>
+                        setSelectedInboundWebhookId((current) =>
+                          current === source.id ? null : source.id,
+                        )
+                      }
+                      type="button"
+                      variant="outline"
+                    >
+                      {t(locale, 'inboundWebhooks.eventHistory')}
+                    </Button>
+                  </div>
+                </div>
+                {selectedInboundWebhookId === source.id ? (
+                  inboundWebhookEventsQuery.isLoading ? (
+                    <div className="h-12 animate-pulse rounded-md bg-[hsl(var(--muted))]" />
+                  ) : inboundWebhookEventsQuery.isError ? (
+                    <p className="text-sm text-[hsl(var(--destructive))]">
+                      {t(locale, 'inboundWebhooks.eventsLoadFailed')}
+                    </p>
+                  ) : (
+                    <div className="grid gap-2">
+                      {(inboundWebhookEventsQuery.data?.items ?? []).map((event) => (
+                        <div
+                          key={event.id}
+                          className="grid gap-1 rounded-md border border-[hsl(var(--border))] p-2 text-xs"
+                        >
+                          <span className="font-medium">
+                            {event.eventType ?? t(locale, 'inboundWebhooks.unknownType')}
+                          </span>
+                          <span className="break-all text-[hsl(var(--muted-foreground))]">
+                            {t(locale, 'inboundWebhooks.eventId')}: {event.externalEventId}
+                          </span>
+                          <span className="text-[hsl(var(--muted-foreground))]">
+                            {event.status} Â· {t(locale, 'inboundWebhooks.received')}{' '}
+                            {formatDate(event.receivedAt)} Â·{' '}
+                            {event.safeErrorCode ?? t(locale, 'inboundWebhooks.noError')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      <section className="grid gap-4 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4">
+        <header>
+          <h2 className="text-lg font-semibold">{t(locale, 'integrations.title')}</h2>
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {t(locale, 'integrations.description')}
+          </p>
+        </header>
+        <form
+          className="grid gap-3 rounded-md border border-[hsl(var(--border))] p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canCreateIntegrations) createIntegrationMutation.mutate();
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-2 text-sm font-medium">
+              {t(locale, 'integrations.provider')}
+              <select
+                className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                disabled={!canCreateIntegrations}
+                value={integrationProvider}
+                onChange={(event) =>
+                  setIntegrationProvider(event.target.value as IntegrationProvider)
+                }
+              >
+                {integrationProviders.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {providerLabel(provider)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm font-medium">
+              {t(locale, 'integrations.authType')}
+              <select
+                className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                disabled={!canCreateIntegrations}
+                value={integrationAuthType}
+                onChange={(event) =>
+                  setIntegrationAuthType(event.target.value as IntegrationAuthType)
+                }
+              >
+                <option value="BEARER_TOKEN">{t(locale, 'integrations.bearerToken')}</option>
+                <option value="API_KEY">{t(locale, 'integrations.apiKey')}</option>
+              </select>
+            </label>
+          </div>
+          <label className="grid gap-2 text-sm font-medium">
+            {t(locale, 'integrations.name')}
+            <input
+              className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+              disabled={!canCreateIntegrations}
+              maxLength={120}
+              value={integrationName}
+              onChange={(event) => setIntegrationName(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-2 text-sm font-medium">
+            {t(locale, 'integrations.credential')}
+            <input
+              className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+              disabled={!canCreateIntegrations}
+              type="password"
+              value={integrationToken}
+              onChange={(event) => setIntegrationToken(event.target.value)}
+            />
+          </label>
+          {integrationProvider === 'GENERIC_REST' ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-medium">
+                {t(locale, 'integrations.baseUrl')}
+                <input
+                  className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                  disabled={!canCreateIntegrations}
+                  inputMode="url"
+                  value={integrationBaseUrl}
+                  onChange={(event) => setIntegrationBaseUrl(event.target.value)}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                {t(locale, 'integrations.testPath')}
+                <input
+                  className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                  disabled={!canCreateIntegrations}
+                  value={integrationTestPath}
+                  onChange={(event) => setIntegrationTestPath(event.target.value)}
+                />
+              </label>
+            </div>
+          ) : null}
+          {integrationProvider === 'GOHIGHLEVEL' ? (
+            <label className="grid gap-2 text-sm font-medium">
+              {t(locale, 'integrations.locationId')}
+              <input
+                className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                disabled={!canCreateIntegrations}
+                value={integrationLocationId}
+                onChange={(event) => setIntegrationLocationId(event.target.value)}
+              />
+            </label>
+          ) : null}
+          {createIntegrationMutation.isError ? (
+            <p className="text-sm text-[hsl(var(--destructive))]">
+              {t(locale, 'integrations.createFailed')}
+            </p>
+          ) : null}
+          <div className="flex justify-end">
+            <Button
+              disabled={
+                createIntegrationMutation.isPending ||
+                !integrationName.trim() ||
+                !integrationToken.trim() ||
+                !canCreateIntegrations
+              }
+              type="submit"
+            >
+              {t(locale, 'integrations.create')}
+            </Button>
+          </div>
+        </form>
+        {!permissionsReady ? (
+          <div className="h-16 animate-pulse rounded-md bg-[hsl(var(--muted))]" />
+        ) : !canViewIntegrations ? (
+          <p className="text-sm text-[hsl(var(--muted-foreground))]">
+            {t(locale, 'common.permissionDenied')}
+          </p>
+        ) : integrationProvidersQuery.isLoading || integrationsQuery.isLoading ? (
+          <div className="h-16 animate-pulse rounded-md bg-[hsl(var(--muted))]" />
+        ) : integrationProvidersQuery.isError || integrationsQuery.isError ? (
+          <p className="text-sm text-[hsl(var(--destructive))]">
+            {t(locale, 'integrations.loadFailed')}
+          </p>
+        ) : (
+          <div className="grid gap-2">
+            {(integrationsQuery.data ?? []).map((integration) => (
+              <div
+                key={integration.id}
+                className="grid gap-3 rounded-md border border-[hsl(var(--border))] p-3"
+              >
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
+                  <div className="grid gap-1">
+                    <span className="text-sm font-medium">{integration.name}</span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {providerLabel(integration.provider)} · {integration.authType}
+                    </span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {t(locale, 'integrations.lastSuccess')}:{' '}
+                      {formatDate(integration.lastSuccessAt)}
+                    </span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      {integration.safeErrorCode ?? t(locale, 'integrations.noError')}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-md border border-[hsl(var(--border))] px-2 py-1 text-xs">
+                      {integration.status}
+                    </span>
+                    <Button
+                      disabled={testIntegrationMutation.isPending || !canManageIntegrations}
+                      onClick={() => testIntegrationMutation.mutate(integration.id)}
+                      type="button"
+                      variant="outline"
+                    >
+                      {t(locale, 'integrations.test')}
+                    </Button>
+                    <Button
+                      disabled={disconnectIntegrationMutation.isPending || !canManageIntegrations}
+                      onClick={() => disconnectIntegrationMutation.mutate(integration.id)}
+                      type="button"
+                      variant="outline"
+                    >
+                      {t(locale, 'integrations.disconnect')}
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-2 rounded-md border border-[hsl(var(--border))] p-2">
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <select
+                      className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                      disabled={!canExecuteIntegrations}
+                      value={integrationAction}
+                      onChange={(event) => setIntegrationAction(event.target.value)}
+                    >
+                      <option value="">{t(locale, 'integrations.selectCapability')}</option>
+                      {integration.capabilities.map((capability) => (
+                        <option key={capability} value={capability}>
+                          {capability}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      disabled={
+                        !canExecuteIntegrations ||
+                        !integrationAction ||
+                        executeIntegrationMutation.isPending
+                      }
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        executeIntegrationMutation.mutate({
+                          integrationId: integration.id,
+                          capability: integrationAction,
+                        })
+                      }
+                    >
+                      {t(locale, 'integrations.run')}
+                    </Button>
+                  </div>
+                  <textarea
+                    className="min-h-24 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] p-3 font-mono text-xs"
+                    disabled={!canExecuteIntegrations}
+                    value={integrationActionInput}
+                    onChange={(event) => setIntegrationActionInput(event.target.value)}
+                  />
+                  {executeIntegrationMutation.isError ? (
+                    <p className="text-sm text-[hsl(var(--destructive))]">
+                      {t(locale, 'integrations.actionFailed')}
+                    </p>
+                  ) : null}
+                  {integrationActionResult ? (
+                    <pre className="overflow-auto rounded-md bg-[hsl(var(--muted))] p-3 text-xs">
+                      {integrationActionResult}
+                    </pre>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      <section className="grid gap-4 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-4">
+        <header>
           <h2 className="text-lg font-semibold">{t(locale, 'cloudDrives.title')}</h2>
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
             {t(locale, 'cloudDrives.description')}
@@ -919,4 +1517,29 @@ function formatDate(value: string | null) {
 
 function hasPermission(permissions: Set<string>, permission: string) {
   return permissions.has('*') || permissions.has(permission);
+}
+
+function providerLabel(provider: IntegrationProvider) {
+  if (provider === 'GOHIGHLEVEL') return 'HighLevel';
+  if (provider === 'SLACK') return 'Slack';
+  if (provider === 'WEBEX') return 'Webex';
+  return 'Generic REST';
+}
+
+function buildIntegrationConfiguration(
+  provider: IntegrationProvider,
+  baseUrl: string,
+  testPath: string,
+  locationId: string,
+) {
+  if (provider === 'GENERIC_REST') return { baseUrl, testPath };
+  if (provider === 'GOHIGHLEVEL') return { locationId };
+  return {};
+}
+
+function parseJsonInput(value: string) {
+  const parsed = JSON.parse(value || '{}');
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
 }

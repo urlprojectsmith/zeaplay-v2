@@ -15,3 +15,5 @@ export const STORAGE_RETENTION_SCAN_JOB_TYPE = 'storage-retention.scan';
 export const WEBHOOK_DELIVERY_QUEUE = 'webhook-delivery';
 export const WEBHOOK_DELIVERY_DISPATCH_JOB_TYPE = 'webhook.delivery.dispatch';
 export const WEBHOOK_DELIVERY_RECOVERY_JOB_TYPE = 'webhook.delivery.recovery';
+export const INBOUND_WEBHOOK_MAINTENANCE_QUEUE = 'inbound-webhook-maintenance';
+export const INBOUND_WEBHOOK_CLEANUP_JOB_TYPE = 'inbound-webhook.cleanup';

@@ -23,6 +23,11 @@ const rotateWorkspaceWebhookSecret = vi.fn();
 const sendWorkspaceWebhookTest = vi.fn();
 const listWorkspaceWebhookDeliveries = vi.fn();
 const retryWorkspaceWebhookDelivery = vi.fn();
+const listWorkspaceInboundWebhooks = vi.fn();
+const createWorkspaceInboundWebhook = vi.fn();
+const rotateWorkspaceInboundWebhookSecret = vi.fn();
+const disableWorkspaceInboundWebhook = vi.fn();
+const listWorkspaceInboundWebhookEvents = vi.fn();
 const clipboardWriteText = vi.fn();
 
 vi.mock('../services/workspace-management', () => ({
@@ -92,6 +97,22 @@ vi.mock('../services/workspace-webhooks', async () => {
   };
 });
 
+vi.mock('../services/workspace-inbound-webhooks', async () => {
+  const actual = await vi.importActual<typeof import('../services/workspace-inbound-webhooks')>(
+    '../services/workspace-inbound-webhooks',
+  );
+  return {
+    ...actual,
+    listWorkspaceInboundWebhooks: (...args: unknown[]) => listWorkspaceInboundWebhooks(...args),
+    createWorkspaceInboundWebhook: (...args: unknown[]) => createWorkspaceInboundWebhook(...args),
+    rotateWorkspaceInboundWebhookSecret: (...args: unknown[]) =>
+      rotateWorkspaceInboundWebhookSecret(...args),
+    disableWorkspaceInboundWebhook: (...args: unknown[]) => disableWorkspaceInboundWebhook(...args),
+    listWorkspaceInboundWebhookEvents: (...args: unknown[]) =>
+      listWorkspaceInboundWebhookEvents(...args),
+  };
+});
+
 Object.assign(navigator, {
   clipboard: {
     writeText: clipboardWriteText,
@@ -155,6 +176,9 @@ describe('Phase 14.1 API key settings', () => {
           { id: 'permission-webhooks-create', key: 'webhooks.create' },
           { id: 'permission-webhooks-manage', key: 'webhooks.manage' },
           { id: 'permission-webhooks-retry', key: 'webhooks.retry' },
+          { id: 'permission-inbound-webhooks-view', key: 'inbound_webhooks.view' },
+          { id: 'permission-inbound-webhooks-create', key: 'inbound_webhooks.create' },
+          { id: 'permission-inbound-webhooks-manage', key: 'inbound_webhooks.manage' },
         ],
         createdAt: '2026-09-24T00:00:00.000Z',
         updatedAt: '2026-09-24T00:00:00.000Z',
@@ -251,6 +275,67 @@ describe('Phase 14.1 API key settings', () => {
       total: 1,
     });
     retryWorkspaceWebhookDelivery.mockResolvedValue({ id: 'delivery-1', status: 'PENDING' });
+    listWorkspaceInboundWebhooks.mockResolvedValue({
+      items: [
+        {
+          id: 'inbound-1',
+          workspaceId: 'workspace-1',
+          name: 'CRM inbound',
+          publicIdentifier: 'iw_existing',
+          endpointUrl: 'http://localhost:4000/api/v1/inbound/iw_existing',
+          type: 'GENERIC_HMAC_V1',
+          status: 'ACTIVE',
+          lastReceivedAt: null,
+          lastVerifiedAt: null,
+          lastFailureAt: null,
+          createdAt: '2026-09-24T00:00:00.000Z',
+          updatedAt: '2026-09-24T00:00:00.000Z',
+        },
+      ],
+      total: 1,
+    });
+    createWorkspaceInboundWebhook.mockResolvedValue({
+      id: 'inbound-2',
+      workspaceId: 'workspace-1',
+      name: 'Orders inbound',
+      publicIdentifier: 'iw_new',
+      endpointUrl: 'http://localhost:4000/api/v1/inbound/iw_new',
+      type: 'GENERIC_HMAC_V1',
+      status: 'ACTIVE',
+      lastReceivedAt: null,
+      lastVerifiedAt: null,
+      lastFailureAt: null,
+      createdAt: '2026-09-24T00:00:00.000Z',
+      updatedAt: '2026-09-24T00:00:00.000Z',
+      plaintextSecret: 'ziwhsec_visible_once',
+    });
+    rotateWorkspaceInboundWebhookSecret.mockResolvedValue({
+      id: 'inbound-1',
+      endpointUrl: 'http://localhost:4000/api/v1/inbound/iw_existing',
+      plaintextSecret: 'ziwhsec_rotated_once',
+    });
+    disableWorkspaceInboundWebhook.mockResolvedValue({ id: 'inbound-1', status: 'DISABLED' });
+    listWorkspaceInboundWebhookEvents.mockResolvedValue({
+      items: [
+        {
+          id: 'inbound-event-1',
+          workspaceId: 'workspace-1',
+          sourceId: 'inbound-1',
+          externalEventId: 'crm-event-1',
+          eventType: 'crm.contact.created',
+          eventVersion: '1',
+          status: 'NORMALIZED',
+          normalizedType: 'crm.contact.created',
+          receivedAt: '2026-09-24T00:00:00.000Z',
+          verifiedAt: '2026-09-24T00:00:00.000Z',
+          normalizedAt: '2026-09-24T00:00:00.000Z',
+          safeErrorCode: null,
+          correlationId: null,
+          createdAt: '2026-09-24T00:00:00.000Z',
+        },
+      ],
+      total: 1,
+    });
   });
 
   it('creates an API key, shows the plaintext once, copies explicitly, and can revoke', async () => {
@@ -308,6 +393,44 @@ describe('Phase 14.1 API key settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'View Deliveries' }));
     expect(await screen.findByText('HTTP_RETRYABLE_STATUS')).toBeInTheDocument();
+  });
+
+  it('creates an inbound webhook, clears the one-time secret, and opens event history', async () => {
+    renderSettings();
+
+    expect(await screen.findByRole('heading', { name: 'Inbound Webhooks' })).toBeInTheDocument();
+    expect(await screen.findByText('CRM inbound')).toBeInTheDocument();
+    expect(screen.getByText('Header: X-ZeaPlay-Inbound-Signature')).toBeInTheDocument();
+
+    fireEvent.change(screen.getAllByLabelText('Name', { selector: 'input' })[2]!, {
+      target: { value: 'Orders inbound' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Inbound Webhook' }));
+
+    await screen.findByText('This secret will only be shown once.');
+    expect(screen.getByText('ziwhsec_visible_once')).toBeInTheDocument();
+    expect(createWorkspaceInboundWebhook).toHaveBeenCalledWith('workspace-1', {
+      name: 'Orders inbound',
+      type: 'GENERIC_HMAC_V1',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Endpoint' }));
+    expect(clipboardWriteText).toHaveBeenCalledWith('http://localhost:4000/api/v1/inbound/iw_new');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Secret' }));
+    expect(clipboardWriteText).toHaveBeenCalledWith('ziwhsec_visible_once');
+    fireEvent.click(screen.getByRole('button', { name: 'I have saved this secret' }));
+    await waitFor(() => expect(screen.queryByText('ziwhsec_visible_once')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Event History' })[0]!);
+    expect(await screen.findByText('crm.contact.created')).toBeInTheDocument();
+    expect(screen.getByText(/crm-event-1/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Rotate Secret' })[1]!);
+    await screen.findByText('ziwhsec_rotated_once');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Disable' })[1]!);
+    await waitFor(() =>
+      expect(disableWorkspaceInboundWebhook).toHaveBeenCalledWith('workspace-1', 'inbound-1'),
+    );
   });
 });
 

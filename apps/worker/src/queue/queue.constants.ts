@@ -11,6 +11,8 @@ export const STORAGE_RETENTION_SCAN_JOB_TYPE = 'storage-retention.scan';
 export const WEBHOOK_DELIVERY_QUEUE = 'webhook-delivery';
 export const WEBHOOK_DELIVERY_DISPATCH_JOB_TYPE = 'webhook.delivery.dispatch';
 export const WEBHOOK_DELIVERY_RECOVERY_JOB_TYPE = 'webhook.delivery.recovery';
+export const INBOUND_WEBHOOK_MAINTENANCE_QUEUE = 'inbound-webhook-maintenance';
+export const INBOUND_WEBHOOK_CLEANUP_JOB_TYPE = 'inbound-webhook.cleanup';
 
 export const FOUNDATION_QUEUES = [
   'email',
@@ -28,6 +30,7 @@ export const FOUNDATION_QUEUES = [
   AUTOMATION_EXECUTION_QUEUE,
   STORAGE_RETENTION_QUEUE,
   WEBHOOK_DELIVERY_QUEUE,
+  INBOUND_WEBHOOK_MAINTENANCE_QUEUE,
 ] as const;
 
 export type FoundationQueueName = (typeof FOUNDATION_QUEUES)[number];

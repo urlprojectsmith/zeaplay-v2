@@ -59,6 +59,47 @@ const environmentSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  INBOUND_WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().min(1024).max(1_048_576).default(262_144),
+  INBOUND_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
+    .max(3600)
+    .default(300),
+  INBOUND_WEBHOOK_SOURCE_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10_000)
+    .default(120),
+  INBOUND_WEBHOOK_WORKSPACE_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(50_000)
+    .default(600),
+  INBOUND_WEBHOOK_EVENT_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  INTEGRATION_CONNECTION_LIMIT: z.coerce.number().int().positive().max(500).default(50),
+  INTEGRATION_CONNECTION_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10_000)
+    .default(120),
+  INTEGRATION_WORKSPACE_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(50_000)
+    .default(600),
+  INTEGRATION_ACTION_HISTORY_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(60),
+  INTEGRATION_PROVIDER_RESPONSE_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(5_242_880)
+    .default(1_048_576),
+  INTEGRATION_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(10000),
   MINIO_ENDPOINT: z.string().min(1),
   MINIO_PORT: z.coerce.number().int().positive().default(9000),
   MINIO_USE_SSL: z
