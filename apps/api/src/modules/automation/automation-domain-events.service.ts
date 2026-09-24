@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import {
   AutomationDomainEventEntityType,
   AutomationTriggerMatchStatus,
@@ -14,6 +20,7 @@ import {
   AUTOMATION_DOMAIN_EVENT_SCHEMA_VERSION,
 } from './automation.constants';
 import { AutomationExecutionService } from './automation-execution.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import {
   AutomationDomainEventQueryDto,
   AutomationTriggerMatchQueryDto,
@@ -43,9 +50,12 @@ interface TriggerNode {
 
 @Injectable()
 export class AutomationDomainEventsService {
+  private readonly logger = new Logger(AutomationDomainEventsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly executions?: AutomationExecutionService,
+    @Optional() private readonly webhooks?: WebhooksService,
   ) {}
 
   async recordDomainEvent(input: RecordAutomationDomainEventInput) {
@@ -147,6 +157,16 @@ export class AutomationDomainEventsService {
     });
 
     if (matches.length > 0) await this.createRuntimeMatches(matches);
+    try {
+      await this.webhooks?.captureAutomationDomainEvent(event.id);
+    } catch (error) {
+      this.logger.warn({
+        message: 'Outbound webhook capture failed after committed domain event',
+        domainEventId: event.id,
+        workspaceId: event.workspaceId,
+        error: error instanceof Error ? error.name : 'UnknownError',
+      });
+    }
     await this.executions?.dispatchPendingExecutions();
     return { domainEventId: event.id, matched: matches.length };
   }

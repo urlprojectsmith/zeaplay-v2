@@ -17,6 +17,7 @@ export interface StorageUploadOptions {
 export interface StorageAdapter {
   upload(key: string, body: Buffer | Readable, options?: StorageUploadOptions): Promise<void>;
   delete(key: string): Promise<void>;
+  deleteObject(key: string): Promise<void>;
   createPresignedUploadUrl(key: string, expiresInSeconds?: number): Promise<string>;
   createPresignedDownloadUrl(key: string, expiresInSeconds?: number): Promise<string>;
   getMetadata(key: string): Promise<StorageObjectMetadata>;

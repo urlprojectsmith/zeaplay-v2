@@ -11,5 +11,6 @@ import { TasksService } from './tasks.service';
   imports: [GamificationModule, AutomationModule, NotificationsModule],
   controllers: [TasksController, MeTimeTrackingController],
   providers: [TasksService, TaskRecurrenceSchedulerService],
+  exports: [TasksService],
 })
 export class TasksModule {}

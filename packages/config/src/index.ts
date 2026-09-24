@@ -28,12 +28,37 @@ const environmentSchema = z.object({
   LOGIN_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
   LOGIN_RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(52_428_800),
+  STORAGE_MAX_FILE_BYTES: z.coerce.number().int().positive().optional(),
   ALLOWED_MIME_TYPES: z
     .string()
     .default('image/png,image/jpeg,image/webp,application/pdf,text/plain'),
   UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().positive().max(900).default(300),
   DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().positive().max(900).default(300),
   DEFAULT_STORAGE_LIMIT_BYTES: z.coerce.number().int().positive().default(1_073_741_824),
+  STORAGE_DEFAULT_WORKSPACE_QUOTA_BYTES: z.coerce.number().int().positive().optional(),
+  STORAGE_DELETE_GRACE_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  GOOGLE_DRIVE_CLIENT_ID: z.string().optional(),
+  GOOGLE_DRIVE_CLIENT_SECRET: z.string().optional(),
+  ONEDRIVE_CLIENT_ID: z.string().optional(),
+  ONEDRIVE_CLIENT_SECRET: z.string().optional(),
+  ONEDRIVE_TENANT: z.string().optional(),
+  DROPBOX_CLIENT_ID: z.string().optional(),
+  DROPBOX_CLIENT_SECRET: z.string().optional(),
+  PUBLIC_API_KEY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().max(10_000).default(120),
+  PUBLIC_API_WORKSPACE_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(50_000)
+    .default(600),
+  PUBLIC_API_IDEMPOTENCY_TTL_HOURS: z.coerce.number().int().positive().max(168).default(24),
+  WEBHOOK_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(10000),
+  WEBHOOK_DELIVERY_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  WEBHOOK_ALLOW_LOCAL_HTTP: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   MINIO_ENDPOINT: z.string().min(1),
   MINIO_PORT: z.coerce.number().int().positive().default(9000),
   MINIO_USE_SSL: z
@@ -74,7 +99,13 @@ const unsafeProductionValues = new Set(['replace-me', 'minioadmin', 'zea_passwor
 export type Environment = z.infer<typeof environmentSchema>;
 
 export function validateEnvironment(source: NodeJS.ProcessEnv): Environment {
-  const env = environmentSchema.parse(source);
+  const parsed = environmentSchema.parse(source);
+  const env = {
+    ...parsed,
+    MAX_UPLOAD_BYTES: parsed.STORAGE_MAX_FILE_BYTES ?? parsed.MAX_UPLOAD_BYTES,
+    DEFAULT_STORAGE_LIMIT_BYTES:
+      parsed.STORAGE_DEFAULT_WORKSPACE_QUOTA_BYTES ?? parsed.DEFAULT_STORAGE_LIMIT_BYTES,
+  };
   assertEmailProviderConfig(env);
   if (env.APP_ENV === 'production' || env.NODE_ENV === 'production') {
     assertProductionSafe(env);

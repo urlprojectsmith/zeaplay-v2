@@ -12,6 +12,6 @@ import { TicketsService } from './tickets.service';
   imports: [AuditModule, GamificationModule, AutomationModule, NotificationsModule],
   controllers: [TicketsController],
   providers: [TicketsService, TicketSlaService, TicketSlaSchedulerService],
-  exports: [TicketSlaService],
+  exports: [TicketsService, TicketSlaService],
 })
 export class TicketsModule {}

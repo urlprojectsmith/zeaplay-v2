@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DeveloperDiagnosticsGuard } from '../../common/authorization/developer-diagnostics.guard';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import {
   AgencyGlobalLeaderboardController,
   DeveloperGamificationController,
@@ -11,7 +12,7 @@ import {
 import { GamificationService } from './gamification.service';
 
 @Module({
-  imports: [AuditModule, AuthModule],
+  imports: [AuditModule, AuthModule, NotificationsModule],
   controllers: [
     GamificationController,
     AgencyGlobalLeaderboardController,

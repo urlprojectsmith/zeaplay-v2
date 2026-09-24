@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 11 - Automation & Workflow Engine COMPLETE / PASS
-Next: Phase 12 — Notifications, Realtime & Shared Calendar
+Current: Phase 14.2 — OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY Implementation — PASS
+Next: Phase 14.2 Focused Refinement + Final Verification
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -5646,3 +5646,1216 @@ Phase 11.9 FINAL AUTOMATION INTEGRATION + SECURITY / PERFORMANCE / REGRESSION AU
 ### Phase 11 - Automation & Workflow Engine COMPLETE / PASS
 
 Phase 11 Automation & Workflow Engine is COMPLETE / PASS. Next: Phase 12 — Notifications, Realtime & Shared Calendar. Do not start Phase 12 automatically.
+
+### Phase 12.1 - Notification Core + Preferences + In-App Notification Center COMPLETE / PASS
+
+Implemented:
+
+- Added durable Workspace-scoped Notification records addressed to WorkspaceMembership recipients.
+- Added per-WorkspaceMembership NotificationPreference records with in-app enablement and mutedUntil.
+- Added notification categories: TASK, PROJECT, TICKET, AUTOMATION, GAMIFICATION, SYSTEM, and reserved CALENDAR.
+- Added typed notification events for Task, Project, Ticket, Automation, Gamification, and System foundations.
+- Added internal NotificationsService for creation, bulk creation, listing, unread count, read/unread, mark-all-read, and preferences.
+- Added workspace notification APIs for list, unread-count, read/unread, read-all, and current-member preferences.
+- Added Notification Center in the Workspace header with unread badge, drawer, filters, mark read/unread, mark all read, safe entity navigation, empty/error/loading states, and responsive dialog behavior.
+- Added Notification Preferences in Workspace Settings with in-app category toggles only.
+- Wired initial Task assignment and Ticket assignment notifications for newly assigned members, skipping actor self-notifications.
+- Added migration `0062_phase12_1_notification_core`.
+
+Invariants:
+
+- Notifications are WorkspaceMembership scoped.
+- PostgreSQL is Notification authority.
+- Notifications are durable, bounded snapshot records.
+- Notification creation is internal/system controlled.
+- Users can read/update only their own notification state.
+- Unread count is server aggregated.
+- List APIs are bounded and paginated.
+- Category preferences are per WorkspaceMembership.
+- In-App preferences and mute are enforced server-side.
+- Only explicitly critical SYSTEM notifications with allowlisted types bypass mute.
+- Notification dedupe is supported with stable keys.
+- No secrets are stored in notification metadata.
+- Notification Center is available from Workspace UI.
+- Workspace switch cannot leak notification data.
+- Task assignment notifications are wired safely.
+- Ticket assignment notifications are wired safely.
+- Automation and Gamification hooks remain intentionally deferred.
+- No realtime/WebSocket/SSE exists yet.
+- No email routing exists yet.
+- No Calendar implementation exists yet.
+- No Phase 12.2+ scope started.
+- Phase 10 and 11 remain green.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- Focused Phase 12.1 notification tests: pass. Backend NotificationsService 9/9; web Phase 12.1 query-key test 1/1.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test`: pass. API 245/245, web 145/145, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase121_final_integration_20260924` using Turbo loose env mode. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase121_final_clean_20260924`, all 62 migrations applied through `0062_phase12_1_notification_core`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 62 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, `0057_phase11_5_conditions_branching_variables`, `0058_phase11_7_workflow_templates`, `0059_phase11_7_one_active_draft`, `0060_phase11_8_automation_monitoring_limits`, `0061_phase11_9_automation_audit_hardening`, and `0062_phase12_1_notification_core` remain pending intentionally; no shared-dev migration was applied.
+
+Focused refinement fixes:
+
+- Read/unread updates are idempotent and preserve an existing `readAt` timestamp when mark-read is retried.
+- Critical notification mute bypass is limited to explicitly critical SYSTEM notifications with allowlisted types.
+- Preference update payloads are bounded to one item per notification category.
+- Notification query keys include WorkspaceMembership context so Workspace switches cannot reuse a foreign member notification cache.
+- Recipient-owned notifications and preferences cascade when a WorkspaceMembership is deleted, preserving old integration cleanup paths without weakening Workspace scoping.
+
+Warnings:
+
+- Automation failure and Gamification award notifications remain foundations only; no safe recipient/hook was wired in this implementation.
+- No shared development database migration was applied.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log noise, and one moderate audit advisory while high threshold passes.
+
+Phase 12.1 Notification Core + Preferences + In-App Notification Center is COMPLETE / PASS. Next: Phase 12.2 - Realtime Engine + Live Dashboard Updates. Do not start Phase 12.2 automatically.
+
+### Phase 12.2 - Realtime Engine + Live Dashboard Updates COMPLETE / PASS
+
+Implemented:
+
+- Added authenticated WebSocket realtime gateway on the `/realtime` namespace.
+- Added WorkspaceMembership-authorized workspace subscription flow.
+- Added fixed Workspace and member room naming for tenant-safe fanout.
+- Added schema-versioned realtime event envelopes with UUID event ids.
+- Added optional Redis Socket.IO fanout using `REDIS_REALTIME_URL`.
+- Added private member-targeted notification realtime events.
+- Added lightweight Task, Project, Ticket, Automation, and Gamification realtime events.
+- Added shared frontend Socket.IO client and RealtimeProvider.
+- Added targeted React Query invalidation for realtime events.
+- Added reconnect recovery through re-authorization, workspace rejoin, and canonical query refetch.
+- Added bounded connected-socket auth recheck so expired tokens do not continue indefinitely.
+- Added realtime fanout health reporting as degraded when Redis adapter setup is unavailable.
+
+Invariants:
+
+- Realtime uses authenticated Socket.IO.
+- Access is authorized from server-side WorkspaceMembership state.
+- PostgreSQL remains business and data authority.
+- Redis realtime fanout is transport only.
+- Workspace and member rooms are server-authorized and prevent cross-tenant delivery.
+- Private Notification events are member-targeted.
+- Task, Project, Ticket, Automation, and Gamification events carry lightweight safe payloads.
+- Domain realtime events emit only after committed state changes.
+- Realtime publish failure does not corrupt committed business state.
+- Clients use one shared socket connection per authenticated browser session.
+- Frontend realtime uses targeted React Query invalidation, not a second state authority.
+- Workspace switch re-authorizes and prevents stale cross-Workspace updates.
+- Reconnect re-authorizes, rejoins the active Workspace, and refetches authoritative state through invalidation.
+- Duplicate realtime events are harmless through event-id dedupe and refetch-only handling.
+- REST remains functional when realtime is degraded.
+- Clients cannot mutate business data over sockets.
+- No presence, chat, or typing was implemented.
+- No email routing was implemented.
+- No Shared Calendar implementation was added.
+- No Phase 12.3+ scope was started.
+- Phase 10, Phase 11, and Phase 12.1 remain green.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 12.2 tests: pass. Backend RealtimeGateway, RealtimeService, and NotificationsService 19/19; web Phase 12.2 plus Phase 12.1 test run 147/147.
+- `pnpm test`: pass. API 255/255, web 147/147, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase122_final_verify_20260924` using Turbo loose env mode. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Prisma migrations remain 62; no Phase 12.2 schema migration was added.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase122_final_verify_20260924`, all 62 migrations applied through `0062_phase12_1_notification_core`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 62 migrations.
+- Shared development database migrate status was checked read-only: `0053_phase11_1_automation_core`, `0054_phase11_2_trigger_engine_domain_events`, `0055_phase11_4_automation_execution_runtime`, `0056_phase11_4_create_task_invocation_idempotency`, `0057_phase11_5_conditions_branching_variables`, `0058_phase11_7_workflow_templates`, `0059_phase11_7_one_active_draft`, `0060_phase11_8_automation_monitoring_limits`, `0061_phase11_9_automation_audit_hardening`, and `0062_phase12_1_notification_core` remain pending intentionally; no shared-dev migration was applied.
+
+Focused refinement fixes:
+
+- Subscribe, reconnect, and bounded interval auth checks re-verify access tokens against existing JWT issuer, audience, expiry, user status, and email rules.
+- Realtime Redis adapter status is surfaced through health as degraded/process-local when fanout is unavailable; Redis remains transport only.
+- Frontend provider avoids duplicate subscription paths while retaining one shared socket and cleanup for event listeners.
+- Notification actor membership FK now uses `ON DELETE SET NULL`, preserving historical notifications without blocking membership cleanup; recipient notifications still cascade with recipient membership ownership.
+- Health integration avoids realtime Redis network setup in `NODE_ENV=test`, keeping health tests deterministic.
+
+Warnings:
+
+- Existing sockets are not force-revoked immediately when membership/session state changes; bounded auth recheck, reconnect, token expiry, and future subscribe attempts re-authorize against current WorkspaceMembership state.
+- Redis adapter setup degrades to process-local sockets if Redis is unavailable; PostgreSQL and REST APIs remain authoritative.
+- Known acceptable warnings observed: LF-to-CRLF warnings, intentional sanitized realtime publish failure log in tests, existing web act warnings, worker log/open-handle noise, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, and one moderate audit advisory while high threshold passes.
+- An initial concurrent build/E2E verification attempt corrupted generated `.next` state; rerunning build and E2E sequentially after clearing only generated `.next` passed.
+
+Phase 12.2 Realtime Engine + Live Dashboard Updates is COMPLETE / PASS. Next: Phase 12.3 - Notification Routing + Email Delivery + Reminders. Do not start Phase 12.3 automatically.
+
+### Phase 12.3 - Notification Routing + Email Delivery + Reminders COMPLETE / PASS
+
+Implemented:
+
+- Added central `NotificationRouterService` for in-app and email notification routing.
+- Added durable `NotificationEmailDelivery` rows with bounded status lifecycle: PENDING, QUEUED, SENDING, SENT, FAILED, AMBIGUOUS, and SKIPPED.
+- Added durable `NotificationReminder` rows with lifecycle statuses: PENDING, FIRED, CANCELLED, and SKIPPED.
+- Added `notification-email` and `notification-reminder` BullMQ queues plus a reminder scan scheduler.
+- Added server-owned safe email templates for task, project, ticket, automation, and gamification notification types.
+- Activated independent email preference updates alongside existing in-app preference updates; push remains hidden.
+- Routed Task and Ticket assignment notifications through the central router.
+- Added lifecycle reminder scheduling for task due soon/overdue, project due soon, and ticket SLA warning reminders.
+- Routed automation failed/dead-lettered notifications to the active same-workspace workflow creator.
+- Routed gamification achievement and badge award notifications to the award recipient.
+- Updated workspace settings UI to show per-category In-App and Email toggles in English and Tamil.
+- Added migration `0063_phase12_3_notification_email_reminders`.
+- Added final hardening for reminder claim races, stale target revalidation, project owner reminder rescheduling, durable email idempotency, malformed template data handling, and permanent provider failure classification.
+
+Invariants:
+
+- PostgreSQL remains the durable authority for notifications, deliveries, and reminders.
+- Email jobs carry `deliveryId` only and use deterministic job ids.
+- Email sends use the existing Phase 10.7 mail abstraction; no new provider was introduced.
+- Stale `SENDING` email deliveries become `AMBIGUOUS` and are not blindly resent.
+- Invalid/missing recipients are marked `SKIPPED`.
+- Reminder worker scans only pending due `notification_reminders` rows in bounded batches and revalidates the referenced entity before routing.
+- Reminder claiming is atomic on `id`, `PENDING` status, and `scheduledFor <= now`, and selected reminders are revalidated against current task due, project due, or ticket SLA target time before routing.
+- Reminder lifecycle is scheduled from task, project, and ticket mutation paths rather than broad domain scans.
+- Task, project, and ticket mutations cancel or reschedule obsolete reminders when ownership, assignment, status, or target dates change.
+- Workspace and recipient membership ids are part of delivery/reminder foreign keys and dedupe keys.
+- Email templates are server-owned, escape text, and use fixed app-relative notification links only.
+- Email deliveries are durable and terminal statuses are not resent; stale sending deliveries become `AMBIGUOUS`.
+- Email template data is stored as sanitized Prisma JSON and malformed stored data fails permanently without sending.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 12.3 tests: pass. `notification-router`, `notification-email-delivery`, `notification-reminder`, and `notifications.service` specs 21/21.
+- `pnpm test`: pass on rerun. API 267/267, web 147/147, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase123_final_verify_20260924` using Turbo loose env mode. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase123_final_verify_20260924`, all 63 migrations applied through `0063_phase12_3_notification_email_reminders`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 63 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0063` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- First `pnpm test` attempt hit a transient web Phase 7.2 test timeout; the single timed-out test passed on rerun and the full `pnpm test` rerun passed.
+- First combined `pnpm test:integration` attempt used the intentionally unmigrated shared development database and failed on missing Phase 11 automation tables; isolated migrated integration then passed.
+- Worker tests still emit the existing open-handle warning/log noise.
+- Security search found only expected test dummy environment values, settings/timezone/calendar labels, existing safe controllers, and existing notification ambiguous-send guards; no public notification router/email/reminder send endpoint was found.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log/open-handle noise, and one moderate audit advisory while high threshold passes.
+
+Phase 12.3 Notification Routing + Email Delivery + Reminders is COMPLETE / PASS. Next: Phase 12.4 - Shared Calendar Engine + Calendar UI. Do not start Phase 12.4 automatically.
+
+### Phase 12.4 - Shared Calendar Engine + Calendar UI Implementation PASS
+
+Implemented:
+
+- Added migration `0064_phase12_4_shared_calendar` with workspace-scoped `calendar_events` and `calendar_event_participants`, visibility enums, participant roles, composite foreign keys, and bounded calendar query indexes.
+- Added Calendar permissions for view, create, edit-own, and manage-all, and seeded them into workspace system roles.
+- Added guarded workspace Calendar API endpoints for aggregate listing, custom event create, detail, update, and soft cancel.
+- Added `CalendarService` aggregation for Task, Project, Ticket, and Custom Event sources with source permissions and source-specific visibility rules.
+- Added custom event ownership, participant validation, visibility enforcement, audit records, and realtime cache invalidation.
+- Added web calendar data service, query keys, realtime invalidation, workspace navigation entry, and English/Tamil calendar labels.
+- Added `/workspace/calendar` with Month, Week, and Day views, URL-backed date/view state, server-backed filters, date detail panel, item detail drawer, and custom event create/edit/cancel UI.
+
+Invariants:
+
+- Task, Project, and Ticket calendar entries are read-only from Calendar; Calendar does not introduce drag/drop or source mutation.
+- Ticket deadlines use existing SLA state and do not recalculate SLA in Calendar.
+- Custom events are workspace-scoped and soft-cancelled rather than hard-deleted.
+- Private and participant-only event realtime payloads do not include title or description.
+- Workspace timezone is used for display and all-day handling avoids browser timezone authority.
+- Calendar queries are bounded to 93 days and filter arrays are size-limited.
+- No external Google/Outlook calendar sync, recurrence engine, offline/PWA scope, or Phase 12.5 work was started.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 12.4 tests: pass. API CalendarService plus RealtimeService 14/14; web Phase 12.4 plus Phase 12.2 run 149/149.
+- `pnpm test`: pass on rerun. API 276/276, web 149/149, worker 13/13.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase124_impl_verify_20260924`, all 64 migrations applied through `0064_phase12_4_shared_calendar`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 64 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0064` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- First `pnpm test` attempt hit the known transient web Phase 7.2 timeout; the single timed-out test passed on targeted rerun and the full `pnpm test` rerun passed.
+- Worker tests still emit the existing open-handle/log warning noise.
+- Security search found expected Calendar identifiers, schema references, scoped participant validation, and a pre-existing realtime status string named `offline`; no external calendar sync, recurrence, automation delay, hard event delete, or Phase 12.5 scope was found.
+
+Phase 12.4 Shared Calendar Engine + Calendar UI Implementation is PASS. Next: Phase 12.4 Focused Refinement + Final Verification. Do not mark Phase 12.4 COMPLETE yet. Do not start Phase 12.5.
+
+### Phase 12.4 - Shared Calendar Engine + Calendar UI COMPLETE / PASS
+
+Final refinement fixes:
+
+- Calendar update/cancel routes now require Calendar view at the route layer while the service enforces edit-own or manage-all, allowing manage-all-only roles without trusting client state.
+- Ticket member filtering now uses assigned membership semantics while preserving existing Ticket source visibility for requester/assignee access.
+- Custom event duplicate participant submissions are rejected before persistence; participant storage remains unique per event.
+- Idempotent no-op custom event updates return the current event without duplicate audit records or realtime invalidations.
+- All-day custom event form timestamps are generated from Workspace timezone local midnight instead of browser/UTC midnight.
+- Calendar day bucketing now includes multi-day range items on interior days and sorts all-day items before timed/deadline items.
+
+Final invariants:
+
+- Shared Calendar remains Workspace scoped.
+- Task, Project, and Ticket data remains authoritative and is not duplicated into custom Calendar records.
+- Source visibility rules are preserved.
+- Custom Calendar Events are Workspace records with soft cancellation.
+- Workspace, Participants-only, and Private visibility is enforced.
+- Participants must be active same-Workspace memberships.
+- Timestamps use UTC storage and Workspace timezone display.
+- All-day events remain date-stable.
+- Range and filter queries are bounded and server-side.
+- Month, Week, and Day views are integrated.
+- Task, Project, and Ticket items are read-only through Calendar.
+- Custom events are permission-editable.
+- Calendar realtime reuses Phase 12.2.
+- Private event details are never Workspace-broadcast.
+- Phase 12.3 reminders are not duplicated as Calendar events.
+- No Google/Outlook sync exists.
+- No recurrence/offline/Automation Delay exists.
+- No Phase 12.5 implementation was started.
+- Phase 10, Phase 11, and Phase 12.1 through Phase 12.3 remain green.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass after `pnpm format:write`.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 12.4 API tests: pass. CalendarService plus RealtimeService 15/15.
+- Focused Phase 12.4 web tests: pass. Phase 12.4 plus Phase 12.2 filtered web run 151/151.
+- `pnpm test`: pass on single full rerun. API 277/277, web 151/151, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase124_final_verify_20260924` using Turbo loose env mode. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase124_final_verify_20260924`, all 64 migrations applied through `0064_phase12_4_shared_calendar`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 64 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0064` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- First full `pnpm test` attempt hit transient web Phase 6.3 and Phase 7.2 timeouts; the targeted diagnostic rerun passed and the single full rerun passed.
+- First integration attempt did not pass the isolated database URL through Turbo and hit the intentionally unmigrated shared-dev pending migrations; rerunning with `TURBO_ENV_MODE=loose` against the isolated migrated DB passed.
+- Initial E2E attempts were blocked by an existing repo-local Next server on port 3000 and Docker on 3001; after stopping the repo-local Next process occupying port 3000, Playwright passed.
+- Worker tests still emit the existing open-handle/log warning noise.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log/open-handle noise, and one moderate audit advisory while high threshold passes.
+- Security search found expected Calendar identifiers, schema references, scoped participant validation, and a pre-existing realtime status string named `offline`; no external calendar sync, recurrence, automation delay, hard event delete, or Phase 12.5 scope was found.
+
+Phase 12.4 Shared Calendar Engine + Calendar UI is COMPLETE / PASS. Next: Phase 12.5 - Notifications / Realtime / Calendar Final Integration + Security / Performance Audit. Do not start Phase 12.5 automatically.
+
+### Phase 12.5 - Notifications / Realtime / Calendar Final Integration + Security / Performance Audit Main Audit PASS
+
+Main audit fixes:
+
+- Critical SYSTEM notification email routing now uses the same explicit critical bypass as in-app routing for disabled/muted preferences.
+- Durable email dispatch now sweeps stale `SENDING` deliveries to `AMBIGUOUS` without resending, so crashed or uncertain sends do not remain indefinitely stuck or get blindly retried.
+
+Main audit invariants:
+
+- Notification, Realtime, and Calendar remain Workspace scoped.
+- PostgreSQL remains the business authority.
+- Redis is transport only.
+- Notification preferences and dedupe remain per WorkspaceMembership.
+- Private notifications remain member-targeted.
+- Email delivery is durable and idempotent.
+- Ambiguous send states are not blindly retried.
+- Reminders are durable and race-safe.
+- Reminder lifecycle prevents stale delivery.
+- Realtime emits only committed state.
+- Calendar aggregates source entities without duplication.
+- Calendar preserves source visibility.
+- Custom event privacy is enforced.
+- Timezone and range handling is bounded and deterministic.
+- Query keys and Workspace switching prevent stale tenant data.
+- Sensitive data protections were verified.
+- No Phase 13 implementation started.
+
+Main audit verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass after targeted Prettier write for the audit patch.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 12 security/integration/regression tests: pass. Notification, email delivery, reminder, realtime, and calendar service specs 43/43.
+- `pnpm test`: pass. API 279/279, web 151/151, worker 13/13.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase125_main_audit_20260924`, all 64 migrations applied through `0064_phase12_4_shared_calendar`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 64 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0064` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Worker tests still emit the existing open-handle/log warning noise.
+- Known acceptable LF-to-CRLF warnings remain present in Git output.
+
+Phase 12.5 Main Audit is PASS. Next: Phase 12.5 Refinement + Final Verification. Do not mark Phase 12.5 COMPLETE. Do not mark Phase 12 COMPLETE. Do not start Phase 13.
+
+### Phase 12.5 - Notifications / Realtime / Calendar Final Integration + Security / Performance Audit COMPLETE / PASS
+
+Final verification confirmed:
+
+- Phase 12.1-12.5 COMPLETE.
+- Notifications are WorkspaceMembership scoped.
+- PostgreSQL is Notification, Email, Reminder, and Calendar authority.
+- Redis is realtime/BullMQ transport only.
+- Private notification delivery is member-targeted.
+- Preferences, mute, and dedupe are enforced.
+- Email delivery is durable and idempotent.
+- Ambiguous email sends are never blindly resent.
+- Reminders are durable, race-safe, and stale-safe.
+- Realtime emits only committed state.
+- Clients cannot mutate business data over sockets.
+- Calendar aggregates source data without duplication.
+- Source visibility and privacy are preserved.
+- Timezone and range handling is bounded and deterministic.
+- Workspace switching and cache keys prevent tenant leakage.
+- No Google/Outlook sync exists.
+- No browser push exists.
+- No WhatsApp/Webex/Slack integration exists.
+- No Phase 13 implementation exists yet.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 12 regression/security tests: pass. Notification, email delivery, reminder, realtime, and calendar service specs 43/43.
+- `pnpm test`: pass. API 279/279, web 151/151, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase125_final_verify_20260924` using Turbo loose env mode. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase125_final_verify_20260924`, all 64 migrations applied through `0064_phase12_4_shared_calendar`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 64 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0064` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Worker tests still emit the existing open-handle/log warning noise.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma notice, worker log/open-handle noise, and one moderate advisory while high threshold passes.
+
+Phase 12.5 Notifications / Realtime / Calendar Final Integration + Security / Performance Audit is COMPLETE / PASS.
+
+### Phase 12 - Notifications, Realtime & Shared Calendar COMPLETE / PASS
+
+Phase 12.1 Notification Core + Preferences + In-App Notification Center, Phase 12.2 Realtime Engine + Live Dashboard Updates, Phase 12.3 Notification Routing + Email Delivery + Reminders, Phase 12.4 Shared Calendar Engine + Calendar UI, and Phase 12.5 final audit/verification are COMPLETE / PASS.
+
+Next: Phase 13.1 Focused Refinement + Final Verification. Do not start Phase 13 automatically.
+
+### Phase 13.1 - Storage Core Expansion + File Metadata + Quotas Implementation PASS
+
+Implemented:
+
+- Reused the existing Phase 3 Asset/MinIO/storage foundation as the canonical storage domain.
+- Extended Asset metadata with storage provider, WorkspaceMembership uploader, source metadata, and future archive/delete timestamp foundation.
+- Added durable `StorageUploadReservation` rows for quota-safe pending uploads.
+- Added Workspace-scoped file APIs for signed upload, upload completion, file listing/detail, signed download URL, and storage usage.
+- Added storage permissions: `storage.view`, `storage.upload`, `storage.download`, and `storage.manage`.
+- Added server-authoritative usage summary derived from active/processing file metadata plus non-expired pending reservations.
+- Updated project asset and task/project/ticket attachment upload paths to use reservation-aware quota enforcement.
+- Added storage env aliases: `STORAGE_DEFAULT_WORKSPACE_QUOTA_BYTES` and `STORAGE_MAX_FILE_BYTES`.
+- Added migration `0065_phase13_1_storage_core_expansion`.
+
+Invariants:
+
+- Existing Phase 3 storage/MinIO foundation is reused.
+- PostgreSQL is file metadata authority.
+- MinIO/object storage owns file bytes.
+- Permanent public file URLs do not exist.
+- Object keys are server generated.
+- Signed upload/download URLs are short-lived.
+- Uploads become active/processable only after object verification.
+- File completion is idempotent.
+- Files are Workspace scoped.
+- Uploader is WorkspaceMembership scoped.
+- Quota enforcement includes active files plus pending reservations.
+- Concurrent uploads cannot bypass quota.
+- Abandoned reservations expire/release capacity.
+- Usage summary is server authoritative.
+- Existing attachment architecture remains compatible.
+- Storage provider abstraction remains ready for later cloud providers.
+- No fake malware scanning exists.
+- No archive/retention implementation exists yet.
+- No Google Drive/OneDrive/Dropbox integration exists yet.
+- No Phase 13.2+ scope started.
+- Phase 10-12 remain green.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.1 tests: pass. Assets, Projects, and Tickets service specs 32/32; storage core spec 7/7.
+- `pnpm test`: pass. API 286/286, web 151/151, worker 13/13.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase131_impl_verify_20260924`, all 65 migrations applied through `0065_phase13_1_storage_core_expansion`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 65 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0065` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Existing worker/open-handle/log warning noise remains present.
+- Known acceptable LF-to-CRLF warnings remain present in Git output.
+- Phase 13.1 is Implementation PASS only. Do not mark Phase 13.1 COMPLETE. Do not start Phase 13.2.
+
+### Phase 13.1 - Storage Core Expansion + File Metadata + Quotas COMPLETE / PASS
+
+Focused refinement and final verification confirmed:
+
+- Existing Phase 3 Asset/MinIO/storage foundation remains the canonical storage domain.
+- PostgreSQL remains the file metadata authority; MinIO/object storage owns file bytes.
+- Workspace file APIs are guarded by storage permissions and Workspace tenant scope.
+- Object keys remain server-generated and are not accepted from clients.
+- Permanent public URLs do not exist; upload/download URLs are short-lived presigned URLs.
+- Upload init records durable reservations and quota checks include active bytes plus pending reservations.
+- Workspace-scoped advisory locks protect reservation concurrency.
+- Upload completion verifies object existence and size before activating files.
+- Upload completion is idempotent for already-active files.
+- Expired pending reservations release capacity and cannot be finalized.
+- Usage summary is derived server-side from active files and non-expired reservations.
+- Source metadata for TASK, PROJECT, and TICKET uploads is validated against same-Workspace entities.
+- Uploader ownership is WorkspaceMembership scoped and requires an active membership.
+- Existing project asset, task attachment, project attachment, and ticket attachment flows remain compatible.
+- Unsafe filenames, path traversal attempts, unsupported MIME types, and oversized uploads are rejected before reservation.
+- Historical READY assets without reservations remain downloadable.
+- PENDING/FAILED and non-active files cannot receive download URLs.
+- No fake malware scanning exists.
+- No archive, retention, restore, delete lifecycle, or Phase 13.2 behavior was implemented.
+- No Google Drive, OneDrive, Dropbox, or external provider integration was implemented.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.1 storage service spec: pass, 18/18.
+- Affected API service specs: pass, 43/43.
+- `pnpm test`: pass. API 297/297, web 151/151, worker 13/13.
+- `pnpm test:integration`: pass on isolated migrated database `zea_play_phase131_impl_verify_20260924`. API integration 103/103 and worker integration 13/13.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory below the requested high threshold.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase131_final_verify_20260924`, all 65 migrations applied through `0065_phase13_1_storage_core_expansion`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 65 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0065` remain pending intentionally; no shared-dev migration was applied.
+
+Issues found and fixed during final verification:
+
+- Generic Workspace upload source metadata could name a TASK, PROJECT, or TICKET without verifying the source entity belonged to the same Workspace. Source metadata now resolves server-side and rejects forged, missing, or inconsistent source references.
+- PostgreSQL advisory lock calls returned `void` through Prisma raw query deserialization in integration. The lock query now casts the value to text in the storage quota paths.
+- Integration cleanup deleted assets before the new `StorageUploadReservation` child rows. Cleanup now deletes reservations before assets.
+
+Warnings:
+
+- Existing worker/open-handle/log warning noise remains present.
+- Known acceptable warnings observed: LF-to-CRLF warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma notice, worker log/open-handle noise, and one moderate advisory while high threshold passes.
+
+Phase 13.1 Storage Core Expansion + File Metadata + Quotas is COMPLETE / PASS.
+
+Next: Phase 13.2 - Archiving + Retention + Restore Lifecycle. Do not start Phase 13.2 automatically.
+
+### Phase 13.2 - Archiving + Retention + Restore Lifecycle Implementation PASS
+
+Implemented:
+
+- Added a separate `AssetLifecycle` model for ACTIVE, ARCHIVED, PENDING_DELETE, PURGING, and PURGED without mixing lifecycle with upload/processing status.
+- Added migration `0066_phase13_2_storage_archiving_retention`.
+- Added Workspace-scoped `StorageRetentionPolicy` with safe platform default `STORAGE_DELETE_GRACE_DAYS=30`.
+- Added lifecycle fields for delete request, purge due date, purge claim, purge completion, and purge failure metadata.
+- Added Workspace file lifecycle APIs for archive, restore, and soft delete.
+- Added retention policy read/update APIs scoped by Workspace permissions.
+- Extended workspace file listing with lifecycle filtering, defaulting to ACTIVE.
+- Extended storage adapter/provider support with object deletion.
+- Added storage-retention queue registration, repeatable scan scheduling, and worker processor.
+- Added bounded expired upload reservation cleanup.
+- Updated attachment download compatibility so ARCHIVED files remain downloadable and PENDING_DELETE/PURGING/PURGED files are blocked.
+
+Invariants:
+
+- Archive/delete lifecycle is separate from upload state.
+- Archive retains bytes and continues counting toward quota.
+- Delete is soft first and uses a configurable grace period.
+- PENDING_DELETE remains restorable before purge claim.
+- PURGING/PURGED cannot be restored.
+- Physical purge is worker-driven and bounded.
+- PostgreSQL is purge/lifecycle authority.
+- Object deletion occurs before PURGED is committed.
+- Purge is idempotent and race-safe.
+- Quota is released only after physical purge.
+- Metadata/source attachment history remains after purge.
+- Restore preserves original file identity, object key, and source relations.
+- Retention policy is Workspace scoped with safe platform default.
+- Expired upload reservations release quota safely.
+- No hard-delete metadata endpoint exists.
+- No auto-archive, legal-hold, cloud-drive, File Browser, or Phase 13.3+ scope was started.
+- Phase 10-12 and 13.1 remain green.
+
+Verification:
+
+- `pnpm --filter @zea-play/api exec prisma generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.2 storage service tests: pass, 26/26.
+- Focused Phase 13.2 worker retention tests: pass, 4/4.
+- `pnpm test`: pass. API 305/305, web 151/151, worker 17/17.
+- Security search: pass; no hard-delete metadata API, immediate product delete purge, client lifecycle authority, client purgeAfter authority, restore-after-PURGING path, double-purge path, quota release before PURGED, bucket scan, cloud-drive implementation, auto-archive, legal-hold, File Browser, or Phase 13.3 implementation found.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase132_impl_verify_20260924`, all 66 migrations applied through `0066_phase13_2_storage_archiving_retention`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 66 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0066` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Worker/API tests still emit existing log/open-handle warning noise.
+- Known acceptable LF-to-CRLF warnings remain present in Git output.
+- Direct raw `prisma validate` without dotenv still fails if `DIRECT_DATABASE_URL` is absent; repo `pnpm prisma:validate` passes.
+- Phase 13.2 is Implementation PASS only. Do not mark Phase 13.2 COMPLETE. Do not start Phase 13.3.
+
+Next: Phase 13.2 Focused Refinement + Final Verification.
+
+### Phase 13.2 - Archiving + Retention + Restore Lifecycle COMPLETE / PASS
+
+Focused refinement fixes:
+
+- Added bounded transient purge retries. Permanently failing object deletes now record `PURGE_RETRIES_EXHAUSTED` after three attempts and are excluded from subsequent due-purge scans until manually addressed.
+- Added restore/purge race coverage proving restore fails deterministically when the purge claim wins first.
+- Added DTO boundary coverage for Workspace retention grace day limits.
+- Added PURGED restore rejection coverage.
+
+Final invariants:
+
+- Upload status and archive lifecycle remain separate.
+- Archive retains bytes, counts toward quota, remains downloadable, and is restorable.
+- Delete is soft first and retention grace is Workspace scoped.
+- PENDING_DELETE is restorable until the purge DB claim wins.
+- PURGING and PURGED are not restorable.
+- Purge claim is DB/race-safe, object deletion happens before PURGED, and missing objects are treated as idempotently purged.
+- Transient delete failures remain recoverable until bounded retry exhaustion.
+- Quota releases only after PURGED; restore never duplicates quota or file identity.
+- Attachment/source history is preserved, legacy assets remain compatible, and expired upload reservations release capacity.
+- Retention worker uses bounded indexed scans.
+- No hard-delete metadata API exists.
+- No cloud-drive, File Browser, legal-hold, auto-archive, or Phase 13.3 scope was started.
+- Phase 10-12 and 13.1 remained green in unit/build/E2E verification.
+
+Final verification:
+
+- `pnpm --filter @zea-play/api exec prisma generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.2 API storage tests: pass, 29/29.
+- Focused Phase 13.2 worker retention tests: pass, 5/5.
+- `pnpm test`: pass. API 308/308, web 151/151, worker 18/18.
+- API integration on isolated migrated scratch database `zea_play_phase132_final_verify_20260924`: pass, 103/103.
+- Worker integration: pass, 18/18.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory below the requested high threshold.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security search: pass; hits were expected lifecycle implementation/tests, storage adapter delete calls, dummy test MinIO env names, unrelated non-storage relation cleanup, and historical docs mentions. No hard-delete metadata API, client lifecycle/purgeAfter authority, restore-after-PURGING/PURGED path, double-purge path, quota release before PURGED, bucket scan, cloud-drive implementation, auto-archive, legal-hold, File Browser, or Phase 13.3 implementation was found.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase132_final_verify_20260924`, all 66 migrations applied through `0066_phase13_2_storage_archiving_retention`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 66 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0066` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Initial default `pnpm test:integration` failed because shared development database `zea_play` is still missing migrations `0053` through `0066`; direct API integration passed against the migrated scratch database.
+- Top-level `pnpm test:integration` under Turbo still routed the API integration task to the stale shared DB despite shell scratch DB overrides; use a migrated database for that top-level command before treating it as an environment-green signal.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma update notice, worker log/open-handle noise, and one moderate audit advisory below the high threshold.
+
+Phase 13.2 Archiving + Retention + Restore Lifecycle is COMPLETE / PASS.
+
+Next: Phase 13.3 - Cloud Drive Integration Foundation. Do not start Phase 13.3 automatically.
+
+### Phase 13.3 - Cloud Drive Integration Foundation Implementation PASS
+
+Implemented:
+
+- Added provider-neutral cloud drive architecture with `CloudDrivesService`, `CloudDriveProviderAdapter`, and `CloudDriveProviderRegistry`.
+- Added Google Drive, OneDrive, and Dropbox adapters using real OAuth/provider API endpoints and safe capability flags.
+- Added Workspace-scoped `CloudDriveConnection` and single-use `CloudDriveOAuthState` models.
+- Added migration `0067_phase13_3_cloud_drive_foundation`.
+- Added AES-256-GCM token encryption using environment-managed `CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY`.
+- Added OAuth state hashing, expiry, actor binding, Workspace binding, and encrypted PKCE verifier storage.
+- Added provider status, connection list, connect, callback, disconnect, file/folder listing, import, and export APIs.
+- Added cloud storage permissions: `storage.cloud.view`, `storage.cloud.connect`, `storage.cloud.manage`, `storage.cloud.import`, and `storage.cloud.export`.
+- Added cloud-source metadata to canonical `Asset` records.
+- Added minimal Workspace Settings cloud connections UI for Google Drive, OneDrive, and Dropbox.
+- Added English/Tamil Cloud Drives labels.
+
+Invariants:
+
+- Cloud drives use a provider-neutral adapter architecture.
+- Google Drive/OneDrive/Dropbox are never reported working unless actually configured/implemented.
+- Cloud connections are Workspace scoped.
+- OAuth state is random, expiring, bound, hashed, and single-use.
+- OAuth exchanges happen server-side.
+- Access/refresh tokens are encrypted at rest.
+- Provider credentials/tokens never reach frontend/logs.
+- Token refresh is concurrency-safe through connection-scoped advisory locking.
+- Provider listings are bounded and paginated.
+- Provider raw objects are not exposed.
+- Imports reuse Phase 13.1 storage/quota/object-key authority.
+- Exports use canonical Asset/storage permissions and reject non-ACTIVE files.
+- Internal MinIO/PostgreSQL remains ZeaPlay storage authority.
+- No two-way/background cloud sync exists.
+- No provider webhook/change subscription engine exists.
+- Minimal connection UI exists.
+- No full File Browser Phase 13.4 scope started.
+- Phase 10-12 and 13.1-13.2 remain green.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.3 cloud drive service tests: pass, 4/4.
+- `pnpm test`: pass. API 312/312, web 151/151, worker 18/18.
+- Security search: pass; hits were expected provider adapter internals and type/interface names. No token logging, frontend token/secret exposure, raw provider object API, arbitrary provider URL proxy, recursive full-drive scan, two-way sync, provider webhook/change subscription engine, File Browser implementation, or Phase 13.4 scope was found.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase133_impl_verify_20260924`, all 67 migrations applied through `0067_phase13_3_cloud_drive_foundation`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 67 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0067` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Worker/API tests still emit existing log/open-handle warning noise.
+- Known acceptable LF-to-CRLF warnings remain present in Git output.
+- Shared development database remains intentionally behind and is not a valid integration-test target until migrated separately.
+
+### Phase 13.3 - Cloud Drive Integration Foundation Focused Refinement + Final Verification COMPLETE / PASS
+
+Refined:
+
+- Classified provider HTTP failures so refresh only marks a connection `REAUTH_REQUIRED` for authentication failures, not transient provider outages.
+- Hardened OAuth browser callback handling to redirect to a safe app URL without tokens, codes, or raw provider errors.
+- Added bounded cleanup for expired OAuth state rows before creating new state.
+- Preserved OAuth callback safe redirect fallback to `/workspace/settings`.
+- Made imports quota-reserved and failure-safe: create canonical `Asset` + upload reservation before download, verify stored object metadata before marking ready, release quota and mark failed on storage/provider failure.
+- Expanded cloud-drive tests from 4 to 17 cases covering encryption tamper rejection, provider availability gating, safe connection selection, OAuth state hashing/PKCE, redirect sanitization, expired/single-use state, refresh locking/rotation/null retention, transient vs auth refresh errors, import cleanup, and provider PKCE authorization URLs.
+
+Final invariants:
+
+- Provider-neutral cloud architecture remains canonical.
+- Google Drive, OneDrive, and Dropbox adapters exist, but providers are available only when implemented and configured.
+- No live-provider OAuth success is claimed without live credentials.
+- OAuth state is random, expiring, Workspace/actor/provider bound, hashed, atomically consumed, and single-use.
+- Redirects are app-relative/validated and malformed percent-encoding is rejected.
+- PKCE verifier stays server-side and encrypted.
+- Code exchange and refresh happen server-side only.
+- Tokens are authenticated-encrypted at rest.
+- Tokens, secrets, authorization codes, and raw provider payloads are not exposed to frontend, logs, or AuditLog metadata.
+- Refresh is connection-scoped and race-safe; refresh-token rotation preserves an existing refresh token when the provider omits a replacement.
+- One active connection is allowed per Workspace/provider.
+- Listing is bounded and paginated; recursive full-drive crawling is not implemented.
+- Imports use Phase 13.1 quota/reservation/internal storage authority and do not leave invalid active assets or permanent quota leaks on failure.
+- Exports use canonical asset lifecycle, permissions, and storage authority.
+- Workspace isolation and cloud permissions are enforced.
+- PostgreSQL plus MinIO remain the canonical storage system.
+- No two-way sync, provider webhooks, change subscriptions, File Browser, or Phase 13.4 scope was started.
+- Frontend scope remains Workspace Settings connection management only.
+- Phase 10-12 and 13.1-13.2 regression suites remain green.
+
+Final verification:
+
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- Focused Phase 13.3 cloud drive service/provider tests: pass, 17/17.
+- `pnpm test`: pass. API 325/325, web 151/151, worker 18/18.
+- Root `pnpm test:integration`: worker integration pass, 18/18; API task failed only because shared development database `zea_play` is still missing migrations `0053` through `0067`.
+- API integration on isolated migrated scratch database `zea_play_phase133_final_verify_20260924`: pass, 103/103.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with known Next ESLint plugin warning.
+- `pnpm audit --audit-level high`: pass with one moderate advisory below the requested high threshold.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security search: pass; hits were expected provider adapter internals, token exchange field names, and HTTP helper names. No console/logger token leaks, frontend token/secret exposure, raw provider object API, arbitrary provider URL proxy, recursive full-drive scan, two-way sync, provider webhook/change subscription engine, File Browser implementation, object-key frontend leak, or Phase 13.4 scope was found.
+- Clean Prisma migrate deploy: pass on isolated scratch database `zea_play_phase133_final_verify_20260924`, all 67 migrations applied through `0067_phase13_3_cloud_drive_foundation`.
+- Clean Prisma migrate status: database schema is up to date on isolated scratch database, 67 migrations.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0067` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Live Google Drive, OneDrive, and Dropbox OAuth/provider verification was not performed because live credentials were not supplied; adapter implementation and mocked/unit protocol behavior were verified.
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, worker log/open-handle noise, and one moderate audit advisory below the high threshold.
+
+Phase 13.3 Cloud Drive Integration Foundation is COMPLETE / PASS.
+
+Next: Phase 13.4 - File Browser + Upload/Download UX + Search. Do not start Phase 13.4 automatically.
+
+### Phase 13.4 - File Browser + Upload/Download UX + Search Implementation PASS
+
+Implemented:
+
+- Added canonical Workspace File Browser route `/workspace/files`.
+- Added Workspace navigation entry `Files`.
+- Added server-side Workspace file metadata search, source/category/uploader/date filters, safe sort allowlist, and page-size bounding.
+- Added bounded bulk file action API for archive, move to Recently Deleted, and restore with max 50 IDs and per-file Workspace validation.
+- Added file browser frontend with My Workspace, Archived, Recently Deleted, and Cloud Drives tabs.
+- Added list/grid views, metadata toolbar, upload drop zone/file picker, upload queue statuses, retry/remove controls, quota summary, file details, safe preview, download-on-action, lifecycle actions, safe bulk actions, cloud folder browsing, cloud import, and cloud export UX.
+- Added Workspace-scoped frontend file service/query keys.
+- Extended cloud-drive frontend service with bounded listing/import/export helpers and scoped query keys.
+- Added English and Tamil labels for File Browser UI.
+- Added focused backend and frontend tests for Phase 13.4 behavior.
+
+Invariants:
+
+- `/workspace/files` is the Workspace File Browser route.
+- PostgreSQL remains file metadata/search authority.
+- MinIO remains canonical byte storage.
+- File Browser uses server-side pagination, metadata search, filtering, and sort.
+- Signed URLs are requested only for explicit upload, download, or preview actions.
+- Signed URLs/object keys are not persisted in frontend query cache.
+- Uploads reuse Phase 13.1 reservation/quota/finalize flow.
+- Multi-file upload concurrency is bounded to 3.
+- Storage usage comes from the server-authoritative quota endpoint.
+- Archive, move to Recently Deleted, and restore reuse Phase 13.2 lifecycle authority.
+- No hard-delete UI exists.
+- Cloud Browser uses Phase 13.3 normalized bounded provider listing.
+- Cloud import/export reuse canonical Phase 13.3 flows.
+- UI says Import/Export, not Sync.
+- No recursive cloud scan or background/two-way sync exists.
+- Search is metadata-only; no OCR/content indexing exists.
+- Workspace-scoped query keys include Workspace, tab/source, search, filters, sort, pagination, and cloud connection/folder/cursor state.
+- Light, Dark, Colorful theme-compatible tokens and English/Tamil labels are supported.
+- Phase 10-12 and 13.1-13.3 remain green.
+- No Phase 13.5 scope started.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.4 API tests: pass, assets service 32/32.
+- Focused Phase 13.4 web tests: pass; web app test set 153/153.
+- `pnpm test`: pass. API 328/328, web 153/153, worker 18/18.
+- Security search: pass; hits were expected backend storage internals/tests, provider adapter internals, Dropbox `recursive: false`, bounded bulk slicing, async function declarations, and test role-name fixtures. No frontend object-key exposure, signed URL list response, signed URL persistence, client-only file search, unbounded page size, arbitrary sort, unbounded bulk action, foreign Workspace bypass, raw provider object UI, arbitrary provider URL proxy, recursive cloud scan, fake import percentage, two-way/background sync, thumbnail worker, OCR/content indexing, Elasticsearch/OpenSearch, or Phase 13.5 implementation was found.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean migration deploy/status: not required; Phase 13.4 added no migration and migration chain remains 67.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0067` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- This is Implementation PASS only. Integration, worker integration, E2E, build, audit, and final performance/security regression are reserved for Phase 13.4 Focused Refinement + Final Verification.
+- Live Google Drive, OneDrive, and Dropbox OAuth/provider verification remains not performed because live credentials were not supplied.
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, worker log/open-handle noise, and existing test log warnings.
+
+Phase 13.4 File Browser + Upload/Download UX + Search is Implementation PASS.
+
+### Phase 13.4 - File Browser + Upload/Download UX + Search COMPLETE / PASS
+
+Focused refinement fixes:
+
+- Backend Workspace file list uploader filters now verify the uploader membership belongs to the same Workspace before listing.
+- Backend created date filters now reject invalid or inverted date ranges before querying.
+- Backend bulk file DTO now rejects empty `fileIds` arrays, and service-level bulk handling also guards empty normalized IDs.
+- Frontend permissions no longer optimistically grant file actions while role permissions are still loading.
+- Upload queue items capture the initiating Workspace ID, so reservation, finalize, usage invalidation, and file-list invalidation stay Workspace-bound even if the user switches Workspace during an upload.
+- File lifecycle, bulk, cloud import, and cloud export mutations now bind their API call/invalidation to the Workspace captured at action time.
+
+Final invariants:
+
+- `/workspace/files` is the canonical Workspace File Browser route.
+- PostgreSQL remains the file metadata and search authority.
+- MinIO remains canonical byte storage.
+- File Browser uses server-side bounded search, filters, sort allowlist, and pagination.
+- Workspace isolation is enforced on list filters, per-file lifecycle actions, bulk validation, upload reservation/finalize, download URL creation, cloud import/export, and cache keys.
+- Signed URLs are requested only on explicit upload/download/preview actions and are not stored in list responses or frontend persisted storage.
+- Multi-file upload reuses Phase 13.1 reservation/quota/finalize flow with concurrency bounded to 3.
+- Storage quota remains server-authoritative.
+- Archive, Recently Deleted, and restore reuse Phase 13.2 lifecycle authority; no hard-delete UI exists.
+- Bulk actions remain bounded to 50 IDs and return per-file partial results.
+- Cloud Browser uses Phase 13.3 normalized bounded listing; import/export are one-time actions, not sync.
+- No recursive cloud scan, background sync, webhook sync, two-way sync, thumbnail worker, OCR, PDF text extraction, document indexing, Elasticsearch/OpenSearch, or Phase 13.5 implementation was added.
+- Preview remains private and short-lived through the same signed URL path; no external public viewer was added.
+- Search is metadata-only.
+- Light, Dark, Colorful themes, responsive layout, English/Tamil labels, and accessible control labels are covered by focused web tests.
+- Phase 10-12 and Phase 13.1-13.3 regression suites remain green.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.4 API test: pass, assets service 33/33.
+- Focused Phase 13.4 web test command: pass, web app test set 153/153.
+- `pnpm test`: pass on rerun. API 329/329, web 153/153, worker 18/18.
+- Root `pnpm test:integration`: worker passed 18/18; API failed only against stale shared development DB because relation `automation_trigger_matches` is missing there.
+- API integration on isolated migrated scratch database `zea_play_phase134_final_verify_20260924`: pass, 103/103.
+- Worker integration: pass, 18/18.
+- `pnpm test:e2e`: pass on clean rerun, 21/21.
+- `pnpm build`: pass on standalone rerun with known Next ESLint plugin warning only.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the requested high threshold.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security search: pass; hits were expected backend storage internals/tests, provider adapter internals, Dropbox `recursive: false`, bounded bulk call sites, async function declarations, and test role-name fixtures. No frontend object-key exposure, signed URL list response, signed URL persistence, client-only file search, unbounded page size, arbitrary sort, unbounded bulk action, raw provider object UI, arbitrary provider URL proxy, recursive cloud scan, fake import percentage, two-way/background sync, thumbnail worker, OCR/content indexing, Elasticsearch/OpenSearch, or Phase 13.5 implementation was found.
+- Isolated scratch migration deploy/status: pass, all 67 migrations applied through `0067_phase13_3_cloud_drive_foundation`, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0067` remain pending intentionally; no shared-dev migration was applied.
+
+Warnings:
+
+- Live Google Drive, OneDrive, and Dropbox OAuth/provider verification was not performed because live credentials were not supplied.
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- First full web unit run had one Phase 7.2 timeout under load; the focused rerun and full `pnpm test` rerun passed.
+- First E2E/build overlap produced transient Next `.next`/manifest noise; clean standalone E2E and build reruns passed.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, worker log/open-handle noise, and one moderate audit advisory below the high threshold.
+
+Phase 13.4 File Browser + Upload/Download UX + Search is COMPLETE / PASS.
+
+### Phase 13.5 - Final Storage Security + Performance + Regression Audit Main Audit PASS
+
+Issues found and fixed:
+
+- OneDrive cloud listing now rejects arbitrary client-supplied pagination cursor URLs before provider fetch. Cursors must remain Microsoft Graph URLs, preventing provider-token SSRF through the cursor parameter.
+- Cloud import idempotency now checks an existing import behind a transaction-scoped advisory lock before quota reservation and Asset creation, preventing duplicate reservation/Asset creation for concurrent retries with the same idempotency key.
+
+Audit findings:
+
+- PostgreSQL remains metadata, lifecycle, quota reservation, retention policy, cloud connection, and OAuth state authority.
+- MinIO remains canonical ZeaPlay byte storage.
+- External cloud drives remain import/export source or destination only; no external provider becomes storage authority.
+- Redis/BullMQ remain transport and worker execution infrastructure only.
+- Phase 13 routes/controllers use permission keys, not role-name authorization.
+- Workspace fencing remains present on files, upload/finalize, storage usage, lifecycle, retention policy, purge targets, cloud connections, provider listing, cloud listing, import/export, File Browser query keys, uploader filters, and source entity relations.
+- TASK, PROJECT, and TICKET source entities are same-Workspace validated before upload linkage.
+- Object keys are server-generated and display filenames remain metadata only.
+- Signed URLs are short-lived, action-only, and not list-response authority.
+- Upload issuance does not mark files active; finalize verifies object metadata and size and is idempotent for already-active files.
+- Quota accounting is derived from durable Asset and reservation metadata, includes active retained lifecycles plus valid pending reservations, and excludes purged/expired/released reservations.
+- Lifecycle and purge remain DB-authoritative and race-safe; purge claims before object deletion and quota releases only after PURGED.
+- Expired upload cleanup releases reservations and does not delete READY active objects.
+- Cloud OAuth state remains random, hashed, single-use, Workspace/provider/actor bound, and expiring.
+- Cloud tokens remain AES-256-GCM encrypted with authenticated tamper rejection and no plaintext fallback.
+- Refresh concurrency uses a connection lock, preserves omitted rotated refresh tokens, and marks REAUTH_REQUIRED only for auth failures.
+- Cloud import validates provider metadata, size, MIME, quota, internal object key, storage verification, cleanup, and idempotency.
+- Cloud export requires Workspace Asset, valid connected provider connection, and ACTIVE lifecycle.
+- Cloud import/export remain one-time actions, not synchronization.
+- Large provider transfers stream through Node streams/backpressure; no full-file buffering path was added.
+- File Browser cache/query state remains Workspace isolated.
+- Search/filter/sort/bulk operations remain bounded and allowlisted.
+- Phase 7-9 attachment paths remain compatible with storage lifecycle/download restrictions.
+- Phase 12 notifications/realtime/calendar unit coverage remains green; no storage event socket leak path was added.
+- No malware scanning is claimed.
+- No Phase 14 scope was started.
+
+Verification:
+
+- Branch: `developed`.
+- Migration chain remains 67; no `0068` was added.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.1/13.2 API storage/lifecycle tests: pass, assets service 33/33.
+- Focused Phase 13.2 worker retention tests: pass, 5/5.
+- Focused Phase 13.3 cloud tests plus Phase 13.5 audit tests: pass, cloud drives 19/19.
+- Focused Phase 13.4 web tests: pass, web app test set 153/153.
+- `pnpm test`: pass. API 331/331, web 153/153, worker 18/18.
+- Isolated scratch database `zea_play_phase135_main_audit_20260924` migrate deploy/status: pass, all 67 migrations applied, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0067` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected backend storage internals/tests, provider adapter token exchange code, safe web URL fields, permission decorators, Dropbox `recursive: false`, and service function names. No frontend object-key/signed URL persistence, public bucket/permanent URL, raw provider response leak, arbitrary provider URL fetch after OneDrive cursor fix, cloud sync/mirror/webhook, OCR/content indexing, Elasticsearch/OpenSearch/vector index, fake malware status, or Phase 14 implementation was found.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+
+Warnings:
+
+- This is Main Audit PASS only. Integration, worker integration, E2E, build, audit, and final Phase 13 regression are reserved for Phase 13.5 Focused Refinement + Final Verification.
+- Live Google Drive, OneDrive, and Dropbox OAuth/provider verification was not performed because live credentials were not supplied.
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Existing acceptable warnings remain: LF-to-CRLF Git warnings and worker test log/open-handle noise.
+
+Phase 13.5 Final Storage Security + Performance + Regression Audit Main Audit is PASS.
+
+Next: Phase 13.5 Focused Refinement + Final Verification. Do not mark Phase 13.5 COMPLETE. Do not mark Phase 13 COMPLETE. Do not start Phase 14.
+
+### Phase 13.5 - Final Storage Security + Performance + Regression Audit COMPLETE / PASS
+
+Final refinement fixes:
+
+- Reverified the Phase 13.5 OneDrive cursor hardening: client-provided cursors must remain `https://graph.microsoft.com/...` URLs before any provider fetch occurs.
+- Reverified the cloud import idempotency race fix: repeated imports with the same idempotency key are checked behind a transaction-scoped advisory lock before quota reservation and Asset creation.
+
+Final security and performance status:
+
+- PostgreSQL remains the authority for file metadata, lifecycle, quota reservation, retention policy, cloud connection, OAuth state, import/export metadata, and AuditLog records.
+- MinIO remains canonical ZeaPlay byte storage.
+- External cloud drives remain bounded import/export sources or destinations only.
+- Workspace isolation remains enforced across uploads, finalize, list/search/filter/sort, bulk actions, archive/delete/restore, retention purge, cloud connections, cloud listing, import/export, source entity linkage, and frontend cache keys.
+- Permission checks use permission keys, not role names.
+- Object keys and buckets remain private backend fields and are stripped from serialized file responses.
+- Signed URLs are short-lived and action-only for upload, download, or preview.
+- Upload/finalize stays reservation-backed, quota-aware, object-metadata verified, and idempotent for already-active files.
+- Retention purge remains DB-claim-first, object-delete-before-`PURGED`, and quota-release-after-`PURGED`.
+- Expired upload cleanup releases reservations and does not delete active ready objects.
+- Cloud OAuth remains state-hashed, PKCE-backed, single-use, expiring, and Workspace/provider/actor bound.
+- Cloud access and refresh tokens remain AES-256-GCM encrypted with tamper rejection.
+- Cloud token refresh remains lock-protected and preserves omitted rotated refresh tokens.
+- Cloud listing remains normalized, bounded, non-recursive, and rejects unsafe OneDrive cursor URLs.
+- Cloud import/export remain one-time actions and do not implement sync, mirroring, provider webhooks, OCR, content indexing, vector indexing, or Phase 14 behavior.
+- Provider transfers use streams/backpressure and avoid full-file buffering.
+- File Browser search/filter/sort/bulk paths remain bounded and server-authoritative.
+- Phase 7 task, Phase 8 project, Phase 9 ticket, and Phase 12 notification/realtime/calendar regression coverage remains green.
+
+Final verification:
+
+- Branch: `developed`.
+- Migration chain remains 67 migrations through `0067_phase13_3_cloud_drive_foundation`; no Phase 13.5 migration and no `0068` were added.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 13.1/13.2 API storage/lifecycle tests: pass, assets service 33/33.
+- Focused Phase 13.2 worker retention tests: pass, 5/5.
+- Focused Phase 13.3 plus Phase 13.5 cloud-drive audit tests: pass, cloud drives 19/19.
+- Focused Phase 13.4 web tests: pass, web app test set 153/153.
+- `pnpm test`: pass. API 331/331, web 153/153, worker 18/18.
+- Root `pnpm test:integration`: worker integration passed 18/18; API integration failed only against the stale shared development database because relation `automation_trigger_matches` is missing there.
+- API integration on isolated migrated scratch database `zea_play_phase135_final_verify_20260924`: pass, 103/103.
+- Worker integration standalone: pass, 18/18.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass with the known Next ESLint plugin warning only.
+- `pnpm audit --audit-level high`: pass; one moderate dev-only `uuid` advisory remains below the requested high threshold through `packages__ui>@storybook/addon-essentials>@storybook/addon-actions>uuid`.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean isolated migration deploy/status on `zea_play_phase135_final_verify_20260924`: pass, all 67 migrations applied and schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0067` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected backend storage internals/tests, provider adapter token exchange fields, bearer headers passed to provider clients, encrypted token fields, permission decorators, Dropbox `recursive: false`, and service function names. No frontend object-key/signed URL persistence, public bucket/permanent URL, raw provider response leak, arbitrary provider URL fetch after OneDrive cursor fix, cloud sync/mirror/webhook, OCR/content indexing, Elasticsearch/OpenSearch/vector index, fake malware status, or Phase 14 implementation was found.
+
+Warnings:
+
+- Live Google Drive, OneDrive, and Dropbox OAuth/provider verification was not performed because live credentials were not supplied.
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, worker test log/open-handle noise, and one moderate dev-only audit advisory below the high threshold.
+
+Phase 13.5 Final Storage Security + Performance + Regression Audit is COMPLETE / PASS.
+
+### Phase 13 - Storage Expansion, Archiving & Cloud Drive Integration COMPLETE / PASS
+
+Completed Phase 13 scope:
+
+- Phase 13.1 Storage Core Expansion.
+- Phase 13.2 Archiving + Retention + Restore Lifecycle.
+- Phase 13.3 Cloud Drive Integration Foundation.
+- Phase 13.4 File Browser + Upload/Download UX + Search.
+- Phase 13.5 Final Storage Security + Performance + Regression Audit.
+
+Phase 13 final status:
+
+- Storage expansion, archiving, retention, cloud drive foundation, file browser UX, and final security/performance/regression audit are COMPLETE / PASS.
+- Phase 14 readiness is confirmed for planning only.
+
+Next: Phase 14 - API, Webhooks & External Integrations. Do not start Phase 14 automatically.
+
+### Phase 14.1 - Public REST API Foundation + API Keys + Scopes + Rate Limits Implementation PASS
+
+Implemented:
+
+- Added public REST API foundation on the existing global `/api/v1` prefix for Tasks, Projects, and Tickets.
+- Added Workspace-scoped API key schema, Prisma migration `0068_phase14_1_public_api_foundation`, split key generation, secret hashing, expiry, revocation, last-used tracking, and idempotency persistence.
+- Added internal Workspace API key management endpoints guarded by existing JWT, WorkspaceTenantGuard, PermissionGuard, and new `api_keys.*` permissions.
+- Added explicit public scopes: `tasks.read`, `tasks.write`, `projects.read`, `projects.write`, `tickets.read`, and `tickets.write`.
+- Added public API authentication, scope, and rate-limit guards.
+- Added per-key and per-Workspace rate limiting with Redis as the canonical counter store and fail-closed production degraded behavior.
+- Added POST create idempotency using `Idempotency-Key` for Tasks, Projects, and Tickets.
+- Added public response envelopes for data/list responses and a public error envelope with request id.
+- Added API key settings UI in Workspace Settings with one-time plaintext display, explicit copy, and revoke flow.
+- Added English and Tamil labels for API key settings.
+- Added `docs/public-api.md` as the public API documentation foundation.
+- Added bounded expired idempotency cleanup through the public API maintenance service.
+
+Invariants:
+
+- Workspace authority for public API calls comes from the authenticated API key, not from client-supplied Workspace ids.
+- API key secret material is stored only as a hash and is returned only once at create time.
+- Revoked, expired, malformed, and unknown API keys are rejected with generic authentication failure behavior.
+- Public API scopes are explicit allowlist values; no wildcard scope was added.
+- Public controllers reuse canonical Task, Project, and Ticket services instead of adding duplicate direct Prisma business-write paths.
+- Public lists remain bounded by canonical list DTOs and service paths.
+- Rate-limit keys use API key id and Workspace id, not plaintext secrets.
+- API-key management remains internal UI/API behavior and is guarded by permission keys, not role-name checks.
+- Public API writes use an integration-style tenant context tied to the API key and Workspace while preserving existing canonical service authorization boundaries.
+- AuditLog coverage was added for API key create, update, and revoke.
+- The frontend does not persist the plaintext API key outside component state.
+- No webhook delivery, OAuth authorization server/sign-in, GraphQL endpoint, provider integration, or Phase 14.2 scope was started.
+
+Verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 14.1 API tests: pass, public API service spec 6/6.
+- Focused Phase 14.1 web tests: pass, web app test set 154/154.
+- `pnpm test`: pass on rerun. API 337/337, web 154/154, worker 18/18.
+- Clean isolated migration deploy/status on `zea_play_phase141_main_verify_20260924`: pass, all 68 migrations applied and schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0068` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected API documentation, bearer parsing, internal secret hashing, tests, audit action names, and one-time UI plaintext display. No query-string API key auth, frontend key persistence, secret hash response path, wildcard scope, role-name authorization, duplicate direct business write path, unbounded public list marker, GraphQL, webhook, provider integration, or Phase 14.2 implementation was found.
+
+Warnings:
+
+- Prompt 2 still owns integration/E2E/build/audit/final security regression for Phase 14.1.
+- Public API write attribution uses the existing canonical service tenant shape, so the creator membership remains the stable Workspace actor anchor while API-key metadata identifies the integration source.
+- Shared development database `zea_play` remains intentionally behind and is not a valid integration target until migrated separately.
+- The first full `pnpm test` run had one transient web timeout in an older Phase 7.2 UI test under load; a clean rerun passed all packages.
+
+Phase 14.1 Public REST API Foundation + API Keys + Scopes + Rate Limits is Implementation PASS.
+
+Next: Phase 14.1 Focused Refinement + Final Verification. Do not mark Phase 14.1 COMPLETE. Do not start Phase 14.2.
+
+### Phase 14.1 - Public REST API Foundation + API Keys + Scopes + Rate Limits COMPLETE / PASS
+
+Focused refinement fixes:
+
+- Resolved the public/internal route collision by moving public resource controllers under the explicit versioned public route family `/api/v1/public/*`; the existing internal JWT `/api/v1/projects` controller remains untouched.
+- Added explicit public write DTOs so public Task, Project, and Ticket writes do not inherit broader internal-only write fields.
+- Documented and tested Workspace-owned API-key behavior: a valid active key remains usable if the original creator membership is later suspended, while the Workspace and key remain active.
+- Hardened Redis rate-limit writes to pair counter increments with TTL writes in one pipeline.
+- Made last-used tracking non-critical so telemetry update failures do not break otherwise valid public API authentication.
+- Bounded accepted request/correlation id header values before reflecting them back.
+- Gated Workspace Settings API-key controls on central `api_keys.*` permission checks rather than role-name checks.
+
+Final invariants:
+
+- Public REST API uses the explicit versioned `/api/v1/public` contract.
+- Public and internal controller routes have no ambiguous resource-route collisions.
+- API-key auth and JWT auth remain strictly separated by controller guard chains.
+- API keys are Workspace-owned credentials.
+- Tenant context derives only from the authenticated API key; client Workspace headers/body/query values do not switch tenant authority.
+- Key secrets are high-entropy, server-generated, and shown once.
+- Only a non-reversible secret verifier is stored, and verification hashes the presented secret before constant-time comparison.
+- Revoked and expired keys fail immediately.
+- No API secret appears in logs, URLs, or frontend persistence.
+- Public scopes are allowlisted and resource-specific; no wildcard scope exists.
+- Write scopes imply read for the same resource only.
+- API-key management remains internal RBAC-permission controlled.
+- API writes reuse canonical Task, Project, and Ticket services.
+- API-key activity is identified as API-key/integration activity in the public API context and key-management AuditLog; canonical service write fields still use the existing membership-backed service signatures.
+- Downstream Automation, Notification, Realtime, Gamification, activity, status, SLA, and domain rules remain canonical because public controllers do not duplicate business writes or events.
+- List, filter, and sort endpoints remain bounded and validated by DTO allowlists.
+- Per-key and Workspace rate limits are enforced; production does not silently disable rate limiting on Redis failure.
+- `Idempotency-Key` identity is DB-authoritative by Workspace, API key, method, route, and key hash, with deterministic body fingerprints.
+- Duplicate POST retries cannot create duplicate resources under the implemented advisory-lock path.
+- Idempotency records expire and cleanup is bounded by indexed expiry scans.
+- API-key last-used tracking is non-critical and write-throttled.
+- Public responses use stable data/list envelopes and public error envelopes with request ids.
+- API key settings never persist plaintext secrets and clear the one-time key from component state after confirmation.
+- No GraphQL exists.
+- No Phase 14.2 webhook implementation exists.
+- Phase 10-13 regression coverage remains green.
+
+Final verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused Phase 14.1 API tests: pass, public API service spec 13/13.
+- Focused Phase 14.1 web settings tests: pass, web app test set 154/154.
+- `pnpm test`: pass. API 344/344, web 154/154, worker 18/18.
+- Root `pnpm test:integration`: worker integration passed 18/18; API integration failed only against the stale shared development database because relation `automation_trigger_matches` is missing there.
+- API integration on isolated migrated scratch database `zea_play_phase141_final_verify_20260924`: pass, 103/103.
+- Worker integration standalone: pass, 18/18.
+- `pnpm test:e2e`: pass, 21/21, after rerunning sequentially without a concurrent `next build`.
+- `pnpm build`: pass with the known Next ESLint plugin warning only.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the requested high threshold.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Clean isolated migration deploy/status on `zea_play_phase141_final_verify_20260924`: pass, all 68 migrations applied and schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0068` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected docs, tests, bearer parsing, internal secret hashing, safe permission text, and route metadata. No Authorization logging, full API-key logging, secretHash response path, plaintext secret DB field, frontend API-key persistence, query-string API key auth, wildcard scope, role-name authorization, direct public Prisma Task/Project/Ticket write, unbounded public list, arbitrary orderBy, CORS wildcard, GraphQL, webhook, provider integration, or Phase 14.2 code was found.
+
+Warnings:
+
+- The first E2E/build attempt was invalid because `pnpm build` was started while Playwright's `next dev` server was using `.next`; sequential reruns passed.
+- Root/shared API integration remains invalid until the shared development DB is migrated separately.
+- Public API idempotency uses DB uniqueness and advisory locks around the implemented handler path; canonical services still own their own transactions because Phase 14.1 did not introduce a cross-service transaction abstraction.
+- Public API write attribution uses the current membership-backed canonical service signatures; API-key context and API-key management AuditLog identify the integration source, but no large service-account actor system was introduced in Phase 14.1.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Next ESLint plugin warning, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, Prisma tip/update notices, worker/API test log/open-handle noise, one moderate audit advisory below the high threshold, stale shared dev DB, and no live cloud provider verification.
+
+Phase 14.1 Public REST API Foundation + API Keys + Scopes + Rate Limits is COMPLETE / PASS.
+
+Next: Phase 14.2 - Outbound Webhooks + Signing + Delivery + Retry. Do not start Phase 14.2 automatically.
+
+### Phase 14.2 - OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY Implementation - PASS
+
+Implemented:
+
+- Added durable outbound webhook storage via migration `0069_phase14_2_outbound_webhooks`: Workspace-scoped subscriptions, immutable events, and delivery attempts with status, attempt, timing, response, retry, and cleanup indexes.
+- Added internal JWT/RBAC Workspace webhook management APIs for list/create/update/disable/rotate-secret/test/delivery history/manual retry.
+- Added server-generated high-entropy signing secrets, encrypted at rest with the existing token encryption utility, and one-time plaintext reveal on create/rotate only.
+- Added event allowlist and canonical automation domain event capture after committed domain events, without controller-level duplicate business-event sends.
+- Added BullMQ delivery transport using `{ deliveryId }` payloads while keeping Postgres authoritative for state.
+- Added worker delivery dispatch with DB claim/CAS, active-subscription recheck, HTTPS-first SSRF validation, no redirects, JSON POST, timeout bounds, HMAC-SHA256 `timestamp.rawBody` signatures, retry scheduling, and dead-letter transitions.
+- Added Workspace Settings Webhooks panel with EN/TA labels, create/list/status, one-time secret display, Send Test, Disable, Rotate Secret, and bounded delivery history/manual retry.
+- Added focused webhook security/worker/UI coverage for signing, SSRF blocking, delivery claim/success, disabled subscription no-send, retry scheduling, and one-time secret UI.
+
+Verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused API webhook tests: pass, `webhooks.service.spec.ts` 3/3.
+- Focused worker webhook delivery tests: pass, `webhook-delivery.processor.spec.ts` 3/3.
+- Focused web settings test set: pass, `phase14-1.test.tsx` plus app tests 155/155.
+- `pnpm test`: pass on rerun, all 17 package test tasks successful. API 347/347, worker 21/21, web 155/155.
+- Clean isolated migration deploy/status: pass on scratch database `zea_play_phase142_impl_clean_20260924`, all 69 migrations applied through `0069_phase14_2_outbound_webhooks`, schema up to date, scratch DB dropped.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0069` remain pending intentionally; no shared-dev migration was applied.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+
+Warnings:
+
+- Prompt 2 still owns integration/E2E/build/audit/final security and performance regression for Phase 14.2.
+- First full `pnpm test` attempt had one older Phase 7.2 web test timeout under load; the exact test passed in isolation and the full rerun passed.
+- Webhook secret encryption depends on `CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY`, reusing the existing encryption utility as requested.
+
+Phase 14.2 OUTBOUND WEBHOOKS + SIGNING + DELIVERY + RETRY Implementation is PASS.
+
+Next: Phase 14.2 Focused Refinement + Final Verification. Do not mark Phase 14.2 COMPLETE. Do not start Phase 14.3.

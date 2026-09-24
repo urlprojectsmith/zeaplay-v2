@@ -13,14 +13,21 @@ import {
   AutomationActionType,
   AutomationConditionOperator,
   AutomationExecutionStatus,
+  NotificationCategory,
+  NotificationEntityType,
+  NotificationPriority,
+  NotificationType,
   AutomationStepExecutionStatus,
   AutomationWorkflowNodeType,
+  MembershipStatus,
   Prisma,
 } from '@prisma/client';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { NotificationRouterService } from '../notifications/notification-router.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import {
   AUTOMATION_EXECUTION_JOB_TYPE,
   AUTOMATION_EXECUTION_QUEUE,
@@ -79,6 +86,8 @@ export class AutomationExecutionService {
     private readonly queue?: Queue<{ executionId: string }>,
     @Optional() private readonly policy?: AutomationPolicyService,
     @Optional() private readonly audit?: AuditService,
+    @Optional() private readonly realtime?: RealtimeService,
+    @Optional() private readonly notifications?: NotificationRouterService,
   ) {}
 
   async createForTriggerMatch(
@@ -86,9 +95,14 @@ export class AutomationExecutionService {
     client: Tx | PrismaService = this.prisma,
   ): Promise<{ id: string } | null> {
     if (this.policy && client === this.prisma) {
-      return this.prisma.$transaction((tx) => this.createForTriggerMatch(triggerMatchId, tx), {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      });
+      const created = await this.prisma.$transaction(
+        (tx) => this.createForTriggerMatch(triggerMatchId, tx),
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+      await this.publishExecutionRealtime(created?.id ?? null, 'AUTOMATION_EXECUTION_CREATED');
+      return created;
     }
     const match = await client.automationTriggerMatch.findUnique({
       where: { id: triggerMatchId },
@@ -176,9 +190,13 @@ export class AutomationExecutionService {
     };
 
     try {
-      return this.policy
+      const created = this.policy
         ? await this.policy.withWorkspaceQuotaLock(match.workspaceId, client as Tx, 11_801, create)
         : await create();
+      if (client === this.prisma) {
+        await this.publishExecutionRealtime(created?.id ?? null, 'AUTOMATION_EXECUTION_CREATED');
+      }
+      return created;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         return client.automationExecution.findFirst({
@@ -237,6 +255,7 @@ export class AutomationExecutionService {
         where: { id: execution.id, status: AutomationExecutionStatus.PENDING_QUEUE },
         data: { status: AutomationExecutionStatus.QUEUED, queuedAt: new Date() },
       });
+      await this.publishExecutionRealtime(execution.id, 'AUTOMATION_EXECUTION_STATUS_CHANGED');
       enqueued += 1;
     }
     return { enqueued };
@@ -513,6 +532,7 @@ export class AutomationExecutionService {
       });
     });
     if (!claimed) return;
+    await this.publishExecutionRealtime(executionId, 'AUTOMATION_EXECUTION_STATUS_CHANGED');
     if (claimed.automationDepth >= AUTOMATION_MAX_FUTURE_DEPTH) {
       await this.blockExecution(executionId, 'AUTOMATION_MAX_DEPTH_EXCEEDED');
       return;
@@ -619,6 +639,7 @@ export class AutomationExecutionService {
         finishedAt: new Date(),
       },
     });
+    await this.publishExecutionRealtime(executionId, 'AUTOMATION_EXECUTION_STATUS_CHANGED');
   }
 
   private async nextEdgeForNode(
@@ -909,6 +930,58 @@ export class AutomationExecutionService {
         },
       }),
     ]);
+    await this.publishExecutionRealtime(
+      executionId,
+      exhausted ? 'AUTOMATION_DEAD_LETTERED' : 'AUTOMATION_EXECUTION_STATUS_CHANGED',
+    );
+    await this.notifyAutomationFailure(executionId, exhausted);
+  }
+
+  private async notifyAutomationFailure(executionId: string, deadLettered: boolean) {
+    if (!this.notifications) return;
+    try {
+      const execution = await this.prisma.automationExecution.findUnique({
+        where: { id: executionId },
+        select: {
+          id: true,
+          workspaceId: true,
+          failureCode: true,
+          workflow: {
+            select: {
+              id: true,
+              name: true,
+              createdByMembershipId: true,
+              createdByMembership: { select: { status: true } },
+            },
+          },
+        },
+      });
+      if (!execution || execution.workflow.createdByMembership.status !== MembershipStatus.ACTIVE) {
+        return;
+      }
+      const type = deadLettered
+        ? NotificationType.AUTOMATION_DEAD_LETTERED
+        : NotificationType.AUTOMATION_EXECUTION_FAILED;
+      await this.notifications.route({
+        workspaceId: execution.workspaceId,
+        recipientMembershipId: execution.workflow.createdByMembershipId,
+        category: NotificationCategory.AUTOMATION,
+        type,
+        title: deadLettered ? 'Automation dead lettered' : 'Automation failed',
+        message: `${execution.workflow.name} ${deadLettered ? 'exhausted retries' : 'failed'}.`,
+        entityType: NotificationEntityType.AUTOMATION_EXECUTION,
+        entityId: execution.id,
+        priority: deadLettered ? NotificationPriority.URGENT : NotificationPriority.IMPORTANT,
+        dedupeKey: `automation:${execution.id}:${deadLettered ? 'dead-lettered' : 'failed'}`,
+        metadata: { executionId: execution.id, workflowId: execution.workflow.id },
+        emailTemplateData: {
+          workflowName: execution.workflow.name,
+          entityId: execution.id,
+        },
+      });
+    } catch (error) {
+      this.logger.warn({ executionId, error, message: 'Automation notification routing failed' });
+    }
   }
 
   private async blockExecution(executionId: string, code: string) {
@@ -919,6 +992,34 @@ export class AutomationExecutionService {
         failureCode: code,
         failureMessage: safeMessage(code),
         finishedAt: new Date(),
+      },
+    });
+    await this.publishExecutionRealtime(executionId, 'AUTOMATION_EXECUTION_STATUS_CHANGED');
+  }
+
+  private async publishExecutionRealtime(
+    executionId: string | null,
+    eventType:
+      | 'AUTOMATION_EXECUTION_CREATED'
+      | 'AUTOMATION_EXECUTION_STATUS_CHANGED'
+      | 'AUTOMATION_DEAD_LETTERED',
+  ) {
+    if (!executionId) return;
+    if (!('findUnique' in this.prisma.automationExecution)) return;
+    const execution = await this.prisma.automationExecution.findUnique({
+      where: { id: executionId },
+      select: { id: true, workspaceId: true, status: true, workflowId: true },
+    });
+    if (!execution) return;
+    await this.realtime?.publishWorkspace({
+      eventType,
+      workspaceId: execution.workspaceId,
+      entityType: 'AUTOMATION_EXECUTION',
+      entityId: execution.id,
+      payload: {
+        executionId: execution.id,
+        workflowId: execution.workflowId,
+        status: execution.status,
       },
     });
   }

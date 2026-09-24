@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import {
+  AssetLifecycle,
   AssetStatus,
   AttachmentType,
   AutomationDomainEventEntityType,
@@ -65,7 +66,9 @@ import { AutomationDomainEventsService } from '../automation/automation-domain-e
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationReminderService } from '../notifications/notification-reminder.service';
+import { NotificationRouterService } from '../notifications/notification-router.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import {
   BulkTaskIdsDto,
   BulkTaskMembershipsDto,
@@ -144,8 +147,14 @@ const missingAutomationDomainEventsService = {
   evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
 } as unknown as AutomationDomainEventsService;
 const missingNotificationsService = {
-  createNotification: () => Promise.resolve(null),
-} as unknown as NotificationsService;
+  route: () => Promise.resolve({ inApp: null, emailDeliveryId: null }),
+} as unknown as NotificationRouterService;
+const missingNotificationReminderService = {
+  scheduleTaskReminders: () => Promise.resolve(undefined),
+} as unknown as NotificationReminderService;
+const missingRealtimeService = {
+  publishWorkspace: () => Promise.resolve(undefined),
+} as unknown as RealtimeService;
 
 @Injectable()
 export class TasksService {
@@ -165,7 +174,11 @@ export class TasksService {
     @Optional()
     private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
     @Optional()
-    private readonly notifications: NotificationsService = missingNotificationsService,
+    private readonly notifications: NotificationRouterService = missingNotificationsService,
+    @Optional()
+    private readonly notificationReminders: NotificationReminderService = missingNotificationReminderService,
+    @Optional()
+    private readonly realtime: RealtimeService = missingRealtimeService,
   ) {}
 
   async create(
@@ -407,6 +420,20 @@ export class TasksService {
       tenant.workspaceMembershipId ?? null,
     );
     await this.evaluateAutomationEvents(eventIds);
+    await this.scheduleTaskNotificationReminders(tenant.workspaceId, task);
+    await this.realtime.publishWorkspace({
+      eventType: 'TASK_CREATED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'TASK',
+      entityId: task.id,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        taskId: task.id,
+        statusDefinitionId: task.statusDefinition.id,
+        assigneeCount: assigneeIds.length,
+        projectCount: projectIds.length,
+      },
+    });
     return serializeTaskDetail(task, tenant);
   }
 
@@ -1137,6 +1164,7 @@ export class TasksService {
         changed: Object.keys(dto).filter((key) => dto[key as keyof typeof dto] !== undefined),
       },
     });
+    await this.scheduleTaskNotificationReminders(tenant.workspaceId, task);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -2588,6 +2616,14 @@ export class TasksService {
         });
       }, serializableTransaction)
       .catch(mapHierarchyWriteError);
+    await this.realtime.publishWorkspace({
+      eventType: 'TASK_DELETED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'TASK',
+      entityId: null,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: { taskIds: dto.taskIds, changedCount: dto.taskIds.length },
+    });
     return bulkResult(dto.taskIds.length, dto.taskIds.length);
   }
 
@@ -3188,6 +3224,7 @@ export class TasksService {
     correlationId: string,
   ) {
     await this.assertTask(tenant.workspaceId, taskId);
+    const uploadedByMembershipId = requireUploadMembership(tenant);
     const filename = sanitizeFilename(dto.filename);
     const displayName = sanitizeFilename(dto.displayName ?? filename);
     const mimeType = sanitizeMimeType(dto.mimeType);
@@ -3204,35 +3241,39 @@ export class TasksService {
     const uploadExpiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
     const sizeBytes = BigInt(dto.sizeBytes);
     const created = await this.prisma.$transaction(async (tx) => {
-      const workspace = await tx.workspace.findUniqueOrThrow({
-        where: { id: tenant.workspaceId },
-        select: { storageUsedBytes: true, storageLimitBytes: true },
-      });
-      if (workspace.storageUsedBytes + sizeBytes > workspace.storageLimitBytes) {
-        throw new PayloadTooLargeException('Workspace storage limit would be exceeded.');
-      }
-      await tx.workspace.update({
-        where: { id: tenant.workspaceId },
-        data: { storageUsedBytes: { increment: sizeBytes } },
-      });
+      await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
       const asset = await tx.asset.create({
         data: {
           id: assetId,
           workspaceId: tenant.workspaceId,
           projectId: null,
           createdById: tenant.userId,
+          uploadedByMembershipId,
           originalFilename: filename,
           displayName,
           storageBucket: this.env.MINIO_BUCKET,
+          storageProvider: 'MINIO',
           storageKey,
           mimeType,
           extension,
           sizeBytes,
           status: AssetStatus.UPLOADING,
           uploadExpiresAt,
+          sourceModule: 'TASK',
+          sourceEntityType: 'TASK',
+          sourceEntityId: taskId,
           metadata: { correlationId, taskId },
         },
         select: attachmentAssetSelect,
+      });
+      await tx.storageUploadReservation.create({
+        data: {
+          workspaceId: tenant.workspaceId,
+          fileId: asset.id,
+          membershipId: uploadedByMembershipId,
+          reservedBytes: sizeBytes,
+          expiresAt: uploadExpiresAt,
+        },
       });
       const attachment = await tx.attachment.create({
         data: {
@@ -3277,6 +3318,7 @@ export class TasksService {
     }
     if (asset.status === AssetStatus.UPLOADING) {
       if (!asset.uploadExpiresAt || asset.uploadExpiresAt <= new Date()) {
+        await releaseUploadReservation(this.prisma, asset.id);
         throw new GoneException('Upload authorization has expired.');
       }
       const object = await this.storage.getMetadata(asset.storageKey).catch(() => {
@@ -3288,18 +3330,21 @@ export class TasksService {
       if (object.size !== dto.sizeBytes || BigInt(object.size) !== asset.sizeBytes) {
         throw new BadRequestException('Uploaded object size does not match the authorized size.');
       }
-      await this.prisma.asset.update({
-        where: { id_workspaceId: { id: asset.id, workspaceId: tenant.workspaceId } },
-        data: {
-          status: AssetStatus.PROCESSING,
-          metadata: {
-            ...withoutUndefined({
-              ...(isRecord(asset.metadata) ? asset.metadata : {}),
-              etag: object.etag,
-              uploadedContentType: object.contentType,
-            }),
+      await this.prisma.$transaction(async (tx) => {
+        await consumeUploadReservation(tx, asset.id);
+        await tx.asset.update({
+          where: { id_workspaceId: { id: asset.id, workspaceId: tenant.workspaceId } },
+          data: {
+            status: AssetStatus.PROCESSING,
+            metadata: {
+              ...withoutUndefined({
+                ...(isRecord(asset.metadata) ? asset.metadata : {}),
+                etag: object.etag,
+                uploadedContentType: object.contentType,
+              }),
+            },
           },
-        },
+        });
       });
     } else if (asset.status !== AssetStatus.PROCESSING && asset.status !== AssetStatus.READY) {
       throw new ConflictException('Attachment file is not awaiting upload completion.');
@@ -3445,7 +3490,11 @@ export class TasksService {
     if (link.attachment.type !== AttachmentType.FILE || !link.attachment.asset) {
       throw new ConflictException('Attachment is not a downloadable file.');
     }
-    if (link.attachment.asset.deletedAt || link.attachment.asset.status !== AssetStatus.READY) {
+    if (
+      link.attachment.asset.deletedAt ||
+      link.attachment.asset.status !== AssetStatus.READY ||
+      !isAssetLifecycleDownloadable(link.attachment.asset.lifecycle)
+    ) {
       throw new ConflictException('Attachment file is not ready for download.');
     }
     const downloadUrl = await this.storage.createPresignedDownloadUrl(
@@ -3687,6 +3736,22 @@ export class TasksService {
       );
     }
     await this.evaluateAutomationEvents(eventIds);
+    await this.realtime.publishWorkspace({
+      eventType:
+        dto.statusDefinitionId && dto.statusDefinitionId !== existing.statusDefinitionId
+          ? 'TASK_STATUS_CHANGED'
+          : 'TASK_UPDATED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'TASK',
+      entityId: taskId,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        taskId,
+        changedFields,
+        statusDefinitionId: task.statusDefinition.id,
+      },
+    });
+    await this.scheduleTaskNotificationReminders(tenant.workspaceId, task);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3792,6 +3857,20 @@ export class TasksService {
       );
     }
     await this.evaluateAutomationEvents(eventIds);
+    await this.realtime.publishWorkspace({
+      eventType: 'TASK_STATUS_CHANGED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'TASK',
+      entityId: taskId,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        taskId,
+        fromStatusDefinitionId: existing.statusDefinitionId,
+        toStatusDefinitionId: status.id,
+        terminal: status.isTerminal,
+      },
+    });
+    await this.scheduleTaskNotificationReminders(tenant.workspaceId, task);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3842,6 +3921,19 @@ export class TasksService {
       entityId: taskId,
       metadata: { count: membershipIds.length },
     });
+    await this.realtime.publishWorkspace({
+      eventType: 'TASK_ASSIGNED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'TASK',
+      entityId: taskId,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        taskId,
+        assigneeCount: membershipIds.length,
+        newlyAssignedCount: newlyAssignedIds.length,
+      },
+    });
+    await this.scheduleTaskNotificationReminders(tenant.workspaceId, task);
     return serializeTaskDetail(task, tenant);
   }
 
@@ -3855,7 +3947,7 @@ export class TasksService {
     const actorMembershipId = tenant.workspaceMembershipId ?? null;
     for (const membershipId of membershipIds) {
       if (actorMembershipId && membershipId === actorMembershipId) continue;
-      await this.notifications.createNotification({
+      await this.notifications.route({
         tx,
         workspaceId: tenant.workspaceId,
         recipientMembershipId: membershipId,
@@ -3868,8 +3960,23 @@ export class TasksService {
         entityId: taskId,
         dedupeKey: `task:${taskId}:assigned:${membershipId}`,
         metadata: { taskId },
+        emailTemplateData: { taskTitle: title, entityId: taskId },
       });
     }
+  }
+
+  private async scheduleTaskNotificationReminders(
+    workspaceId: string,
+    task: Pick<TaskDetailRecord, 'id' | 'title' | 'dueAt' | 'assignees' | 'statusDefinition'>,
+  ) {
+    await this.notificationReminders.scheduleTaskReminders({
+      workspaceId,
+      taskId: task.id,
+      taskTitle: task.title,
+      dueAt: task.dueAt,
+      assigneeMembershipIds: task.assignees.map((assignee) => assignee.membership.id),
+      terminal: task.statusDefinition.isTerminal,
+    });
   }
 
   async replaceFollowers(
@@ -6212,6 +6319,7 @@ const attachmentAssetSelect = {
   sizeBytes: true,
   checksum: true,
   status: true,
+  lifecycle: true,
   metadata: true,
   uploadExpiresAt: true,
   deletedAt: true,
@@ -6253,7 +6361,7 @@ const taskAttachmentSelect = {
 const reusableAttachmentSelect = {
   id: true,
   type: true,
-  asset: { select: { id: true, status: true, deletedAt: true } },
+  asset: { select: { id: true, status: true, lifecycle: true, deletedAt: true } },
 } satisfies Prisma.AttachmentSelect;
 
 const completionMembershipSelect = {
@@ -7680,6 +7788,79 @@ function bulkResult(requestedCount: number, changedCount: number) {
     changedCount,
     unchangedCount: requestedCount - changedCount,
   };
+}
+
+function requireUploadMembership(tenant: WorkspaceTenantContext) {
+  if (!tenant.workspaceMembershipId) {
+    throw new BadRequestException('WORKSPACE_MEMBERSHIP_REQUIRED');
+  }
+  return tenant.workspaceMembershipId;
+}
+
+function isAssetLifecycleDownloadable(lifecycle: AssetLifecycle) {
+  return lifecycle === AssetLifecycle.ACTIVE || lifecycle === AssetLifecycle.ARCHIVED;
+}
+
+async function assertStorageQuotaAvailable(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  requestedBytes: bigint,
+) {
+  await tx.$queryRaw<Array<{ lock: string }>>`
+    SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))::text AS lock
+  `;
+  const workspace = await tx.workspace.findUniqueOrThrow({
+    where: { id: workspaceId },
+    select: { storageLimitBytes: true },
+  });
+  const [used, reserved] = await Promise.all([
+    tx.asset.aggregate({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        status: { in: [AssetStatus.UPLOADED, AssetStatus.PROCESSING, AssetStatus.READY] },
+      },
+      _sum: { sizeBytes: true },
+    }),
+    tx.storageUploadReservation.aggregate({
+      where: {
+        workspaceId,
+        consumedAt: null,
+        releasedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      _sum: { reservedBytes: true },
+    }),
+  ]);
+  if (
+    (used._sum.sizeBytes ?? 0n) + (reserved._sum.reservedBytes ?? 0n) + requestedBytes >
+    workspace.storageLimitBytes
+  ) {
+    throw new PayloadTooLargeException('STORAGE_QUOTA_EXCEEDED');
+  }
+}
+
+async function consumeUploadReservation(tx: Prisma.TransactionClient, fileId: string) {
+  const reservation = await tx.storageUploadReservation.findUnique({
+    where: { fileId },
+    select: { id: true, expiresAt: true, consumedAt: true, releasedAt: true },
+  });
+  if (!reservation || reservation.releasedAt || reservation.expiresAt <= new Date()) {
+    throw new GoneException('UPLOAD_RESERVATION_EXPIRED');
+  }
+  if (!reservation.consumedAt) {
+    await tx.storageUploadReservation.update({
+      where: { id: reservation.id },
+      data: { consumedAt: new Date() },
+    });
+  }
+}
+
+async function releaseUploadReservation(prisma: PrismaService, fileId: string) {
+  await prisma.storageUploadReservation.updateMany({
+    where: { fileId, consumedAt: null, releasedAt: null },
+    data: { releasedAt: new Date() },
+  });
 }
 
 function uuidParams(ids: string[]) {

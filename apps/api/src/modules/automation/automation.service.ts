@@ -9,6 +9,7 @@ import { AutomationWorkflowVersionState, Prisma } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { AUTOMATION_DEFINITION_VERSION, defaultAutomationDefinition } from './automation.constants';
 import { AutomationPolicyService } from './automation-policy.service';
 import {
@@ -38,6 +39,7 @@ export class AutomationService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Optional() private readonly policy?: AutomationPolicyService,
+    @Optional() private readonly realtime?: RealtimeService,
   ) {}
 
   async list(tenant: WorkspaceTenantContext, query: AutomationWorkflowQueryDto) {
@@ -136,6 +138,7 @@ export class AutomationService {
       name: workflow.name,
       status: workflow.status,
     });
+    await this.publishWorkflowRealtime(tenant, workflow.id);
     return serializeWorkflowDetail(workflow);
   }
 
@@ -213,6 +216,7 @@ export class AutomationService {
       changed: Object.keys(dto),
       name: workflow.name,
     });
+    await this.publishWorkflowRealtime(tenant, workflowId, Object.keys(dto));
     return serializeWorkflowDetail(workflow);
   }
 
@@ -255,6 +259,7 @@ export class AutomationService {
     await this.record(tenant, 'automation.draft_updated', workflowId, {
       versionId: updated.id,
     });
+    await this.publishWorkflowRealtime(tenant, workflowId, ['draft']);
     return serializeVersion(updated);
   }
 
@@ -324,7 +329,23 @@ export class AutomationService {
       versionId: result.id,
       versionNumber: result.versionNumber,
     });
+    await this.publishWorkflowRealtime(tenant, workflowId, ['published']);
     return serializeVersion(result);
+  }
+
+  private async publishWorkflowRealtime(
+    tenant: WorkspaceTenantContext,
+    workflowId: string,
+    changedFields: string[] = [],
+  ) {
+    await this.realtime?.publishWorkspace({
+      eventType: 'AUTOMATION_WORKFLOW_UPDATED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'AUTOMATION_WORKFLOW',
+      entityId: workflowId,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: { workflowId, changedFields },
+    });
   }
 
   async createDraftFromVersion(

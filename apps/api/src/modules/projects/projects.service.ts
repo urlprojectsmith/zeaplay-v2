@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import {
+  AssetLifecycle,
   AssetStatus,
   AttachmentType,
   AutomationDomainEventEntityType,
@@ -48,6 +49,8 @@ import { AutomationDomainEventsService } from '../automation/automation-domain-e
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
 import { GamificationService } from '../gamification/gamification.service';
+import { NotificationReminderService } from '../notifications/notification-reminder.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
 import {
@@ -84,6 +87,12 @@ const missingAutomationDomainEventsService = {
   recordDomainEventInTransaction: () => Promise.resolve({ id: null }),
   evaluateDomainEvent: () => Promise.resolve({ domainEventId: null, matched: 0 }),
 } as unknown as AutomationDomainEventsService;
+const missingRealtimeService = {
+  publishWorkspace: () => Promise.resolve(undefined),
+} as unknown as RealtimeService;
+const missingNotificationReminderService = {
+  scheduleProjectReminder: () => Promise.resolve(undefined),
+} as unknown as NotificationReminderService;
 
 @Injectable()
 export class ProjectsService {
@@ -102,6 +111,10 @@ export class ProjectsService {
     @Optional() private readonly gamification: GamificationService = missingGamificationService,
     @Optional()
     private readonly automationEvents: AutomationDomainEventsService = missingAutomationDomainEventsService,
+    @Optional()
+    private readonly notificationReminders: NotificationReminderService = missingNotificationReminderService,
+    @Optional()
+    private readonly realtime: RealtimeService = missingRealtimeService,
   ) {}
 
   async create(
@@ -203,6 +216,19 @@ export class ProjectsService {
       tenant.workspaceMembershipId ?? null,
     );
     await this.evaluateAutomationEvents(eventIds);
+    await this.realtime.publishWorkspace({
+      eventType: 'PROJECT_CREATED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'PROJECT',
+      entityId: project.id,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        projectId: project.id,
+        statusDefinitionId: project.statusDefinitionId,
+        ownerMembershipId: project.ownerMembershipId,
+      },
+    });
+    await this.scheduleProjectNotificationReminder(tenant.workspaceId, project);
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -355,6 +381,22 @@ export class ProjectsService {
         tenant.workspaceMembershipId ?? null,
       );
     }
+    await this.realtime.publishWorkspace({
+      eventType:
+        status && status.id !== existing.statusDefinitionId
+          ? 'PROJECT_STATUS_CHANGED'
+          : 'PROJECT_UPDATED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'PROJECT',
+      entityId: id,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        projectId: id,
+        changedFields: changed,
+        statusDefinitionId: project.statusDefinitionId,
+      },
+    });
+    await this.scheduleProjectNotificationReminder(tenant.workspaceId, project);
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -451,6 +493,19 @@ export class ProjectsService {
       );
     }
     await this.evaluateAutomationEvents(eventIds);
+    await this.realtime.publishWorkspace({
+      eventType: 'PROJECT_STATUS_CHANGED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'PROJECT',
+      entityId: id,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: {
+        projectId: id,
+        fromStatusDefinitionId: existing.statusDefinitionId,
+        toStatusDefinitionId: status.id,
+        terminal: status.isTerminal,
+      },
+    });
     return serializeProject(
       project,
       await this.progressSummaryForProjects(tenant.workspaceId, [project]),
@@ -478,7 +533,34 @@ export class ProjectsService {
       id,
       tenant.workspaceMembershipId ?? null,
     );
+    await this.realtime.publishWorkspace({
+      eventType: 'PROJECT_DELETED',
+      workspaceId: tenant.workspaceId,
+      entityType: 'PROJECT',
+      entityId: id,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: { projectId: id },
+    });
+    await this.notificationReminders.scheduleProjectReminder({
+      workspaceId: tenant.workspaceId,
+      projectId: id,
+      projectName: '',
+      dueAt: null,
+      ownerMembershipId: null,
+      terminal: true,
+    });
     return { id, deleted: true };
+  }
+
+  private async scheduleProjectNotificationReminder(workspaceId: string, project: ProjectRecord) {
+    await this.notificationReminders.scheduleProjectReminder({
+      workspaceId,
+      projectId: project.id,
+      projectName: project.name,
+      dueAt: project.dueAt,
+      ownerMembershipId: project.ownerMembershipId,
+      terminal: Boolean(project.statusDefinition?.isTerminal || project.archivedAt),
+    });
   }
 
   async listMembers(tenant: WorkspaceTenantContext, id: string, query: ProjectMemberQueryDto) {
@@ -608,6 +690,7 @@ export class ProjectsService {
       entityId: id,
       metadata: { fromMembershipId: project.ownerMembershipId, toMembershipId: owner.id },
     });
+    await this.scheduleProjectNotificationReminder(tenant.workspaceId, updated);
     return serializeProject(
       updated,
       await this.progressSummaryForProjects(tenant.workspaceId, [updated]),
@@ -668,6 +751,7 @@ export class ProjectsService {
     correlationId: string,
   ) {
     await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
+    const uploadedByMembershipId = requireUploadMembership(tenant);
     const filename = sanitizeFilename(dto.filename);
     const displayName = sanitizeFilename(dto.displayName ?? filename);
     const mimeType = sanitizeMimeType(dto.mimeType);
@@ -684,35 +768,39 @@ export class ProjectsService {
     const uploadExpiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
     const sizeBytes = BigInt(dto.sizeBytes);
     const created = await this.prisma.$transaction(async (tx) => {
-      const workspace = await tx.workspace.findUniqueOrThrow({
-        where: { id: tenant.workspaceId },
-        select: { storageUsedBytes: true, storageLimitBytes: true },
-      });
-      if (workspace.storageUsedBytes + sizeBytes > workspace.storageLimitBytes) {
-        throw new PayloadTooLargeException('Workspace storage limit would be exceeded.');
-      }
-      await tx.workspace.update({
-        where: { id: tenant.workspaceId },
-        data: { storageUsedBytes: { increment: sizeBytes } },
-      });
+      await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
       const asset = await tx.asset.create({
         data: {
           id: assetId,
           workspaceId: tenant.workspaceId,
           projectId: id,
           createdById: tenant.userId,
+          uploadedByMembershipId,
           originalFilename: filename,
           displayName,
           storageBucket: this.env.MINIO_BUCKET,
+          storageProvider: 'MINIO',
           storageKey,
           mimeType,
           extension,
           sizeBytes,
           status: AssetStatus.UPLOADING,
           uploadExpiresAt,
+          sourceModule: 'PROJECT',
+          sourceEntityType: 'PROJECT',
+          sourceEntityId: id,
           metadata: { correlationId, projectId: id },
         },
         select: attachmentAssetSelect,
+      });
+      await tx.storageUploadReservation.create({
+        data: {
+          workspaceId: tenant.workspaceId,
+          fileId: asset.id,
+          membershipId: uploadedByMembershipId,
+          reservedBytes: sizeBytes,
+          expiresAt: uploadExpiresAt,
+        },
       });
       const attachment = await tx.attachment.create({
         data: {
@@ -757,6 +845,7 @@ export class ProjectsService {
     }
     if (asset.status === AssetStatus.UPLOADING) {
       if (!asset.uploadExpiresAt || asset.uploadExpiresAt <= new Date()) {
+        await releaseUploadReservation(this.prisma, asset.id);
         throw new GoneException('Upload authorization has expired.');
       }
       const object = await this.storage.getMetadata(asset.storageKey).catch(() => {
@@ -768,18 +857,21 @@ export class ProjectsService {
       if (object.size !== dto.sizeBytes || BigInt(object.size) !== asset.sizeBytes) {
         throw new BadRequestException('Uploaded object size does not match the authorized size.');
       }
-      await this.prisma.asset.update({
-        where: { id_workspaceId: { id: asset.id, workspaceId: tenant.workspaceId } },
-        data: {
-          status: AssetStatus.PROCESSING,
-          metadata: {
-            ...withoutUndefined({
-              ...(isRecord(asset.metadata) ? asset.metadata : {}),
-              etag: object.etag,
-              uploadedContentType: object.contentType,
-            }),
+      await this.prisma.$transaction(async (tx) => {
+        await consumeUploadReservation(tx, asset.id);
+        await tx.asset.update({
+          where: { id_workspaceId: { id: asset.id, workspaceId: tenant.workspaceId } },
+          data: {
+            status: AssetStatus.PROCESSING,
+            metadata: {
+              ...withoutUndefined({
+                ...(isRecord(asset.metadata) ? asset.metadata : {}),
+                etag: object.etag,
+                uploadedContentType: object.contentType,
+              }),
+            },
           },
-        },
+        });
       });
     } else if (asset.status !== AssetStatus.PROCESSING && asset.status !== AssetStatus.READY) {
       throw new ConflictException('Attachment file is not awaiting upload completion.');
@@ -927,7 +1019,11 @@ export class ProjectsService {
     if (link.attachment.type !== AttachmentType.FILE || !link.attachment.asset) {
       throw new ConflictException('Attachment is not a downloadable file.');
     }
-    if (link.attachment.asset.deletedAt || link.attachment.asset.status !== AssetStatus.READY) {
+    if (
+      link.attachment.asset.deletedAt ||
+      link.attachment.asset.status !== AssetStatus.READY ||
+      !isAssetLifecycleDownloadable(link.attachment.asset.lifecycle)
+    ) {
       throw new ConflictException('Attachment file is not ready for download.');
     }
     const downloadUrl = await this.storage.createPresignedDownloadUrl(
@@ -2095,6 +2191,7 @@ const attachmentAssetSelect = {
   sizeBytes: true,
   checksum: true,
   status: true,
+  lifecycle: true,
   metadata: true,
   uploadExpiresAt: true,
   deletedAt: true,
@@ -2136,7 +2233,7 @@ const projectAttachmentSelect = {
 const reusableAttachmentSelect = {
   id: true,
   type: true,
-  asset: { select: { id: true, status: true, deletedAt: true } },
+  asset: { select: { id: true, status: true, lifecycle: true, deletedAt: true } },
 } satisfies Prisma.AttachmentSelect;
 
 const projectActivityActions = [
@@ -2706,6 +2803,79 @@ function uniqueIds(ids: string[]) {
 
 function hasPermission(tenant: WorkspaceTenantContext, permission: string) {
   return tenant.permissions.includes('*') || tenant.permissions.includes(permission);
+}
+
+function requireUploadMembership(tenant: WorkspaceTenantContext) {
+  if (!tenant.workspaceMembershipId) {
+    throw new BadRequestException('WORKSPACE_MEMBERSHIP_REQUIRED');
+  }
+  return tenant.workspaceMembershipId;
+}
+
+function isAssetLifecycleDownloadable(lifecycle: AssetLifecycle) {
+  return lifecycle === AssetLifecycle.ACTIVE || lifecycle === AssetLifecycle.ARCHIVED;
+}
+
+async function assertStorageQuotaAvailable(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  requestedBytes: bigint,
+) {
+  await tx.$queryRaw<Array<{ lock: string }>>`
+    SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))::text AS lock
+  `;
+  const workspace = await tx.workspace.findUniqueOrThrow({
+    where: { id: workspaceId },
+    select: { storageLimitBytes: true },
+  });
+  const [used, reserved] = await Promise.all([
+    tx.asset.aggregate({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        status: { in: [AssetStatus.UPLOADED, AssetStatus.PROCESSING, AssetStatus.READY] },
+      },
+      _sum: { sizeBytes: true },
+    }),
+    tx.storageUploadReservation.aggregate({
+      where: {
+        workspaceId,
+        consumedAt: null,
+        releasedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      _sum: { reservedBytes: true },
+    }),
+  ]);
+  if (
+    (used._sum.sizeBytes ?? 0n) + (reserved._sum.reservedBytes ?? 0n) + requestedBytes >
+    workspace.storageLimitBytes
+  ) {
+    throw new PayloadTooLargeException('STORAGE_QUOTA_EXCEEDED');
+  }
+}
+
+async function consumeUploadReservation(tx: Prisma.TransactionClient, fileId: string) {
+  const reservation = await tx.storageUploadReservation.findUnique({
+    where: { fileId },
+    select: { id: true, expiresAt: true, consumedAt: true, releasedAt: true },
+  });
+  if (!reservation || reservation.releasedAt || reservation.expiresAt <= new Date()) {
+    throw new GoneException('UPLOAD_RESERVATION_EXPIRED');
+  }
+  if (!reservation.consumedAt) {
+    await tx.storageUploadReservation.update({
+      where: { id: reservation.id },
+      data: { consumedAt: new Date() },
+    });
+  }
+}
+
+async function releaseUploadReservation(prisma: PrismaService, fileId: string) {
+  await prisma.storageUploadReservation.updateMany({
+    where: { fileId, consumedAt: null, releasedAt: null },
+    data: { releasedAt: new Date() },
+  });
 }
 
 const serializableTransaction = {

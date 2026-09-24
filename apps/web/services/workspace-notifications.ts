@@ -29,13 +29,18 @@ export interface NotificationPreference {
 }
 
 export const notificationsKeys = {
-  all: (workspaceId: string | null) => ['workspace', workspaceId, 'notifications'] as const,
-  list: (workspaceId: string | null, state: 'all' | 'unread', category: string) =>
-    [...notificationsKeys.all(workspaceId), 'list', state, category] as const,
-  unreadCount: (workspaceId: string | null) =>
-    [...notificationsKeys.all(workspaceId), 'unread-count'] as const,
-  preferences: (workspaceId: string | null) =>
-    [...notificationsKeys.all(workspaceId), 'preferences'] as const,
+  all: (workspaceId: string | null, membershipId: string | null) =>
+    ['workspace', workspaceId, 'membership', membershipId, 'notifications'] as const,
+  list: (
+    workspaceId: string | null,
+    membershipId: string | null,
+    state: 'all' | 'unread',
+    category: string,
+  ) => [...notificationsKeys.all(workspaceId, membershipId), 'list', state, category] as const,
+  unreadCount: (workspaceId: string | null, membershipId: string | null) =>
+    [...notificationsKeys.all(workspaceId, membershipId), 'unread-count'] as const,
+  preferences: (workspaceId: string | null, membershipId: string | null) =>
+    [...notificationsKeys.all(workspaceId, membershipId), 'preferences'] as const,
 };
 
 export async function listWorkspaceNotifications(
@@ -97,7 +102,9 @@ export async function getWorkspaceNotificationPreferences(workspaceId: string) {
 
 export async function updateWorkspaceNotificationPreferences(
   workspaceId: string,
-  preferences: Array<Pick<NotificationPreference, 'category' | 'inAppEnabled' | 'mutedUntil'>>,
+  preferences: Array<
+    Pick<NotificationPreference, 'category' | 'inAppEnabled' | 'emailEnabled' | 'mutedUntil'>
+  >,
 ) {
   const response = await apiClient.request<NotificationPreference[]>(
     `/workspaces/${workspaceId}/notifications/preferences`,

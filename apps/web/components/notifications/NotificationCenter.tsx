@@ -33,26 +33,35 @@ export function NotificationCenter() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const workspaceId = useSessionStore((state) => state.selectedWorkspaceId);
+  const membershipId = useSessionStore(
+    (state) =>
+      state.agencies
+        .find((agency) => agency.id === state.selectedAgencyId)
+        ?.workspaces.find((workspace) => workspace.id === state.selectedWorkspaceId)
+        ?.membershipId ?? null,
+  );
   const accessToken = useSessionStore((state) => state.accessToken);
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<'all' | 'unread'>('all');
   const [category, setCategory] = useState('');
   const countQuery = useQuery({
-    queryKey: notificationsKeys.unreadCount(workspaceId),
+    queryKey: notificationsKeys.unreadCount(workspaceId, membershipId),
     queryFn: () => getWorkspaceNotificationUnreadCount(workspaceId as string),
-    enabled: Boolean(accessToken && workspaceId),
+    enabled: Boolean(accessToken && workspaceId && membershipId),
   });
   const listQuery = useQuery({
-    queryKey: notificationsKeys.list(workspaceId, state, category),
+    queryKey: notificationsKeys.list(workspaceId, membershipId, state, category),
     queryFn: () =>
       listWorkspaceNotifications(workspaceId as string, {
         state,
         category,
       }),
-    enabled: Boolean(accessToken && workspaceId && open),
+    enabled: Boolean(accessToken && workspaceId && membershipId && open),
   });
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: notificationsKeys.all(workspaceId) });
+    void queryClient.invalidateQueries({
+      queryKey: notificationsKeys.all(workspaceId, membershipId),
+    });
   };
   const readMutation = useMutation({
     mutationFn: (notificationId: string) =>
@@ -72,7 +81,7 @@ export function NotificationCenter() {
     setOpen(false);
     setState('all');
     setCategory('');
-  }, [workspaceId]);
+  }, [workspaceId, membershipId]);
   const unreadCount = countQuery.data?.count ?? 0;
   return (
     <>

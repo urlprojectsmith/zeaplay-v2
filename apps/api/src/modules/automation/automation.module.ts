@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 import { AutomationActionService } from './automation-action.service';
 import { AutomationDomainEventsService } from './automation-domain-events.service';
 import { AutomationExecutionProcessor } from './automation-execution.processor';
@@ -10,7 +12,7 @@ import { AutomationController } from './automation.controller';
 import { AutomationService } from './automation.service';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, NotificationsModule, WebhooksModule],
   controllers: [AutomationController, AutomationTemplateController],
   providers: [
     AutomationService,

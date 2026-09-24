@@ -207,7 +207,7 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           { labelKey: 'navigation.team', href: '/workspace/tasks/team', icon: Users },
           {
             labelKey: 'navigation.calendar',
-            href: '/workspace/tasks?view=calendar',
+            href: '/workspace/calendar',
             icon: CalendarDays,
           },
           { labelKey: 'navigation.gantt', href: '/workspace/tasks?view=gantt', icon: Activity },
@@ -248,6 +248,12 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
             href: '/workspace/automations',
             icon: Rocket,
             requiredPermissions: ['automation.view'],
+          },
+          {
+            labelKey: 'navigation.files',
+            href: '/workspace/files',
+            icon: FileText,
+            requiredPermissions: ['storage.view'],
           },
           disabled('navigation.docs', FileText),
           disabled('navigation.forms', ScrollText),

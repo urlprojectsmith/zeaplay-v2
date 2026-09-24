@@ -4,8 +4,12 @@ import { validateEnvironment } from '@zea-play/config';
 import {
   ASSET_PROCESSING_QUEUE,
   AUTOMATION_EXECUTION_QUEUE,
+  NOTIFICATION_EMAIL_QUEUE,
+  NOTIFICATION_REMINDER_QUEUE,
+  STORAGE_RETENTION_QUEUE,
   TASK_RECURRENCE_QUEUE,
   TICKET_SLA_QUEUE,
+  WEBHOOK_DELIVERY_QUEUE,
 } from './queue.constants';
 
 const env = validateEnvironment(process.env);
@@ -32,6 +36,10 @@ const env = validateEnvironment(process.env);
     BullModule.registerQueue({ name: TASK_RECURRENCE_QUEUE }),
     BullModule.registerQueue({ name: TICKET_SLA_QUEUE }),
     BullModule.registerQueue({ name: AUTOMATION_EXECUTION_QUEUE }),
+    BullModule.registerQueue({ name: NOTIFICATION_EMAIL_QUEUE }),
+    BullModule.registerQueue({ name: NOTIFICATION_REMINDER_QUEUE }),
+    BullModule.registerQueue({ name: STORAGE_RETENTION_QUEUE }),
+    BullModule.registerQueue({ name: WEBHOOK_DELIVERY_QUEUE }),
   ],
   exports: [BullModule],
 })

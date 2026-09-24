@@ -204,7 +204,7 @@ describe('NotificationsService', () => {
         workspaceId: 'workspace-1',
         recipientMembershipId: 'member-1',
       },
-      select: { id: true },
+      select: expect.objectContaining({ id: true, readAt: true }),
     });
     expect(prisma.notification.updateMany).toHaveBeenCalledWith({
       where: {
@@ -238,5 +238,76 @@ describe('NotificationsService', () => {
       }),
     ).resolves.toBeNull();
     expect(prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('preserves an existing read timestamp when mark read is retried', async () => {
+    const readAt = new Date('2026-09-24T01:00:00.000Z');
+    const prisma = createPrisma({
+      notification: {
+        ...createPrisma().notification,
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'notification-1',
+          workspaceId: 'workspace-1',
+          recipientMembershipId: 'member-1',
+          category: NotificationCategory.TASK,
+          type: NotificationType.TASK_ASSIGNED,
+          title: 'Task assigned',
+          message: 'You were assigned.',
+          entityType: NotificationEntityType.TASK,
+          entityId: '00000000-0000-4000-8000-000000000001',
+          actorMembershipId: null,
+          priority: NotificationPriority.NORMAL,
+          readAt,
+          metadata: {},
+          dedupeKey: 'task:1',
+          createdAt: new Date('2026-09-24T00:00:00.000Z'),
+          expiresAt: null,
+        }),
+        update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    });
+    const service = new NotificationsService(prisma as never);
+
+    await expect(service.markRead(tenant, 'notification-1')).resolves.toEqual(
+      expect.objectContaining({ readAt, unread: false }),
+    );
+    expect(prisma.notification.update).not.toHaveBeenCalled();
+  });
+
+  it('allows only explicitly critical system notifications to bypass mute', async () => {
+    const prisma = createPrisma({
+      notificationPreference: {
+        findUnique: jest.fn().mockResolvedValue({
+          inAppEnabled: false,
+          mutedUntil: new Date('2999-01-01T00:00:00.000Z'),
+        }),
+      },
+    });
+    const service = new NotificationsService(prisma as never);
+
+    await expect(
+      service.createNotification({
+        workspaceId: 'workspace-1',
+        recipientMembershipId: 'member-1',
+        category: NotificationCategory.TASK,
+        type: NotificationType.SYSTEM_ANNOUNCEMENT,
+        title: 'Task notice',
+        message: 'This is not system-critical.',
+        critical: true,
+      }),
+    ).resolves.toBeNull();
+
+    await expect(
+      service.createNotification({
+        workspaceId: 'workspace-1',
+        recipientMembershipId: 'member-1',
+        category: NotificationCategory.SYSTEM,
+        type: NotificationType.SYSTEM_ANNOUNCEMENT,
+        title: 'Security notice',
+        message: 'Important system notice.',
+        critical: true,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ category: NotificationCategory.SYSTEM }));
   });
 });

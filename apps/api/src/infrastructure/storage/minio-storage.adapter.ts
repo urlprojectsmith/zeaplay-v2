@@ -34,6 +34,10 @@ export class MinioStorageAdapter implements StorageAdapter {
   }
 
   async delete(key: string): Promise<void> {
+    await this.deleteObject(key);
+  }
+
+  async deleteObject(key: string): Promise<void> {
     await this.client.removeObject(this.bucket, normalizeObjectKey(key));
   }
 

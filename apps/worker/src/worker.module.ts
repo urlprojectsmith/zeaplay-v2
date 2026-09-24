@@ -7,8 +7,10 @@ import { QueueModule } from './queue/queue.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
 import { AssetProcessingProcessor } from './processors/asset-processing.processor';
+import { StorageRetentionProcessor } from './processors/storage-retention.processor';
 import { TaskRecurrenceProcessor } from './processors/task-recurrence.processor';
 import { TicketSlaProcessor } from './processors/ticket-sla.processor';
+import { WebhookDeliveryProcessor } from './processors/webhook-delivery.processor';
 
 @Module({
   imports: [
@@ -33,6 +35,12 @@ import { TicketSlaProcessor } from './processors/ticket-sla.processor';
     QueueModule,
     HealthModule,
   ],
-  providers: [AssetProcessingProcessor, TaskRecurrenceProcessor, TicketSlaProcessor],
+  providers: [
+    AssetProcessingProcessor,
+    TaskRecurrenceProcessor,
+    TicketSlaProcessor,
+    StorageRetentionProcessor,
+    WebhookDeliveryProcessor,
+  ],
 })
 export class WorkerModule {}

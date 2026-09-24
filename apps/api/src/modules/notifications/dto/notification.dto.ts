@@ -3,6 +3,7 @@ import { NotificationCategory, NotificationPriority } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  ArrayMaxSize,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -72,12 +73,17 @@ export class NotificationPreferenceItemDto {
   inAppEnabled?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  emailEnabled?: boolean;
+
+  @IsOptional()
   @IsDateString()
   mutedUntil?: string | null;
 }
 
 export class UpdateNotificationPreferencesDto {
   @IsArray()
+  @ArrayMaxSize(7)
   @ValidateNested({ each: true })
   @Type(() => NotificationPreferenceItemDto)
   preferences!: NotificationPreferenceItemDto[];

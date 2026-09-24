@@ -4,6 +4,7 @@ import { MetricsService } from '../../infrastructure/monitoring/metrics.service'
 import { RedisService } from '../../infrastructure/redis/redis.service';
 import type { StorageAdapter } from '../../infrastructure/storage/storage-adapter';
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
+import { RealtimeService } from '../realtime/realtime.service';
 
 @Injectable()
 export class HealthService {
@@ -11,6 +12,7 @@ export class HealthService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly metrics: MetricsService,
+    private readonly realtime: RealtimeService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
@@ -27,6 +29,7 @@ export class HealthService {
       postgres: await this.check('postgres', () => this.prisma.isHealthy()),
       redisCache: await this.check('redis-cache', () => this.redis.ping(this.redis.cache)),
       redisQueue: await this.check('redis-queue', () => this.redis.ping(this.redis.queue)),
+      realtimeFanout: this.realtimeFanout(),
       minio: await this.check('minio', () => this.storage.isHealthy()),
     };
 
@@ -45,5 +48,11 @@ export class HealthService {
       this.metrics.dependencyHealth.set({ dependency: name }, 0);
       return { status: 'unavailable' };
     }
+  }
+
+  private realtimeFanout() {
+    const healthy = this.realtime.isRedisFanoutHealthy();
+    this.metrics.dependencyHealth.set({ dependency: 'realtime-fanout' }, healthy ? 1 : 0);
+    return healthy ? { status: 'ok' } : { status: 'degraded', mode: 'process-local-sockets' };
   }
 }

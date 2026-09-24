@@ -21,4 +21,8 @@ export class StorageService {
   async getObject(key: string): Promise<Readable> {
     return this.client.getObject(this.env.MINIO_BUCKET, key);
   }
+
+  async deleteObject(key: string): Promise<void> {
+    await this.client.removeObject(this.env.MINIO_BUCKET, key);
+  }
 }

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
@@ -14,6 +15,7 @@ import {
 } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationListQueryDto, UpdateNotificationPreferencesDto } from './dto/notification.dto';
 
 const TITLE_MAX = 160;
@@ -21,6 +23,9 @@ const MESSAGE_MAX = 600;
 const METADATA_MAX_BYTES = 4000;
 const SENSITIVE_KEY_PATTERN =
   /(password|passwd|jwt|otp|api[-_]?key|authorization|auth[-_]?header|secret|token|raw[-_]?body)/i;
+const missingRealtimeService = {
+  publishMember: () => Promise.resolve(undefined),
+} as unknown as RealtimeService;
 
 export interface CreateNotificationInput {
   workspaceId: string;
@@ -42,7 +47,10 @@ export interface CreateNotificationInput {
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly realtime: RealtimeService = missingRealtimeService,
+  ) {}
 
   async createNotification(input: CreateNotificationInput) {
     const db = input.tx ?? this.prisma;
@@ -69,7 +77,11 @@ export class NotificationsService {
       db,
     );
     const now = new Date();
-    const bypass = Boolean(input.critical && isCriticalSystemNotification(input.type));
+    const bypass = Boolean(
+      input.critical &&
+      input.category === NotificationCategory.SYSTEM &&
+      isCriticalSystemNotification(input.type),
+    );
     if (
       !bypass &&
       (!preference.inAppEnabled || (preference.mutedUntil && preference.mutedUntil > now))
@@ -92,10 +104,12 @@ export class NotificationsService {
       expiresAt: input.expiresAt ?? null,
     };
     try {
-      return await db.notification.create({ data, select: notificationSelect });
+      const created = await db.notification.create({ data, select: notificationSelect });
+      if (!input.tx) await this.publishNotificationCreated(created);
+      return created;
     } catch (error) {
       if (isUniqueConstraintError(error) && data.dedupeKey) {
-        return db.notification.findFirst({
+        const existing = await db.notification.findFirst({
           where: {
             workspaceId: data.workspaceId,
             recipientMembershipId: data.recipientMembershipId,
@@ -103,6 +117,8 @@ export class NotificationsService {
           },
           select: notificationSelect,
         });
+        if (existing && !input.tx) await this.publishUnreadCountChanged(existing);
+        return existing;
       }
       throw error;
     }
@@ -168,6 +184,22 @@ export class NotificationsService {
       },
       data: { readAt: new Date() },
     });
+    if (result.count > 0) {
+      await this.realtime.publishMember(tenant.workspaceId, membershipId, {
+        eventType: 'NOTIFICATIONS_READ_ALL',
+        entityType: 'NOTIFICATION',
+        entityId: null,
+        actorMembershipId: tenant.workspaceMembershipId,
+        payload: { updatedCount: result.count },
+      });
+      await this.realtime.publishMember(tenant.workspaceId, membershipId, {
+        eventType: 'NOTIFICATION_UNREAD_COUNT_CHANGED',
+        entityType: 'NOTIFICATION',
+        entityId: null,
+        actorMembershipId: tenant.workspaceMembershipId,
+        payload: { updatedCount: result.count },
+      });
+    }
     return { updatedCount: result.count };
   }
 
@@ -204,10 +236,12 @@ export class NotificationsService {
           membershipId,
           category: item.category,
           inAppEnabled: item.inAppEnabled ?? true,
+          emailEnabled: item.emailEnabled ?? false,
           mutedUntil: parseMutedUntil(item.mutedUntil),
         },
         update: {
           inAppEnabled: item.inAppEnabled,
+          emailEnabled: item.emailEnabled,
           mutedUntil: parseMutedUntil(item.mutedUntil),
         },
       });
@@ -227,15 +261,62 @@ export class NotificationsService {
         workspaceId: tenant.workspaceId,
         recipientMembershipId: membershipId,
       },
-      select: { id: true },
+      select: notificationSelect,
     });
     if (!existing) throw new NotFoundException('NOTIFICATION_NOT_FOUND');
+    if ((read && existing.readAt) || (!read && !existing.readAt)) {
+      return serializeNotification(existing);
+    }
     const updated = await this.prisma.notification.update({
       where: { id_workspaceId: { id: notificationId, workspaceId: tenant.workspaceId } },
       data: { readAt: read ? new Date() : null },
       select: notificationSelect,
     });
+    await this.realtime.publishMember(tenant.workspaceId, membershipId, {
+      eventType: read ? 'NOTIFICATION_READ' : 'NOTIFICATION_UNREAD',
+      entityType: 'NOTIFICATION',
+      entityId: updated.id,
+      actorMembershipId: tenant.workspaceMembershipId,
+      payload: notificationPayload(updated),
+    });
+    await this.publishUnreadCountChanged(updated);
     return serializeNotification(updated);
+  }
+
+  private async publishNotificationCreated(
+    notification: Prisma.NotificationGetPayload<{ select: typeof notificationSelect }>,
+  ) {
+    await this.realtime.publishMember(
+      notification.workspaceId,
+      notification.recipientMembershipId,
+      {
+        eventType: 'NOTIFICATION_CREATED',
+        entityType: 'NOTIFICATION',
+        entityId: notification.id,
+        actorMembershipId: notification.actorMembershipId,
+        payload: notificationPayload(notification),
+      },
+    );
+    await this.publishUnreadCountChanged(notification);
+  }
+
+  private async publishUnreadCountChanged(
+    notification: Prisma.NotificationGetPayload<{ select: typeof notificationSelect }>,
+  ) {
+    await this.realtime.publishMember(
+      notification.workspaceId,
+      notification.recipientMembershipId,
+      {
+        eventType: 'NOTIFICATION_UNREAD_COUNT_CHANGED',
+        entityType: 'NOTIFICATION',
+        entityId: notification.id,
+        actorMembershipId: notification.actorMembershipId,
+        payload: {
+          notificationId: notification.id,
+          category: notification.category,
+        },
+      },
+    );
   }
 
   private async resolvePreference(
@@ -379,6 +460,21 @@ function serializeNotification(
   return {
     ...item,
     unread: item.readAt === null,
+  };
+}
+
+function notificationPayload(
+  item: Prisma.NotificationGetPayload<{ select: typeof notificationSelect }>,
+) {
+  return {
+    notificationId: item.id,
+    category: item.category,
+    type: item.type,
+    priority: item.priority,
+    entityType: item.entityType,
+    entityId: item.entityId,
+    unread: item.readAt === null,
+    createdAt: item.createdAt.toISOString(),
   };
 }
 

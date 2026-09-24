@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -33,6 +34,10 @@ import {
   GamificationXpEntryType,
   GamificationXpSourceType,
   MembershipStatus,
+  NotificationCategory,
+  NotificationEntityType,
+  NotificationPriority,
+  NotificationType,
   Prisma,
   SecurityStepUpPurpose,
   StatusEntityType,
@@ -45,6 +50,8 @@ import { PermissionKeys } from '../../common/authorization/permissions';
 import { safeWorkspaceTimezone } from '../../common/timezones';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationRouterService } from '../notifications/notification-router.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import {
   CreateGamificationAchievementDto,
   CreateGamificationBadgeDto,
@@ -180,12 +187,19 @@ export interface ReverseRewardPointEntryInput {
   reason?: string | null;
 }
 
+const missingRealtimeService = {
+  publishWorkspace: () => Promise.resolve(undefined),
+  publishMember: () => Promise.resolve(undefined),
+} as unknown as RealtimeService;
+
 @Injectable()
 export class GamificationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly tokens: JwtTokenService,
+    @Optional() private readonly realtime: RealtimeService = missingRealtimeService,
+    @Optional() private readonly notifications?: NotificationRouterService,
   ) {}
 
   async getMyXpSummary(tenant: WorkspaceTenantContext) {
@@ -2964,6 +2978,27 @@ export class GamificationService {
         depth,
       });
     }
+    await this.realtime.publishMember(normalized.workspaceId, normalized.membershipId, {
+      eventType: 'GAMIFICATION_XP_CHANGED',
+      entityType: 'GAMIFICATION',
+      entityId: entry.id,
+      actorMembershipId: normalized.actorMembershipId ?? null,
+      payload: {
+        entryId: entry.id,
+        membershipId: normalized.membershipId,
+        amount: normalized.amount,
+        sourceType: normalized.sourceType,
+        sourceEntityId: normalized.sourceEntityId,
+      },
+    });
+    await this.realtime.publishWorkspace({
+      eventType: 'GAMIFICATION_LEADERBOARD_CHANGED',
+      workspaceId: normalized.workspaceId,
+      entityType: 'GAMIFICATION',
+      entityId: entry.id,
+      actorMembershipId: normalized.actorMembershipId ?? null,
+      payload: { membershipId: normalized.membershipId, sourceType: normalized.sourceType },
+    });
     return entry;
   }
 
@@ -3999,9 +4034,23 @@ export class GamificationService {
 
   async applyRewardPointChange(input: ApplyRewardPointChangeInput) {
     const normalized = normalizeRewardPointApplyInput(input);
-    return this.prisma.$transaction(async (tx) =>
+    const entry = await this.prisma.$transaction(async (tx) =>
       applyRewardPointChangeInTransaction(tx, normalized),
     );
+    await this.realtime.publishMember(normalized.workspaceId, normalized.membershipId, {
+      eventType: 'GAMIFICATION_REWARD_POINTS_CHANGED',
+      entityType: 'GAMIFICATION',
+      entityId: entry.id,
+      actorMembershipId: normalized.actorMembershipId ?? null,
+      payload: {
+        entryId: entry.id,
+        membershipId: normalized.membershipId,
+        amount: normalized.amount,
+        sourceType: normalized.sourceType,
+        sourceEntityId: normalized.sourceEntityId,
+      },
+    });
+    return entry;
   }
 
   async earnRewardPoints(input: Omit<ApplyRewardPointChangeInput, 'entryType'>) {
@@ -4262,6 +4311,8 @@ export class GamificationService {
         }
         return {
           awardId: award.id,
+          achievementName: freshDefinition.name,
+          badgeName: badge?.name ?? null,
           xpReward: freshDefinition.xpReward,
           rewardPointsReward: freshDefinition.rewardPointsReward,
         };
@@ -4295,6 +4346,69 @@ export class GamificationService {
         reason: 'Achievement Reward Points reward',
       });
     }
+    if (result) {
+      await this.realtime.publishMember(workspaceId, membershipId, {
+        eventType: 'GAMIFICATION_ACHIEVEMENT_EARNED',
+        entityType: 'GAMIFICATION',
+        entityId: result.awardId,
+        payload: {
+          awardId: result.awardId,
+          membershipId,
+          xpReward: result.xpReward,
+          rewardPointsReward: result.rewardPointsReward,
+        },
+      });
+      await this.notifyGamificationAward(workspaceId, membershipId, result);
+    }
+  }
+
+  private async notifyGamificationAward(
+    workspaceId: string,
+    membershipId: string,
+    result: {
+      awardId: string;
+      achievementName: string;
+      badgeName: string | null;
+      xpReward: number;
+      rewardPointsReward: number;
+    },
+  ) {
+    if (!this.notifications) return;
+    await this.notifications.route({
+      workspaceId,
+      recipientMembershipId: membershipId,
+      category: NotificationCategory.GAMIFICATION,
+      type: NotificationType.GAMIFICATION_ACHIEVEMENT_EARNED,
+      title: 'Achievement earned',
+      message: `You earned ${result.achievementName}.`,
+      entityType: NotificationEntityType.ACHIEVEMENT,
+      entityId: result.awardId,
+      priority: NotificationPriority.IMPORTANT,
+      dedupeKey: `gamification:achievement:${result.awardId}`,
+      metadata: { awardId: result.awardId },
+      emailTemplateData: {
+        achievementName: result.achievementName,
+        entityId: result.awardId,
+      },
+    });
+    if (!result.badgeName) return;
+    await this.notifications.route({
+      workspaceId,
+      recipientMembershipId: membershipId,
+      category: NotificationCategory.GAMIFICATION,
+      type: NotificationType.GAMIFICATION_BADGE_EARNED,
+      title: 'Badge earned',
+      message: `You earned ${result.badgeName}.`,
+      entityType: NotificationEntityType.ACHIEVEMENT,
+      entityId: result.awardId,
+      priority: NotificationPriority.IMPORTANT,
+      dedupeKey: `gamification:badge:${result.awardId}`,
+      metadata: { awardId: result.awardId },
+      emailTemplateData: {
+        badgeName: result.badgeName,
+        entityId: result.awardId,
+      },
+    });
   }
 
   private async progressValuesForCriteria(
@@ -4453,6 +4567,19 @@ export class GamificationService {
         sourceEntityId: created.id,
         idempotencyKey: `streak-day:${created.id}:reward-points`,
         reason: 'Daily streak Reward Points reward',
+      });
+    }
+    if (created) {
+      await this.realtime.publishMember(input.workspaceId, input.membershipId, {
+        eventType: 'GAMIFICATION_STREAK_CHANGED',
+        entityType: 'GAMIFICATION',
+        entityId: created.id,
+        payload: {
+          streakDayId: created.id,
+          membershipId: input.membershipId,
+          qualificationType: input.qualificationType,
+          sourceEntityId: input.sourceEntityId,
+        },
       });
     }
   }

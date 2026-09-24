@@ -27,6 +27,10 @@ import { TicketsModule } from './modules/tickets/tickets.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { AutomationModule } from './modules/automation/automation.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
+import { CalendarModule } from './modules/calendar/calendar.module';
+import { CloudDrivesModule } from './modules/cloud-drives/cloud-drives.module';
+import { PublicApiModule } from './modules/public-api/public-api.module';
 
 @Module({
   imports: [
@@ -47,6 +51,10 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     GamificationModule,
     AutomationModule,
     NotificationsModule,
+    RealtimeModule,
+    CalendarModule,
+    CloudDrivesModule,
+    PublicApiModule,
     TagsModule,
     AgenciesModule,
     WorkspacesModule,
