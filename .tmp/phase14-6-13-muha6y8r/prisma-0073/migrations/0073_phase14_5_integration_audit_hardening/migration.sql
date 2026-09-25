@@ -1,0 +1,1 @@
+ALTER TYPE "IntegrationAuthType" ADD VALUE IF NOT EXISTS 'NONE';

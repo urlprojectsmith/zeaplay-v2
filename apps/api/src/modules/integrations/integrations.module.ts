@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BillingModule } from '../billing/billing.module';
 import { CloudDriveTokenEncryptionService } from '../cloud-drives/cloud-drive-token-encryption.service';
 import { WebhookUrlValidatorService } from '../webhooks/webhook-url-validator.service';
 import { IntegrationCredentialService } from './integration-credential.service';
@@ -17,6 +18,7 @@ import { IntegrationsController } from './integrations.controller';
 import { IntegrationsService } from './integrations.service';
 
 @Module({
+  imports: [BillingModule],
   controllers: [IntegrationsController],
   providers: [
     CloudDriveTokenEncryptionService,

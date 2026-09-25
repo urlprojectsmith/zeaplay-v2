@@ -6,6 +6,9 @@ import { AppHeader } from './AppHeader';
 import { AppSidebar } from './AppSidebar';
 import { MobileSidebar } from './MobileSidebar';
 import type { DashboardConfig } from '../navigation/navigation-config';
+import { resolveCommercialNavItem } from '../navigation/commercial-entitlements';
+import { useCommercialEntitlements } from '../navigation/use-commercial-entitlements';
+import { getSuperAgencyContext, superAgencyKeys } from '../../services/super-agencies';
 import { listWorkspaceRoles, rolesKeys } from '../../services/workspace-roles';
 import { useSessionStore } from '../../stores/session';
 
@@ -19,6 +22,7 @@ export function DashboardShell({
   children: React.ReactNode;
 }) {
   const accessToken = useSessionStore((state) => state.accessToken);
+  const selectedSuperAgencyId = useSessionStore((state) => state.selectedSuperAgencyId);
   const selectedWorkspaceId = useSessionStore((state) => state.selectedWorkspaceId);
   const selectedWorkspace = useSessionStore((state) =>
     state.agencies
@@ -27,10 +31,17 @@ export function DashboardShell({
   );
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const commercialEntitlements = useCommercialEntitlements(config.scope);
   const rolesQuery = useQuery({
     queryKey: rolesKeys.all(selectedWorkspaceId),
     queryFn: () => listWorkspaceRoles(selectedWorkspaceId as string),
     enabled: Boolean(accessToken && selectedWorkspaceId && config.scope === 'workspace'),
+  });
+  const superAgencyContextQuery = useQuery({
+    queryKey: superAgencyKeys.context(selectedSuperAgencyId),
+    queryFn: () => getSuperAgencyContext(selectedSuperAgencyId as string),
+    enabled: Boolean(accessToken && selectedSuperAgencyId && config.scope === 'super-agency'),
+    retry: false,
   });
   const filteredConfig =
     config.scope === 'workspace'
@@ -39,25 +50,54 @@ export function DashboardShell({
           groups: config.groups
             .map((group) => ({
               ...group,
-              items: group.items.filter((item) => {
-                if (!item.requiredPermissions?.length) return true;
-                const role = rolesQuery.data?.find(
-                  (candidate) =>
-                    candidate.id === selectedWorkspace?.role ||
-                    candidate.key === selectedWorkspace?.role,
-                );
-                const permissions = new Set(
-                  role?.permissions.map((permission) => permission.key) ?? [],
-                );
-                return (
-                  permissions.has('*') ||
-                  item.requiredPermissions.every((permission) => permissions.has(permission))
-                );
-              }),
+              items: group.items
+                .filter((item) => {
+                  if (!item.requiredPermissions?.length) return true;
+                  const role = rolesQuery.data?.find(
+                    (candidate) =>
+                      candidate.id === selectedWorkspace?.role ||
+                      candidate.key === selectedWorkspace?.role,
+                  );
+                  const permissions = new Set(
+                    role?.permissions.map((permission) => permission.key) ?? [],
+                  );
+                  return (
+                    permissions.has('*') ||
+                    item.requiredPermissions.every((permission) => permissions.has(permission))
+                  );
+                })
+                .map((item) => resolveCommercialNavItem(item, commercialEntitlements.data)),
             }))
             .filter((group) => group.items.length > 0),
         }
-      : config;
+      : config.scope === 'super-agency'
+        ? {
+            ...config,
+            groups: config.groups
+              .map((group) => ({
+                ...group,
+                items: group.items
+                  .filter((item) => {
+                    if (!item.requiredPermissions?.length) return true;
+                    const permissions = new Set(superAgencyContextQuery.data?.permissions ?? []);
+                    return (
+                      permissions.has('*') ||
+                      item.requiredPermissions.every((permission) => permissions.has(permission))
+                    );
+                  })
+                  .map((item) => resolveCommercialNavItem(item, commercialEntitlements.data)),
+              }))
+              .filter((group) => group.items.length > 0),
+          }
+        : {
+            ...config,
+            groups: config.groups.map((group) => ({
+              ...group,
+              items: group.items.map((item) =>
+                resolveCommercialNavItem(item, commercialEntitlements.data),
+              ),
+            })),
+          };
 
   useEffect(() => {
     setCollapsed(localStorage.getItem(storageKey) === 'true');

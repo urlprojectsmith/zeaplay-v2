@@ -11,6 +11,7 @@ describe('AutomationDomainEventsService', () => {
   it('records a trusted domain event idempotently', async () => {
     const event = domainEvent({ id: 'event-1' });
     const prisma = {
+      task: { findFirst: jest.fn().mockResolvedValue({ id: 'task-1' }) },
       automationDomainEvent: {
         create: jest.fn().mockResolvedValue(event),
         findUnique: jest.fn().mockResolvedValue(event),
@@ -42,6 +43,32 @@ describe('AutomationDomainEventsService', () => {
         }),
       }),
     );
+    expect(prisma.task.findFirst).toHaveBeenCalledWith({
+      where: { id: 'task-1', workspaceId: 'workspace-1', deletedAt: null },
+      select: { id: true },
+    });
+  });
+
+  it('rejects domain events whose business entity is not in the supplied Workspace', async () => {
+    const prisma = {
+      task: { findFirst: jest.fn().mockResolvedValue(null) },
+      automationDomainEvent: { create: jest.fn() },
+    };
+    const service = new AutomationDomainEventsService(prisma as never);
+
+    await expect(
+      service.recordDomainEventInTransaction(prisma as never, {
+        workspaceId: 'workspace-1',
+        eventType: AutomationTriggerType.TASK_CREATED,
+        entityType: AutomationDomainEventEntityType.TASK,
+        entityId: 'foreign-task',
+        actorMembershipId: 'member-1',
+        payload: { taskId: 'foreign-task', workspaceId: 'workspace-2' },
+        idempotencyKey: 'task:foreign-task:created',
+      }),
+    ).rejects.toThrow('AUTOMATION_DOMAIN_EVENT_WORKSPACE_MISMATCH');
+
+    expect(prisma.automationDomainEvent.create).not.toHaveBeenCalled();
   });
 
   it('matches only same-workspace active published workflow versions and snapshots the version id', async () => {

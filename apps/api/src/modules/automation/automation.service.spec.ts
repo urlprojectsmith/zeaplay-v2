@@ -117,6 +117,55 @@ describe('AutomationService', () => {
     );
   });
 
+  it('allows only one publish when one active workflow slot remains across two attempts', async () => {
+    const workflowId = 'workflow-1';
+    const draft = versionRecord({ workflowId, workspaceId: tenant.workspaceId });
+    const tx = {
+      automationWorkflow: {
+        findFirst: jest.fn().mockResolvedValue({ id: workflowId }),
+        update: jest.fn().mockResolvedValue({ id: workflowId }),
+      },
+      automationWorkflowVersion: {
+        findFirst: jest.fn().mockResolvedValue(draft),
+        aggregate: jest.fn().mockResolvedValue({ _max: { versionNumber: 0 } }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ ...draft, state: 'PUBLISHED', versionNumber: 1 }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+    };
+    const policy = {
+      assertActionCountLimit: jest.fn().mockResolvedValue(undefined),
+      withWorkspaceQuotaLock: jest.fn((_workspaceId, _tx, _suffix, callback) => callback()),
+      assertPublishedWorkflowLimit: jest
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('USAGE_QUOTA_EXCEEDED')),
+    };
+    const billing = {
+      assertWorkspaceFeatureAvailable: jest.fn().mockResolvedValue(true),
+      assertActiveAutomationAvailableTx: jest.fn().mockResolvedValue(true),
+    };
+    const service = new AutomationService(
+      prisma as never,
+      { record: jest.fn().mockResolvedValue(undefined) } as never,
+      policy as never,
+      undefined,
+      billing as never,
+    );
+
+    await expect(service.publish(tenant, workflowId)).resolves.toMatchObject({ id: draft.id });
+    await expect(service.publish(tenant, workflowId)).rejects.toThrow('USAGE_QUOTA_EXCEEDED');
+
+    expect(policy.withWorkspaceQuotaLock).toHaveBeenCalledTimes(2);
+    expect(tx.automationWorkflowVersion.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   it('clones a workflow into a new draft workflow with an audit record', async () => {
     const workflowId = 'workflow-1';
     const sourceVersion = versionRecord({ workflowId, workspaceId: tenant.workspaceId });

@@ -1,11 +1,315 @@
 # Zea Play Project Status
 
-Current: Phase 14.3 — INBOUND WEBHOOKS + VERIFICATION + NORMALIZATION + IDEMPOTENCY COMPLETE / PASS
-Next: Phase 14.4 — External Integration Framework + Credentials + Provider Adapters
+Current: Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING main implementation PASS; final verification READY but NOT STARTED.
+Next: Phase 16.1 Prompt 2 final verification. Phase 16.2 is NOT STARTED; do not start it without explicit request.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
 Do not implement Phase 6 from this document alone. Use it to avoid rescanning completed Phase 1-5 work.
+
+## Current Certification Gate
+
+Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING
+
+Main Implementation: PASS
+
+Final Verification: READY
+
+Phase 16.1: NOT COMPLETE
+
+Phase 16.2: NOT STARTED
+
+Phase 16.1 main implementation gate state:
+
+- Migration count is 81.
+- Latest migration is `0081_phase16_1_docs_foundation`.
+- No `0082` migration was created.
+- Dedicated Docs backend tests: PASS, 1 suite / 15 tests.
+- Dedicated Docs frontend tests: PASS, 1 file / 8 tests.
+- Focused Phase 15 / permission / assets / notifications / gamification regression: PASS, 6 suites / 169 tests.
+- Focused parent shell/frontend regression: PASS, 6 files / 31 tests.
+- Worker unit regression: PASS, 8 suites / 28 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 58 suites / 579 tests; worker PASS, 8 suites / 28 tests; web PASS, 22 files / 195 tests.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Activity Log decision: NOT APPLICABLE / DEFERRED TO EXISTING ACTIVITY ARCHITECTURE. Docs uses AuditLog for sensitive/admin events and does not invent a second ActivityLog system.
+- Docs commercial entitlement decision: no new Docs commercial feature key in 16.1; published Phase 15 PlanVersions were not silently changed. Existing restricted-mode, Files, and storage controls remain authoritative.
+- Agency and Super Agency parent Docs oversight UI routes are `/agency/docs` and `/super-agency/docs`.
+- Shared development database was not migrated in this main-gate remediation and remains treated as read-only for this task.
+
+Warnings:
+
+- Phase 16.1 final verification is not complete. Clean migration, legacy migration, full API integration, worker integration, E2E, build, audit, and final git diff certification are deferred to Phase 16.1 Prompt 2.
+- Phase 16.2 was not started.
+- Shared development database was not migrated during this pass.
+
+Phase 15 - Plans, Billing, Trials & Payments is COMPLETE / CERTIFIED.
+
+Phase 15.2 Stripe + Trial + Subscription Lifecycle is COMPLETE / PASS after focused refinement and final verification.
+
+Phase 15.3 Hierarchical Allocation + Usage + Enforcement is COMPLETE / PASS after focused refinement and final certification.
+
+Phase 15.4 Billing UI + Invoices + Payment Management is COMPLETE / PASS after focused refinement and final certification.
+
+Phase 15.5 Final Billing Security + Full Regression Certification is COMPLETE / PASS. Phase 16 is NOT STARTED.
+
+Phase 15.5 final certification state:
+
+- Phase 15.1 Billing Foundation + Plans + Entitlements: COMPLETE / PASS.
+- Phase 15.2 Stripe + Trial + Subscription Lifecycle: COMPLETE / PASS.
+- Phase 15.3 Hierarchical Allocation + Usage + Enforcement: COMPLETE / PASS.
+- Phase 15.4 Billing UI + Invoices + Payment Management: COMPLETE / PASS.
+- Phase 15.5 Final Billing Security + Regression Certification: COMPLETE / PASS.
+- Commercial ownership remains Platform-defined plans/pricing and Super Agency-only billing customer authority.
+- Agency remains allocation-only. Workspace remains consumption-only. Organization remains legacy compatibility metadata only.
+- Migration count remains 80; latest migration remains `0080_phase15_4_invoice_projection`; `0081` was not created.
+- Phase 15.5 security matrix has 44 reviewed rows with no UNKNOWN, UNREVIEWED, or PARTIAL statuses.
+- Phase 15.3 feature matrix has 176 rows and zero unclassified controlled mutation routes.
+- External Stripe test/live verification, Customer Portal live configuration, live Checkout, live invoice retrieval, and live payment-method retrieval remain NOT EXTERNALLY VERIFIED and are production deployment prerequisites.
+- Shared development database was checked read-only during final certification and reported schema up to date with 80 migrations; no shared-dev migration was applied by this certification pass.
+
+Phase 15.5 final certification evidence:
+
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Focused Phase 15.5 security tests: PASS, 8 suites / 68 tests.
+- Focused gamification/core regression tests: PASS, 11 suites / 249 tests.
+- Phase 15.3 PostgreSQL concurrency suite: PASS, 1 suite / 6 tests.
+- Fresh full web stability suite: PASS, 21 files / 187 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 57 suites / 564 tests; worker PASS, 8 suites / 28 tests; web PASS, 21 files / 187 tests.
+- Full isolated `pnpm test:integration` on `zea_play_phase14613_clean`: PASS, 8 tasks; API PASS, 6 suites / 109 tests; worker PASS, 8 suites / 28 tests.
+- `pnpm phase14:6:13:migration-compat`: PASS through 80 migrations; clean install, legacy upgrade, populated Phase 15.2 upgrade, zero-agency, one-agency, and many-agency scratch databases passed.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks with the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Manual billing/security/source search: PASS after review; hits were expected docs, tests, server-only Stripe usage, safe Super Agency invoice-link UI, and existing unrelated gamification reward/refund wording.
+- Post-build browser-output Stripe secret search: PASS; no hits.
+
+Phase 15.5 Security Hardening / Main Audit is PASS. Final Verification is PASS. Phase 15.5 is COMPLETE / PASS. Phase 16 is NOT STARTED.
+
+Phase 15.5 main audit state:
+
+- Added a centralized platform-only permission denylist covering wildcard access, platform billing plan/price/trial/support permissions, and developer diagnostics.
+- Super Agency custom role creation and permission replacement now reject platform-only permissions through the shared denylist.
+- Added named billing action rate limits for checkout, customer portal, subscription change, subscription cancellation, trial activation, and manual invoice refresh.
+- Billing action rate limits fail closed when Redis is unavailable in production and retain local in-memory fallback outside production.
+- Security matrix and certification docs were added at `docs/phase15-5-billing-security-matrix.md` and `docs/phase15-5-billing-security-certification.md`.
+- Security matrix has 44 reviewed rows with no UNKNOWN, UNREVIEWED, or PARTIAL statuses.
+- No schema migration was required or created; migration state remains 80 migrations with latest `0080_phase15_4_invoice_projection`.
+- Shared development database remains read-only; final certification status reports schema up to date with 80 migrations, and no shared-dev migration was applied by this certification pass.
+- Stripe live/test external verification is NOT VERIFIED; no Stripe credentials were used.
+- Stripe Customer Portal external configuration is NOT VERIFIED; no Stripe credentials were used.
+- Manual charge, refund, credit note, coupon, promo code, Stripe Tax, GST, VAT, custom payment form, and raw card handling remain out of scope.
+
+Phase 15.5 main audit evidence:
+
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Focused API billing/security/permission tests: PASS, 8 suites / 68 tests.
+- Focused API gamification/core regression tests: PASS, 11 suites / 249 tests.
+- Focused PostgreSQL concurrency enforcement test with `TURBO_ENV_MODE=loose`: PASS, 1 suite / 6 tests.
+- Focused web billing/allocation/dashboard regression tests: PASS, 21 files / 187 tests.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 57 suites / 564 tests; worker PASS, 8 suites / 28 tests; web PASS, 21 files / 187 tests.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Focused billing security grep: PASS; hits were expected docs, tests, config validation, server-only Stripe gateway usage, and unrelated existing domains.
+
+Phase 15.4 main implementation state:
+
+- Reused the existing Phase 15 billing system; no second billing system was created.
+- Added Super Agency-owned `BillingInvoice` projection through migration `0080_phase15_4_invoice_projection`.
+- Invoice projection stores provider ids, invoice number, status, currency, nonnegative minor-unit amounts, provider timestamps, hosted invoice/PDF links, and sync timestamps only.
+- No Agency, Workspace, or Organization invoice, subscription, checkout, payment method, or Stripe customer model was added.
+- Stripe invoice events and manual invoice refresh upsert the invoice projection through the existing billing service and Stripe gateway.
+- Manual Super Agency invoice refresh is rate-limited per Super Agency and user before Stripe/customer lookup.
+- Invoice list status filtering is allowlisted to supported invoice states.
+- Payment management remains Stripe-hosted; Zea Play exposes only safe default payment method summary fields and stores no card/payment-method secrets.
+- Super Agency billing UI now exposes overview, current plan, usage, allocations, payment method summary, invoices, billing history, and subscription recovery actions.
+- Platform support invoice reads are metadata-only and do not expose hosted invoice/PDF links.
+- Agency and Workspace billing pages remain usage/allocation-only and do not expose checkout, invoice, payment-method, Stripe customer, or subscription-management authority.
+
+Phase 15.4 final certification evidence:
+
+- `pnpm prisma:validate`: PASS.
+- `pnpm prisma:generate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Focused API billing/schema/Stripe/enforcement tests: PASS, 5 suites / 52 tests.
+- Focused web billing tests: PASS, 21 files / 187 tests.
+- Phase 15.3/gamification regression tests: PASS, 3 suites / 109 tests. The requested `gamification.controller.spec.ts` pattern did not match a file in this checkout.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 57 suites / 560 tests; worker PASS, 8 suites / 28 tests; web PASS, 21 files / 187 tests.
+- Root `pnpm test:integration` with `TURBO_ENV_MODE=loose` on isolated fully migrated PostgreSQL: PASS, 8 tasks; API PASS, 6 suites / 109 tests; worker PASS, 8 suites / 28 tests.
+- `pnpm phase14:6:13:migration-compat`: PASS through 80 migrations; latest `0080_phase15_4_invoice_projection`; clean install, legacy upgrade, Phase 15 fixture upgrade, zero-agency, one-agency, and many-agency scratch databases passed. Phase 15 fixture upgrade produced zero automatic invoice projections.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks with the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Focused security/scope grep: PASS; hits were expected docs, tests, provider-secret redaction examples, and existing non-billing domains.
+- Read-only shared development migration status: 80 migrations found; `0080_phase15_4_invoice_projection` is pending and was not applied because shared-dev migration is forbidden in this phase.
+- Stripe live/test external verification is NOT VERIFIED; no Stripe credentials were used.
+- Stripe Customer Portal external configuration is NOT VERIFIED; no Stripe credentials were used.
+
+Phase 15.2 final certification state:
+
+- Stripe is integrated only through hosted Checkout, hosted Customer Portal, signed webhooks, and server-side SDK calls in the billing gateway.
+- Zea Play does not collect card data and does not implement custom PaymentIntent, SetupIntent, payment-method, or Stripe Tax flows.
+- Super Agency remains the only commercial customer. No Agency or Workspace billing account, subscription, checkout, payment, or Stripe customer model was added.
+- Explicit internal 14-day no-card trials are supported without creating a Stripe customer or subscription.
+- Trial grace and payment-failure grace are 7 days with full access plus warning; after grace, commercial restricted mode preserves read-only access and blocks new writes.
+- USD-only monthly and annual billing prices are supported for published plan versions.
+- Checkout creates/reuses a Stripe customer only during paid conversion and resolves the Stripe price server-side.
+- Webhook processing verifies Stripe signatures against the raw body and records event ids for idempotency.
+- Upgrades request immediate Stripe proration, record pending internal state only after the provider request succeeds, and apply internal entitlement changes only after provider price confirmation.
+- Downgrades are scheduled for the next billing period using Stripe subscription schedules with explicit current and future phases.
+- New plan-change requests are rejected while a scheduled billing change is pending.
+- Super Agency self-cancel is period-end only and clears pending scheduled changes; Platform immediate cancellation is explicit and also clears pending scheduled changes.
+- Billing history remains separate from audit logs and records real billing lifecycle events only.
+- Commercial restricted-mode write blocking covers authenticated app writes, public API writes, inbound webhook ingestion, automation execution mutations, and worker-generated recurrence mutations.
+- Billing lifecycle worker scan handles trial-grace and restricted-mode deadline transitions.
+- Resource/usage allocation enforcement remains deferred to Phase 15.3.
+- Migration state is now 78 migrations, latest `0078_phase15_2_stripe_subscription_lifecycle`.
+- Shared development database remains read-only and intentionally stale; no shared-dev migration was applied.
+- Stripe live/test external verification is NOT VERIFIED; no Stripe credentials were used.
+- Stripe Customer Portal external configuration is NOT VERIFIED; no Stripe credentials were used.
+- No `0079` migration was required or created.
+
+Phase 15.2 final verification evidence:
+
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Focused API billing/schema/Stripe/permission/public API/inbound webhook/automation tests: PASS, 7 suites / 95 tests.
+- Focused worker billing lifecycle / recurrence / storage tests: PASS, 3 suites / 10 tests.
+- Focused web billing/navigation tests: PASS, 3 files / 13 tests.
+- Fresh full web stability run: PASS, 18 files / 175 tests.
+- Security grep for card collection, PaymentIntent, SetupIntent, Stripe Tax, browser Stripe secrets, role-name authorization, and Phase 15.3 enforcement leakage: PASS; hits were expected docs/config/tests/provider gateway references.
+- Super Agency-only billing scope grep: PASS; billing accounts, subscriptions, checkout, and Stripe customer state remain Super Agency scoped.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 54 suites / 524 tests; worker PASS, 8 suites / 28 tests; web PASS, 18 files / 175 tests.
+- Root `pnpm test:integration` on isolated fully migrated PostgreSQL: PASS, 8 tasks; API PASS, 5 suites / 103 tests; worker PASS, 8 suites / 28 tests.
+- Clean isolated migration deploy/status: PASS, 78 migrations through `0078_phase15_2_stripe_subscription_lifecycle`.
+- Explicit 0077-to-0078 populated upgrade fixture: PASS; 3 Super Agencies, 4 Agencies, 4 Workspaces, 3 plans, 3 plan versions, and 3 subscriptions preserved; zero billing prices, billing accounts, checkout attempts, or Stripe events auto-created; existing subscriptions remained internal with null Stripe/provider price fields.
+- `pnpm phase14:6:13:migration-compat`: PASS through 78 migrations; clean install, legacy upgrade, zero-agency, one-agency, and many-agency scratch databases.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Shared development database migration status: read-only check reports pending `0053` through `0078`; no shared-dev migration was applied.
+
+Phase 15.2 remaining external caveats:
+
+- Stripe live/test external verification is NOT VERIFIED.
+- Stripe Customer Portal external configuration is NOT VERIFIED.
+- No Stripe credentials were used or stored during final verification.
+
+Phase 15.1 Billing Foundation + Plans + Entitlements is COMPLETE / PASS after focused refinement and final verification.
+
+Phase 15.1 Verification Gate: PASS.
+
+Phase 15.2 Readiness: consumed by Phase 15.2 implementation and final verification. Phase 15.2 is COMPLETE / PASS.
+
+Phase 15.1 implementation state:
+
+- Commercial hierarchy is locked as Platform-owned plan management with Super Agency as the primary commercial tenant.
+- Agency billing is allocation-only; no Agency subscription, checkout, payment, or Stripe customer foundation was added.
+- Workspace billing is consumption-only; no Workspace subscription, checkout, payment, or Stripe customer foundation was added.
+- Organization-root billing remains out of scope.
+- Stripe is selected for Phase 15.2 but is not integrated in Phase 15.1.
+- The trial foundation supports an explicit 14-day no-card Super Agency trial, with no automatic trial start on tenant creation, login, invitation acceptance, or workspace activity.
+- The 7-day grace period and future restricted-mode policy are centralized as domain foundation only.
+- Billing foundation schema adds `MasterPlan`, `MasterPlanVersion`, `PlanEntitlement`, `SuperAgencySubscription`, and immutable `BillingHistory`.
+- Plan type supports public, private, enterprise, internal, free, demo, and QA plans without hardcoded commercial plan names.
+- Published plan versions are immutable; only draft versions are editable.
+- Feature and limit entitlements are typed and allowlisted. Provider-specific integration feature keys are supported. Unlimited limits are explicit.
+- Super Agency subscription status is separate from `SuperAgency.status`.
+- Legacy Super Agencies with no subscription remain compatible and resolve to empty effective billing entitlements without enforcement.
+- Default Agency workspace allocation policy is 15 slots, but allocation enforcement is deferred.
+- Membership capacity is membership-based; multi-workspace membership remains valid.
+- Storage allocation, active automation limits, automation execution quotas, and commercial API usage quotas are foundation/deferred only.
+- Webhooks are feature entitlements only, not commercial delivery meters.
+- Gamification history remains protected from billing changes.
+- No task, project, ticket, user, storage, automation, API, Agency, or Workspace limit enforcement was added.
+- Platform plan management UI and APIs are foundation-only; Super Agency billing UI is read-only.
+- Migration state is now 77 migrations, latest `0077_phase15_1_billing_foundation_hardening`.
+- Shared development database remains read-only and intentionally stale; no shared-dev migration was applied.
+- Phase 15.2 Stripe lifecycle final verification has passed; Phase 15.2 is COMPLETE / PASS.
+
+Phase 15.1 final verification evidence:
+
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Focused API billing/schema/hierarchy/gamification tests: PASS, 5 suites / 136 tests.
+- Focused frontend billing/navigation/Phase 7 stability tests: PASS, 3 files / 91 tests.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Phase 15.1 verification gate stabilization: PASS. The pre-existing Phase 7 Ticket UI timeout root cause was an oversized web test exceeding the default Vitest per-test budget under uncached root-suite CPU contention; it was split into list/create and detail/action segments without reducing assertions, adding sleeps, disabling tests, or increasing timeouts.
+- Exact Phase 7 Ticket pattern rerun: PASS, 2 passed / 80 skipped.
+- Full Phase 7 web file rerun: PASS, 82 tests.
+- Full web package final rerun: PASS, 18 files / 175 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 53 suites / 509 tests; worker PASS, 7 suites / 26 tests; web PASS, 18 files / 175 tests.
+- Root uncached stress rerun with `pnpm test -- --force`: PASS, 17 tasks / 0 cached; API PASS, 53 suites / 501 tests; worker PASS, 7 suites / 26 tests; web PASS, 18 files / 175 tests.
+- Root `pnpm test:integration` with isolated migrated PostgreSQL and loose Turbo env propagation: PASS, 8 tasks; API PASS, 5 suites / 103 tests; worker PASS, 7 suites / 26 tests.
+- Direct API integration on isolated migrated PostgreSQL: PASS, 5 suites / 103 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- `pnpm phase14:6:13:migration-compat`: PASS through 77 migrations; clean install, legacy upgrade, zero-agency, one-agency, and many-agency scratch databases.
+- Existing 0075 hierarchy database upgrade check: PASS; 75 -> 77 migrations, Super Agency/Agency/Workspace IDs unchanged, and no subscriptions, master plans, or billing history auto-created.
+- Shared development database migration status: read-only check reports pending `0053` through `0077`; no shared-dev migration was applied.
+
+Phase 15.1 is complete/pass. Phase 15.2 is complete/pass. Do not start Phase 15.3 billing allocation/enforcement, invoices, payment methods, analytics, white-label/custom domain, PWA/offline, release, deployment, or later-phase work without a new explicit user prompt.
+
+Phase 14.7 FINAL HIERARCHY CERTIFICATION Prompt 2 - Final Certification + Phase 15 Gate was COMPLETE / PASS before Phase 15 started.
+
+Hierarchy Certification: CERTIFIED
+Hierarchy Remediation 14.6: COMPLETE / PASS
+Phase 15 Gate: UNFROZEN / READY FOR ARCHITECTURE DESIGN
+Phase 15: STARTED with Phase 15.1 implementation/reconciliation.
+
+Canonical hierarchy:
+
+Platform / Super Admin -> Super Agency -> Agency -> Workspace / Sub-account.
+
+Final Prompt 2 evidence:
+
+- Focused API certification: PASS, 31 suites / 391 tests.
+- Focused worker certification: PASS, 6 suites / 25 tests.
+- Focused frontend certification: PASS, 16 files / 170 tests.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- `pnpm test`: PASS, 17 tasks; API 51 suites / 485 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+- API integration on isolated clean migrated database: PASS, 5 suites / 103 tests.
+- API integration on isolated legacy-upgraded migrated database: PASS, 5 suites / 103 tests.
+- Worker integration on isolated migrated database: PASS, 7 suites / 26 tests.
+- E2E: PASS, 21 tests.
+- `pnpm build`: PASS, 11 packages.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `pnpm phase14:6:13:migration-compat`: PASS across clean, legacy, zero-agency, one-agency, and many-agency scratch databases.
+
+Phase 14.7 migration final state was 75 migrations, latest `0075_phase14_6_3_super_agency_auth_rbac`. Phase 15.1 now extends this to 77 migrations.
+
+Shared dev state: read-only migration status against `zea_play` still reports pending `0053` through current Phase 15.1 migrations; no shared-dev migration was applied.
+
+Accepted warnings: shared dev is intentionally stale, one moderate audit advisory remains, the Next.js ESLint plugin warning remains, Playwright reports the existing `NO_COLOR` / `FORCE_COLOR` warning, Windows line-ending warnings may appear in Git tooling, and live provider verification remains pending for Google Drive OAuth, OneDrive OAuth, Dropbox OAuth, GoHighLevel, Slack, and Webex.
+
+Do not start Phase 15.3 allocation/enforcement, analytics, white-label/custom domain, PWA/offline, release, deployment, or later-phase work without a new explicit user prompt.
 
 ## Completed
 
@@ -7074,36 +7378,1331 @@ Next: Phase 14.4 - External Integration Framework + Credentials + Provider Adapt
 
 ---
 
-## Phase 14.4 External Integration Framework + Credentials + Provider Adapters - Implementation Status
+## Phase 14.4 External Integration Framework + Credentials + Provider Adapters - Complete / PASS
 
-Phase 14.4 implementation scope is PASS.
+Phase 14.4 focused refinement and final verification is COMPLETE / PASS.
 
-Implemented:
+Implemented and refined:
 
 - Added workspace-scoped integration persistence for approved providers only: `GOHIGHLEVEL`, `SLACK`, `WEBEX`, and `GENERIC_REST`.
-- Added encrypted credential storage, safe connection serialization, connection caps, action execution records, idempotency records, OAuth state foundation tables, and bounded cleanup.
+- Added encrypted credential storage, safe connection serialization, connection caps under advisory lock, action execution records, idempotency records, OAuth state foundation tables, bounded cleanup, and management/action audit records.
 - Added RBAC permissions for integration view/create/manage/execute and seeded them into workspace roles.
 - Added provider registry and adapters for HighLevel contacts/opportunities, Slack channels/messages, Webex spaces/messages, and Generic REST fixed-base relative-path actions.
-- Added provider HTTP timeout, redirect rejection, bounded response reads, rate limiting, safe error codes, and Generic REST SSRF/path/header restrictions.
-- Added Workspace Settings UI and web service client for provider listing, connection creation, testing, disconnecting, and scoped action execution.
-- Added `docs/external-integrations.md`.
+- Corrected OAuth truthfulness: GHL, Slack, and Webex are bearer-token only in this phase; OAuth exchange remains intentionally out of scope.
+- Hardened provider calls with timeout, redirect rejection, response-size limits, safe error codes, mutation ambiguity handling, and normalized provider responses that do not echo credential-like fields.
+- Hardened Generic REST with DNS resolution binding for fixed-origin HTTPS calls, private/link-local/loopback blocking, same-origin path/query construction, repeated-decoding traversal checks, restricted headers, query bounds, and JSON body bounds.
+- Added Workspace Settings UI and web service client for provider listing, connection creation, credential replacement, testing, disconnecting, and scoped action execution.
+- Added and updated `docs/external-integrations.md`.
 
 Verification:
 
 - `pnpm prisma:validate`: pass.
 - `pnpm prisma:generate`: pass.
-- `pnpm --filter @zea-play/config build`: pass.
+- Clean scratch migration `0001` through `0072_phase14_4_external_integrations` on `zea_play_phase14_4_final_verify_20260924`: pass.
+- Scratch `prisma migrate status`: pass, database schema up to date.
+- Shared development DB `prisma migrate status` with `.env.example`: intentionally pending `0053` through `0072`; no shared dev migration applied.
 - `pnpm --filter @zea-play/api typecheck`: pass.
-- `pnpm --filter @zea-play/web typecheck`: pass.
-- `pnpm --filter @zea-play/api test -- --runTestsByPath src/modules/integrations/integration-credential.service.spec.ts src/modules/integrations/integration-generic-rest-security.service.spec.ts`: pass, 3/3.
-- `pnpm --filter @zea-play/config test`: pass, 5/5.
+- Focused Phase 14.4 API tests for credential encryption, Generic REST security, provider adapters, and integrations service: pass, 4 suites / 27 tests.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- `pnpm test` with constrained Windows concurrency: pass, 17 tasks.
+- `pnpm test:integration`: worker integration pass; API integration fails against stale shared dev DB because required migrations are pending.
+- `pnpm --filter @zea-play/api test:integration` against migrated scratch DB: pass, 5 suites / 103 tests.
+- `pnpm test:e2e`: pass, 21 tests.
+- `pnpm build`: pass, 11 tasks.
+- `pnpm audit --audit-level high`: pass for high severity; one moderate advisory remains.
+- `git diff --check`: pass; Windows line-ending normalization warnings only.
 
-Notes:
+Security search:
 
-- No shared development database migration was applied.
-- No live provider credential verification was performed.
-- Background sync, arbitrary connector scripts, marketplace/provider expansion, and Phase 14.5 work remain out of scope.
+- Pass after review. Hits were expected credential field references inside encryption/filtering/tests, auth header construction for provider calls, Phase 13 cloud-drive enum/UI values, inbound webhook schema references, and docs explicitly marking OAuth exchange/background sync/marketplace/provider expansion out of scope.
+- No insecure TLS bypass, `NODE_TLS_REJECT_UNAUTHORIZED`, `eval`, `new Function`, Node `vm`, Generic REST webhook behavior, arbitrary connector scripts, frontend credential persistence, or unapproved Phase 14.4 provider implementation was found.
 
-Phase 14.4 EXTERNAL INTEGRATION FRAMEWORK + CREDENTIALS + PROVIDER ADAPTERS is IMPLEMENTATION PASS.
+Deferred / not performed:
 
-Next: Phase 14.4 Focused Refinement + Final Verification. Do not start Phase 14.5 automatically.
+- No live GHL, Slack, or Webex credential verification was performed.
+- OAuth exchange, background sync, arbitrary connector code, marketplace behavior, and additional providers remain out of scope.
+- No Phase 14.5 work was started.
+
+Phase 14.4 EXTERNAL INTEGRATION FRAMEWORK + CREDENTIALS + PROVIDER ADAPTERS is COMPLETE / PASS.
+
+Next: Phase 14.5 - Do not start automatically.
+
+---
+
+## Phase 14.5 - FINAL API / WEBHOOK / INTEGRATION SECURITY + PERFORMANCE + REGRESSION AUDIT COMPLETE / PASS
+
+Phase 14.5 Final Refinement and Full Verification is COMPLETE / PASS.
+
+Issues found and fixed:
+
+- Added `0073_phase14_5_integration_audit_hardening` to add `IntegrationAuthType.NONE` without altering historical migrations.
+- Generic REST now advertises and supports `NONE` auth, stores no credential payload for no-auth connections, and sends no auth header for those actions.
+- Integration create/update now permits `NONE` auth without configured credential encryption, clears stored credential metadata when switching to `NONE`, and keeps no-auth providers accurately available in provider listing.
+- Generic REST UI now exposes no-auth and basic-auth options, no longer requires a credential for no-auth, and sends separate username/password credentials for basic auth.
+- Malformed percent-encoding in Generic REST relative paths now returns the safe `INTEGRATION_GENERIC_PATH_INVALID` error instead of a raw URI decode error.
+- Integration retention cleanup now uses a multi-instance advisory lock and bounded ordered batches for expired OAuth states, idempotency records, and old action executions.
+- `docs/external-integrations.md` now accurately states Generic REST supports no auth, bearer token, API key, and basic auth.
+
+Audit invariants:
+
+- JWT, API-key, inbound HMAC, and provider credential trust domains remain isolated.
+- All Phase 14 resources remain Workspace fenced.
+- Client-supplied tenant fields never control Workspace authority.
+- Public API uses canonical business services and explicit wildcard-free scopes.
+- Public API rate limiting and idempotency remain scoped and concurrency safe.
+- Outbound webhooks originate from canonical committed events exactly once and remain at-least-once.
+- Outbound webhook signing uses exact bytes and HMAC-SHA256.
+- Outbound webhook dispatch remains SSRF/DNS-rebinding safe with bounded response capture.
+- Inbound HMAC verification uses exact raw body bytes.
+- Inbound timestamp freshness is checked before duplicate response.
+- Inbound idempotency remains source plus external event ID.
+- Inbound events remain normalization-only and cannot mutate business entities.
+- Integration credentials remain authenticated-encrypted and non-readable.
+- GHL, Slack, and Webex remain fixed-provider bearer-token adapters.
+- Generic REST remains fixed-origin, HTTPS-only, no-auth/bearer/API-key/basic capable, and SSRF protected.
+- Provider mutation ambiguity never triggers unsafe blind retries.
+- No external action claims remote exactly-once behavior.
+- Maintenance/recovery/retention jobs are scheduled and bounded.
+- Redis remains transport/rate-limit state, never business authority.
+- Logs and AuditLog do not expose Phase 14 credentials or raw sensitive webhook data.
+- No background sync, arbitrary scripts, marketplace, or GraphQL exists.
+- GHL/Slack/Webex live external verification remains NOT PERFORMED.
+- Phase 10-13 regressions remain green.
+- No Phase 15 scope was started.
+
+Verification:
+
+- Branch: `developed`.
+- `pnpm prisma:generate`: pass via `corepack pnpm --filter @zea-play/api prisma:generate`.
+- `pnpm prisma:validate`: pass via `corepack pnpm --filter @zea-play/api prisma:validate`.
+- Focused Phase 14.1 public API tests: pass, 1 suite / 13 tests.
+- Focused Phase 14.2 outbound webhook API tests: pass; `webhooks.service.spec.ts` pattern also matched inbound service, 2 suites / 22 tests.
+- Focused Phase 14.3 inbound API tests: pass, 3 suites / 21 tests.
+- Focused Phase 14.2/14.3 worker tests: pass, 2 suites / 6 tests.
+- Focused Phase 14.4/14.5 integration tests: pass, 4 suites / 33 tests.
+- Focused web settings test run: pass, 13 files / 156 tests.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, all 17 tasks successful.
+- `pnpm typecheck`: pass, all 17 tasks successful.
+- `pnpm test`: pass, all 17 tasks successful. API 404/404, worker 24/24, web 156/156.
+- Root `pnpm test:integration`: worker integration passed 24/24; API integration failed against stale shared development DB because required migrations are intentionally pending.
+- API integration on isolated migrated scratch database `zea_play_phase14_5_final_verify_20260924_2320`: pass, 5 suites / 103 tests.
+- Standalone worker integration: pass, 7 suites / 24 tests.
+- `pnpm test:e2e`: pass, 21/21.
+- `pnpm build`: pass, 11 tasks.
+- `pnpm audit --audit-level high`: pass for high severity; one moderate advisory remains.
+- Clean isolated migration deploy/status on `zea_play_phase14_5_final_verify_20260924_2320`: pass, 73 migrations applied through `0073_phase14_5_integration_audit_hardening`, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0073` remain pending intentionally; no shared-dev migration was applied.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security and performance search: pass after review. Hits were expected documentation/test fixtures, disabled billing navigation labels, blocked SSRF literals, exact signing/hash code, one-time UI secret display, credential filtering/encryption paths, provider auth header construction, bounded pagination/cleanup, advisory locks, idempotency, rate-limit, timeout, and response-size code. No confirmed credential logging, frontend secret persistence, unsafe TLS/redirect behavior, GraphQL, marketplace, arbitrary JavaScript, inbound auto-action, unbounded Phase 14 cleanup, unbounded Phase 14 list query, or Phase 15 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Known acceptable warnings remain: LF-to-CRLF Git warnings, Prisma tips, worker/API test log noise, Next ESLint plugin warning during build, Playwright `NO_COLOR`/`FORCE_COLOR` warnings, stale shared dev DB, one moderate audit advisory below high severity, Phase 13 live cloud providers unverified, and GHL/Slack/Webex live verification not performed.
+
+Phase 14.5 is COMPLETE / PASS.
+Phase 14 API, Webhooks, and External Integrations is COMPLETE / PASS.
+Phase 15 was not started.
+
+### Phase 14 - API, Webhooks & External Integrations COMPLETE / PASS
+
+Completed scope:
+
+- Phase 14.1 Public API foundation.
+- Phase 14.2 Outbound webhooks.
+- Phase 14.3 Inbound webhooks.
+- Phase 14.4 External integration framework, credentials, and provider adapters.
+- Phase 14.5 Final API / webhook / integration security, performance, and regression audit.
+
+Next: Phase 15 - Plans, Billing, Trials & Payments. Do not start Phase 15 automatically.
+
+---
+
+## Phase 14.6.1 - FULL PHASE 1-14 HIERARCHY GAP AUDIT COMPLETE / PASS
+
+Phase 14.6.1 audit-only hierarchy gap review is COMPLETE / PASS.
+
+What shipped:
+
+- Added `docs/hierarchy-remediation-phase14-6.md` as the canonical Phase 14.6.1 audit and safe remediation plan.
+- Confirmed the target hierarchy is `Developer / Platform -> Super Agency -> Agency -> Sub-account / Workspace`.
+- Audited completed Phase 1-14 architecture, Prisma ownership, tenant guards, RBAC shape, dashboard scopes, workers, public API, webhooks, inbound webhooks, integrations, storage, automation, notifications, realtime, calendar, gamification, task/project/ticket ownership, reporting, migration, and compatibility surfaces.
+- Confirmed the repository currently implements `Developer / Platform style routes and legacy Organization -> Agency -> Workspace`, with no persisted Super Agency parent layer.
+- Identified Phase 14.6.2 as the next required remediation phase: Core Tenant Schema + Super Agency Relationships.
+
+Required follow-up:
+
+- Do not mark hierarchy remediation complete from this audit alone.
+- Do not mark Phase 14.6 complete until Phases 14.6.2 through 14.6.14 are complete.
+- Do not start Phase 15 until Phase 14.7 final hierarchy certification is complete.
+- Implement Super Agency schema, membership, RBAC, dashboard, parent validation, reporting, migration/backfill, and compatibility work through the documented Phase 14.6.2-14.7 sequence.
+
+Deferred:
+
+- No code remediation was implemented in Phase 14.6.1.
+- No historical migrations were modified.
+- No shared development database migrations were applied.
+- No Phase 15-22 work was started.
+
+---
+
+## Phase 14.6.2 - CORE TENANT SCHEMA + SUPER AGENCY RELATIONSHIPS Implementation - PASS
+
+Phase 14.6.2 main implementation is PASS.
+
+What shipped:
+
+- Added canonical persisted hierarchy foundation: `Platform -> Super Agency -> Agency -> Workspace`.
+- Added `SuperAgency` with explicit `ACTIVE`, `SUSPENDED`, and `ARCHIVED` status.
+- Added required `Agency.superAgencyId` final schema relationship with restrictive parent delete behavior.
+- Preserved `Workspace -> Agency` ownership without adding redundant `Workspace.superAgencyId`.
+- Preserved existing Agency, Workspace, User, Membership, Task, Project, Ticket, API key, webhook, integration, and worker-owned IDs.
+- Retained `Organization` as legacy compatibility data. It was not renamed or repurposed as Super Agency.
+- Added `SuperAgencyMembership` and `RoleScope.SUPER_AGENCY` as foundation only. Full RBAC, invitations, and membership behavior remain Phase 14.6.3.
+- Added `AuditLog.superAgencyId` parent-scope audit foundation.
+- Added `FeatureEntitlement.superAgencyId` for pre-billing Platform -> Super Agency -> Agency -> Workspace feature control. No plan, billing, subscription, payment, Stripe, trial, or pricing implementation was added.
+- Added `TenantHierarchyService` for centralized hierarchy truth lookups and relationship assertions.
+- Added minimal platform Super Agency management foundation under `/platform/super-agencies` using existing platform/developer guard behavior until Phase 14.6.3 hardens authority.
+- Updated seeds and test fixtures to use explicit Super Agency parents and multiple isolated hierarchy trees.
+- Added migration `0074_phase14_6_2_super_agency_hierarchy`.
+
+Migration/backfill invariants:
+
+- Legacy Agencies are backfilled with one compatibility Super Agency per existing Agency.
+- The migration never places all legacy Agencies into one shared default Super Agency.
+- The synthetic compatibility parent ID is deterministic and equals the legacy Agency ID.
+- Existing Workspace ownership is preserved through `Workspace -> Agency`.
+- Existing `x-agency-id` and `x-workspace-id` compatibility remains; no `x-super-agency-id` is required for existing workspace requests.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused hierarchy/schema/service tests: pass, 6 suites / 19 tests.
+- `pnpm test`: pass, 17 tasks; API 46 suites / 418 tests, worker 7 suites / 24 tests, web 13 files / 156 tests.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_2_impl_20260925_0013`: pass, 74 migrations applied through `0074_phase14_6_2_super_agency_hierarchy`, schema up to date.
+- Legacy upgrade SQL validation on `zea_play_phase14_6_2_legacy_upgrade_20260925_0013`: pass; Agency count preserved, every Agency parented, Workspace ownership preserved, no shared synthetic parent created.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0074` remain pending intentionally; no shared-dev migration was applied.
+- `git diff --check`: pass with LF-to-CRLF warnings only.
+- Security search: pass after review. Hits were expected planned-date fields, existing webhook subscription names, docs explicitly excluding billing, and intentional Super Agency migration/test references.
+
+Warnings:
+
+- Phase 14.6.2 is not marked COMPLETE. Focused refinement and final verification are still required.
+- Phase 14.6.3 was not started.
+- Phase 15 was not started.
+- Super Agency RBAC, invitations, dashboard/navigation, parent reporting, leaderboard UI, and final platform authority hardening remain deferred to later 14.6.x phases.
+- Shared development database `zea_play` remains intentionally behind and is not a valid integration target until migrated separately.
+
+---
+
+## Phase 14.6.2 - CORE TENANT SCHEMA + SUPER AGENCY RELATIONSHIPS COMPLETE / PASS
+
+Phase 14.6.2 focused refinement and final verification is COMPLETE / PASS.
+
+Final refinements:
+
+- Confirmed canonical hierarchy as `Platform -> Super Agency -> Agency -> Workspace`.
+- Confirmed legacy `Organization` remains compatibility-only and is not Super Agency authority.
+- Confirmed backend platform management route remains `/platform/super-agencies`; frontend `/super-admin` remains a Platform UI shell, not a Super Agency tenant.
+- Added bounded pagination, search, status filtering, and deterministic ordering to the platform Super Agency list endpoint.
+- Added focused schema tests proving `Agency.superAgencyId` is canonical, Organization is not a parent authority, and Platform/Super Admin is not modeled as Super Agency membership.
+- Aligned legacy integration reset helpers with the new required Super Agency parent table.
+- Updated hierarchy remediation docs with the final route decision, list pagination bound, and status/RBAC deferrals.
+
+Final invariants:
+
+- `SuperAgency` is the persisted parent between Platform and Agency.
+- `Agency.superAgencyId` is required and uses restrictive parent delete behavior.
+- `Workspace` remains owned by `Agency`; no redundant `Workspace.superAgencyId` was added.
+- Agency parent assignment is creation-time only; no update DTO or service path transfers an Agency between Super Agencies.
+- Every Agency creation path creates or receives an explicit Super Agency parent.
+- Existing `x-agency-id` and `x-workspace-id` request compatibility remains unchanged.
+- `TenantHierarchyService` centralizes hierarchy assertions without becoming auth/RBAC authority.
+- `SuperAgencyMembership`, `RoleScope.SUPER_AGENCY`, and `AuditLog.superAgencyId` are foundation only for Phase 14.6.3.
+- `FeatureEntitlement.superAgencyId` is pre-billing feature-control foundation only; no plan, billing, subscription, payment, Stripe, trial, or pricing implementation was added.
+- Legacy backfill creates one compatibility Super Agency per existing Agency and never groups unrelated Agencies under one shared default parent.
+- Seed and integration fixtures contain multiple isolated Super Agency trees.
+- Shared development database was not migrated.
+- Phase 14.6.3 and Phase 15 were not started.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused hierarchy/schema/service tests: pass, 6 suites / 21 tests.
+- `pnpm test`: pass, 17 tasks; API 46 suites / 420 tests, worker 7 suites / 24 tests, web 13 files / 156 tests.
+- Root `pnpm test:integration`: worker integration pass; API integration on the shared configured DB failed because shared DB is intentionally missing newer migration tables.
+- API integration on isolated migrated DB `zea_play_phase14_6_2_final_verify_20260925`: pass, 5 suites / 103 tests.
+- Worker integration: pass, 7 suites / 24 tests.
+- `pnpm test:e2e`: pass, 21 tests.
+- `pnpm build`: pass.
+- `pnpm audit --audit-level high`: pass, one moderate advisory remains below high threshold.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_2_final_verify_20260925`: pass, 74 migrations applied through `0074_phase14_6_2_super_agency_hierarchy`, schema up to date.
+- Legacy upgrade SQL validation on `zea_play_phase14_6_2_legacy_final_20260925`: pass; 3 Agencies, 3 compatibility Super Agencies, 4 preserved Workspaces, no null parent, no shared parent, no changed Workspace owner, and compatibility parent IDs matched Agency IDs.
+- Security search: pass after review. Dangerous hierarchy patterns were absent; hits were expected planned-date fields, webhook subscription names, feature-entitlement cascade cleanup, docs explicitly excluding billing/Phase 15, and intentional Super Agency migration/test references.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and is not a valid API integration target until migrated separately.
+- Final Platform/Super Admin authentication hardening, Super Agency RBAC, memberships, and invitations remain Phase 14.6.3 scope.
+- Super Agency dashboard/navigation/reporting/aggregation remain later 14.6.x scope.
+- The web build still emits the existing Next.js ESLint plugin warning.
+
+Next: Phase 14.6.3 - Authentication + RBAC + Membership + Invitations. Do not start Phase 14.6.3 automatically.
+
+---
+
+## Phase 14.6.3 - AUTHENTICATION + RBAC + MEMBERSHIP + INVITATIONS COMPLETE / PASS
+
+Phase 14.6.3 final implementation and focused verification are PASS.
+
+What shipped:
+
+- Added canonical Super Agency tenant context resolution via `x-super-agency-id`.
+- Added `SuperAgencyTenantGuard` and extended `PermissionGuard` to evaluate Super Agency tenant permissions.
+- Added effective parent status enforcement so suspended/archived Super Agencies block normal descendant Agency and Workspace tenant context resolution.
+- Added Super Agency membership lifecycle APIs for bounded listing, add/reactivate, update/suspend, role changes, duplicate active membership rejection, role-scope validation, and last-owner protection.
+- Added Super Agency role APIs for system/custom Super Agency roles, scoped custom role keys, and permission replacement with delegation checks.
+- Added migration `0075_phase14_6_3_super_agency_auth_rbac` with `super_agency_invitations`.
+- Added Super Agency invitations with tenant binding, role binding, hashed token storage, expiry, revoke, and single-use accept.
+- Hardened Super Agency invitations so API responses never return plaintext tokens; tokens are sent only in email bodies, audit metadata omits secrets, and persisted data stores `tokenHash`.
+- Hardened invitation acceptance with an atomic pending/unexpired claim before membership upsert, so reuse and concurrent second claims fail safely.
+- Added bounded, paginated, tenant-scoped invitation listing with status/search filters and no token hash exposure.
+- Locked normal Agency creation behind resolved Super Agency context plus `agency.create`; body `superAgencyId` must match the resolved context.
+- Added Super Agency permissions and default roles: owner, admin, manager, member.
+- Updated `/auth/me` to return active Super Agency memberships and child Agency summaries without placing tenant permission authority in JWT claims.
+- Updated seed fixtures for Platform-adjacent permissions, Super Agency owners, and Super Agency manager coverage.
+
+Final invariants:
+
+- Platform and Super Agency are separate authorization scopes.
+- Super Agency context requires authenticated active membership or explicit Platform authority through separate platform routes.
+- Super Agency membership never grants Platform privileges.
+- Super Agency permissions are permission-key based, never role-name based.
+- Agency access through Super Agency requires both parent relationship and permission.
+- Sibling Agencies do not inherit access from each other.
+- Workspace access remains isolated through existing Agency/Workspace context.
+- Suspended or archived Super Agency blocks normal descendant tenant access.
+- Super Agency invitations are tenant-bound, single-use, expiring, and token hashes only.
+- Roles cannot cross incompatible scopes; `RoleScope.SUPER_AGENCY` is required for Super Agency memberships.
+- Existing Agency/Workspace auth remains compatible.
+- Existing JWT, refresh rotation, 2FA/OTP, and session security remain intact.
+- Existing `x-agency-id` and `x-workspace-id` remain supported.
+- Public API, outbound webhook, inbound webhook, and integrations retain their own Workspace auth boundaries.
+- Storage, Tasks, Projects, and Tickets retain their existing Workspace ownership and authorization boundaries.
+- No automatic unsafe legacy user promotion exists.
+- No Phase 15 functionality was implemented.
+- Phase 14.6.4 was not started.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass.
+- `pnpm typecheck`: pass.
+- Focused context/guard/RBAC/auth tests: pass, 8 suites / 36 tests.
+- `pnpm test`: pass, 17 tasks; API 46 suites / 427 tests, worker 7 suites / 24 tests, web 13 files / 156 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed from cache.
+- Scratch API integration on `zea_play_phase14_6_3_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`.
+- Explicit worker integration: pass, 7 suites / 24 tests.
+- E2E: pass, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared.
+- Build: pass, 11 packages; existing Next ESLint plugin detection warning remains.
+- Audit: pass at high threshold; one moderate advisory remains.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_3_final_verify_20260925`: pass, 75 migrations applied through `0075_phase14_6_3_super_agency_auth_rbac`, schema up to date.
+- Legacy upgrade SQL validation on `zea_play_phase14_6_3_legacy_final_20260925`: pass; users, Super Agencies, Super Agency memberships, Agency memberships, Workspace memberships, Agencies, and Workspaces unchanged; invitation table created empty; no automatic membership promotion.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected legacy `Organization` compatibility fields, webhook subscription terms, token hash fields, invitation email token delivery, role-key constants for seed/default roles and last-owner protection, docs excluding billing/Phase 15, and test fixtures. No API plaintext invite token response, audit token leak, first Super Agency membership fallback, SuperAgencyMembership-as-platform-admin, Organization parent auth, public API/webhook/integration auth widening, billing, Stripe, trial, or Phase 15 implementation was found.
+
+Warnings:
+
+- Platform authority is still represented by existing platform/developer route protections; a fuller Platform auth model remains later hierarchy-hardening work.
+- Super Agency dashboard UI, navigation/sidebar, reporting, leaderboard changes, and Phase 14.6.4 work were not started.
+- Shared development database `zea_play` remains intentionally behind and is not a valid integration target until migrated separately.
+- Root integration remains expected-fail on shared dev DB until that DB is intentionally migrated outside this phase verification lane.
+
+Next: Phase 14.6.4 - Dashboard Shells + Routes + Navigation + Settings. Do not start automatically.
+
+## Phase 14.6.4 - DASHBOARD SHELLS + ROUTES + NAVIGATION + SETTINGS COMPLETE / PASS
+
+Phase 14.6.4 final implementation, focused refinement, and verification are PASS.
+
+What shipped:
+
+- Added canonical `/super-agency` App Router shell plus `/super-agency/members`, `/super-agency/roles`, and `/super-agency/settings`.
+- Added Super Agency route chrome support through the existing dashboard shell architecture.
+- Added Super Agency navigation config with Dashboard, Agencies foundation, Members, Roles, and Settings only.
+- Added Super Agency switcher backed only by `/auth/me` memberships.
+- Added selected Super Agency session preference while avoiding persisted permissions or role authority.
+- Added Super Agency context clearing so switching Super Agency clears selected child Agency and Workspace state.
+- Added a read-only tenant-scoped backend context endpoint at `GET /super-agencies/:superAgencyId` for safe Super Agency details, permission keys, bounded child Agency summaries, and aggregate counts.
+- Added typed frontend Super Agency service methods for context, members, roles, invitations, revoke, and membership updates.
+- Added API client `skipTenantContext` support so Super Agency requests can send `x-super-agency-id` without stale `x-agency-id` or `x-workspace-id`.
+- Added Super Agency dashboard foundation, members/invitations UI, roles UI, and settings foundation.
+- Added English and Tamil labels for Super Agency navigation, switcher, empty states, members, invitations, roles, settings, and restricted states.
+- Added focused Phase 14.6.4 web tests and API-client header scoping regression coverage.
+- Hardened the Super Agency dashboard landing page so child Agency foundation counts/lists are hidden unless the caller has parent Agency-management permission.
+- Hardened Super Agency scope switching so member page search and invitation dialog state reset when the selected Super Agency changes.
+
+Final invariants:
+
+- Developer, Platform/Super Admin, Super Agency, Agency, and Workspace remain separate dashboard environments.
+- `/super-agency` is the canonical Super Agency frontend route.
+- `/super-admin` remains Platform/Super Admin and was not renamed or converted.
+- Super Agency context is explicitly selected and backend validated.
+- Users with multiple Super Agency memberships are not silently assigned the first membership as tenant authority.
+- `x-super-agency-id` is sent only on Super Agency-scoped frontend service calls.
+- Super Agency service calls skip inherited Agency/Workspace tenant headers.
+- Tenant/query caches are Super Agency-scoped through query keys containing `superAgencyId`.
+- Switching Super Agency clears selected child Agency and Workspace UI state.
+- Super Agency navigation is permission-key based.
+- Existing Developer, Platform/Super Admin, Agency, and Workspace navigation remains intact.
+- Super Agency members, roles, invitations, and settings use Phase 14.6.3 backend authority.
+- Invitation plaintext token is never modeled or displayed by the frontend.
+- Landing-page child Agency data is permission-gated and does not leak through member-only Super Agency permissions.
+- Super Agency UI filters and dialogs are cleared on scope switch where user-entered transient state exists.
+- Workspace notification, realtime, calendar, files, automation, gamification, public API, webhook, and integration modules are not exposed as Super Agency modules.
+- No billing, plans, subscription, Stripe, white-label, Phase 15, or future Phase 15-22 functionality was introduced.
+- Phase 14.6.5 was not started.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused backend Super Agency/context/guard/auth tests: pass, 5 suites / 24 tests.
+- API client focused tests: pass, 1 file / 3 tests.
+- Focused web route/navigation/switcher/cache/landing-permission tests plus shell regression: pass, 2 files / 20 tests.
+- Full `pnpm test`: pass, 17 tasks; API 46 suites / 427 tests, worker 7 suites / 24 tests, web 14 files / 162 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed.
+- Scratch API integration on `zea_play_phase14_6_4_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`.
+- Explicit worker integration: pass, 7 suites / 24 tests.
+- `pnpm test:e2e`: pass, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared.
+- `pnpm build`: pass, 11 packages; existing Next ESLint plugin detection warning remains.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the high threshold.
+- Migration count: unchanged at 75; latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected docs exclusions, legacy token hash fields, workspace-only notification/realtime code paths, display-only `role.name` usage, tests asserting billing absence, and existing webhook subscription terminology. No confirmed first-membership Super Agency authority fallback, role-name authorization, global `x-super-agency-id` interceptor, persisted permission authority, invite-token frontend exposure, Super Admin conversion, billing/plans/Stripe/white-label, or Phase 15 implementation was found.
+
+Warnings:
+
+- Super Agency settings are read-only foundation fields; Platform remains authority for status mutation.
+- Full child Agency/Workspace management remains Phase 14.6.5.
+- Parent reporting, leaderboard hierarchy, realtime/notification aggregation, calendar, storage, automation, public API, webhook, integration, and audit reporting remain later 14.6 work.
+- Shared development database `zea_play` remains intentionally behind and was not migrated.
+- Root integration remains expected-fail on shared dev DB until that DB is intentionally migrated outside this phase verification lane.
+- The web build still emits the existing Next.js ESLint plugin warning.
+
+Next: Phase 14.6.5 - Agency + Workspace/Sub-account Management. Do not start Phase 14.6.5 automatically.
+
+## Phase 14.6.5 - AGENCY + WORKSPACE / SUB-ACCOUNT MANAGEMENT COMPLETE / PASS
+
+Phase 14.6.5 focused refinement and final verification is COMPLETE / PASS.
+
+What shipped and refined:
+
+- Added Super Agency parent-management routes under the existing Super Agency tenant controller for listing, creating, reading, and updating child Agencies.
+- Added safe parent-scoped descendant Workspace metadata listing for `Super Agency -> Agency -> Workspace/Sub-account` management.
+- Added bounded server pagination, search, status filtering, and allowlisted sort modes for parent Agency and Workspace metadata lists.
+- Updated Agency creation so parent-scoped requests server-assign `superAgencyId` from the current Super Agency context; client parent override is rejected.
+- Preserved normal Agency and Workspace tenant guards for operational child routes; no synthetic AgencyMembership or WorkspaceMembership is created for parent management.
+- Hardened Agency Workspace listing to use bounded server pagination and existing Agency context.
+- Added Agency Workspace creation status protection in service logic so inactive Agencies cannot create child Workspaces.
+- Added `/super-agency/agencies` and `/super-agency/agencies/[agencyId]` UI surfaces for parent management.
+- Added detail breadcrumbs, accessible pagination controls, and explicit Agency Member versus Workspace Member labels in the Super Agency parent-management UI.
+- Added typed Super Agency service methods for child Agency list/create/detail/update and descendant Workspace summaries.
+- Updated Super Agency navigation so Agencies routes to `/super-agency/agencies` and requires `agency.read`.
+- Added English and Tamil labels for Agency management, create dialog, detail, managed-from-parent context, search, pagination, breadcrumbs, and Workspace summaries.
+
+Final invariants:
+
+- Super Agency manages only descendant Agencies where `Agency.superAgencyId` equals the current Super Agency context.
+- Parent management never creates synthetic AgencyMembership or WorkspaceMembership.
+- Agency creation derives `superAgencyId` only from the current parent context.
+- Agency parent is immutable through ordinary and parent-management updates.
+- Agency manages only descendant Workspaces through existing Agency context.
+- Workspace creation derives `agencyId` only from the current Agency context.
+- Workspace parent is immutable through ordinary management.
+- Workspace remains Agency-owned only; `Workspace.superAgencyId` was not added.
+- Super Agency descendant Workspace access is metadata-only.
+- Parent-management routes do not expose Task, Project, Ticket, File, API, webhook, or integration secrets.
+- Super Agency actors remain Super Agency actors in AuditLog metadata.
+- Existing AgencyMembership and WorkspaceMembership remain canonical.
+- All hierarchy list/search/sort/pagination behavior is server-side and bounded.
+- Agency and Workspace counts are server-scoped aggregates.
+- Organization is not tenant-parent authority.
+- Existing Agency and Workspace shells remain compatible.
+- No Phase 15 billing, plans, payments, subscriptions, limits, or white-label scope was implemented.
+- Phase 14.6.6 was not started.
+
+Verification:
+
+- `git branch --show-current`: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused backend Agency/Workspace/Super Agency hierarchy, tenant context, schema, and permission tests: pass, 7 suites / 33 tests.
+- Focused frontend hierarchy management tests plus 14.6.4 shell regression: pass, 2 files / 10 tests.
+- Full `pnpm test`: pass cleanly, 17 tasks; API 47 suites / 434 tests, worker 7 suites / 24 tests, web 15 files / 166 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed.
+- Scratch API integration on `zea_play_phase14_6_5_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`; scratch DB was dropped after verification.
+- Explicit worker integration: pass, 7 suites / 24 tests.
+- `pnpm test:e2e`: pass, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared.
+- `pnpm build`: pass, 11 packages; existing Next ESLint plugin detection warning remains.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the high threshold.
+- `git diff --check`: pass; line-ending warnings only.
+- Migration count: unchanged at 75; latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected role display/test fixtures, Super Agency membership management outside this phase boundary, legacy role-name DTO enums, and tests asserting Task/Project/Ticket fields are not exposed. No confirmed synthetic AgencyMembership or WorkspaceMembership creation for parent management, client parent authority, unsafe parent transfer, unbounded parent list, arbitrary orderBy, operational data exposure, secret exposure, billing/plans/Stripe/white-label, or Phase 15 implementation was found.
+
+Warnings:
+
+- Parent Workspace visibility is metadata-only; operational Workspace modules still require normal Workspace context.
+- Detailed Agency and Workspace member administration remains in existing child contexts; no broad parent member-management rebuild was added.
+- Shared development database `zea_play` remains intentionally behind and was not migrated.
+- Root integration remains expected-fail on shared dev DB until that DB is intentionally migrated outside this phase verification lane.
+- The web build still emits the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+
+## Phase 14.6.6 - TASKS + PROJECTS + TICKETS PARENT-SCOPE VALIDATION COMPLETE / PASS
+
+Phase 14.6.6 focused refinement and final verification is COMPLETE / PASS.
+
+What shipped:
+
+- Added explicit read-only parent oversight APIs for workspace-owned Tasks, Projects, and Tickets under Agency and Super Agency tenant contexts.
+- Added `ParentOversightModule` with Agency parent routes `/agencies/:agencyId/parent/tasks`, `/agencies/:agencyId/parent/projects`, and `/agencies/:agencyId/parent/tickets`.
+- Added Super Agency parent routes `/super-agencies/:superAgencyId/parent/tasks`, `/super-agencies/:superAgencyId/parent/projects`, and `/super-agencies/:superAgencyId/parent/tickets`.
+- Added explicit parent-read permissions: `tasks.parent.read`, `projects.parent.read`, and `tickets.parent.read`, seeded for Agency and Super Agency roles.
+- Added bounded query DTOs with allowlisted filters, search, sort, and pagination for parent Task, Project, and Ticket oversight.
+- Added parent-safe response DTO shaping in service code by Prisma `select`, excluding comments, ticket conversation/internal notes, attachments, files/assets, secrets, requester data, and operational mutation surfaces.
+- Added server-side total counts plus status and priority aggregates for parent oversight lists.
+- Added focused service tests for Super Agency hierarchy fences, Agency sibling isolation, bounded pagination, safe DTO shape, and foreign Agency filter handling.
+- Refined parent membership/user projections to omit email addresses and expose only safe `id` and `name` display metadata.
+- Expanded focused parent oversight tests for PII-safe projections, filter fences, and list/count/report consistency.
+
+Final invariants:
+
+- Task, Project, and Ticket remain Workspace-owned; no `superAgencyId` column or redundant parent ownership was added.
+- Workspace operational Task, Project, and Ticket routes remain unchanged and still require normal Workspace tenant context.
+- Agency parent oversight is scoped through descendant Workspaces where `Workspace.agencyId` equals the current Agency context.
+- Super Agency parent oversight is scoped through `Workspace -> Agency -> SuperAgency`.
+- Parent oversight is read-only and does not create/update/delete Tasks, Projects, Tickets, comments, attachments, project links, ticket replies, SLA state, automation state, notifications, realtime events, gamification events, or storage records.
+- No synthetic WorkspaceMembership or AgencyMembership is created for parent visibility.
+- Client-supplied filters cannot replace tenant authority; foreign Agency filters under Agency context resolve to an empty Workspace fence.
+- Search, pagination, and sorting are server-side and bounded; arbitrary `orderBy` is not accepted.
+- Counts and reports are server-scoped aggregates only.
+- Exports were not added in the main implementation; existing Workspace operational exports remain Workspace-scoped.
+- Parent DTOs omit comments, proofs, files, conversations, internal notes, requester details, attachment data, object keys, signed URLs, and user email addresses.
+- Parent reads do not produce Automation, Notification, Realtime, Gamification, XP, GlobalScore, AuditLog, or storage side effects.
+- No frontend parent Task/Project/Ticket navigation surface was added because existing Agency/Super Agency frontend scope has no parent Task/Project/Ticket oversight product surface. Workspace operational UI remains the only mutation path.
+- No database migration was added; migration count remains 75 and latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- No Phase 15 billing, plans, payments, subscriptions, limits, white-label, or future scope was implemented.
+- Phase 14.6.7 was not started.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- Initial `pnpm format`: failed on one new service file; after targeted Prettier, final `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused Task/Project/Ticket hierarchy, permission, tenant, DTO, filter, count, and operational regression tests: pass, 7 suites / 53 tests.
+- Full `pnpm test`: pass, 17 tasks; API 48 suites / 440 tests, worker 7 suites / 24 tests, web 15 files / 166 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed.
+- Scratch API integration on `zea_play_phase14_6_6_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`.
+- Explicit worker integration: pass, 7 suites / 24 tests.
+- `pnpm test:e2e`: pass on final rerun, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared. An earlier run had one transient gamification heading timeout; rerunning the failed test and then the full suite passed.
+- `pnpm build`: pass, 11 packages; existing Next ESLint plugin detection warning remains. An earlier attempt hit a Windows Prisma engine rename lock while another Prisma process was active; rerun passed cleanly.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the high threshold.
+- `git diff --check`: pass; line-ending warnings only.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_6_final_verify_20260925`: pass, 75 migrations applied through `0075_phase14_6_3_super_agency_auth_rbac`, schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected schema relations, docs/test text, existing Workspace operational Task/Project/Ticket proof/conversation/attachment code, webhook subscription terminology, disabled billing labels, and Phase 15 exclusion docs. No Task/Project/Ticket parent ownership column, parent operational write route, synthetic membership creation for oversight, arbitrary parent `orderBy`, parent signed-file route, parent ticket-internal-note route, role-name authorization, Organization parent authority, or Phase 15 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and was not migrated.
+- Parent exports were not introduced; this avoids operational data leakage until focused export scope is explicitly verified or requested.
+- The web build still emits the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+
+## Phase 14.6.7 - GAMIFICATION + GLOBAL SCORES + HIERARCHICAL LEADERBOARDS COMPLETE / PASS
+
+Phase 14.6.7 focused refinement and final verification is COMPLETE / PASS.
+
+What shipped and refined:
+
+- Added read-only Super Agency Global Leaderboard APIs and UI under `/super-agency/gamification` with Agencies, Subaccounts, and Users tabs.
+- Added Platform Super Agencies leaderboard support while preserving existing Platform Agencies, Subaccounts, and Users tabs.
+- Added explicit Super Agency leaderboard permission `gamification.global_leaderboard.view_super_agency` for Super Agency Owner/Admin default roles only.
+- Added explicit Platform global leaderboard guard using permission-key authority without requiring selected Agency tenant headers.
+- Removed Platform global leaderboard frontend cache/enabled dependency on selected Agency context.
+- Preserved Workspace local XP leaderboard behavior and existing Agency/Platform Global Score aggregation semantics.
+- Added focused API and web regression tests for Super Agency hierarchy fences, Platform tenant independence, anonymous/opt-out user handling, and query-key isolation.
+
+Final invariants:
+
+- Workspace XP leaderboards remain Workspace-local and rank only local XP.
+- Agency, Super Agency, and Platform Global Leaderboards use signed `APPLIED` `GamificationGlobalScoreEvent.normalizedScore` summed through descendant Workspaces.
+- No score formula, baseline calculation, minimum-sample behavior, historical ledger, XP formula, XP control, reward, badge, achievement, streak, or admin-adjustment behavior was changed.
+- No Global Score backfill, recompute, or historical normalized-score mutation was added.
+- No duplicate parent score authority was added; there is no `superAgencyId` on Global Score events or XP entries.
+- Super Agency scope is derived through `gamification_global_score_events.workspace_id -> workspaces.agency_id -> agencies.super_agency_id`.
+- Platform scope is global and not derived from selected Agency or Workspace UI state.
+- User Global Leaderboards rank `WorkspaceMembership` rows, not user identity, so one user in multiple Workspaces ranks independently per membership.
+- Inactive memberships and `OPT_OUT` preferences are excluded before ranking; anonymous users remain redacted without email, phone, or raw user metadata.
+- Local XP, reward points, badges, levels, streaks, and admin adjustment state do not substitute for Global Score totals.
+- Parent leaderboard reads are read-only and do not create/update/delete XP, rewards, badges, Global Score events, baselines, audit rows, realtime events, notifications, or workspace operational records.
+- Query/cache keys are scoped by the relevant parent tenant and tab/filter params; Platform keys do not include selected Agency or Workspace.
+- No database migration was added; migration count remains 75 and latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- No Phase 15 billing, plans, payments, subscriptions, limits, white-label, or future scope was implemented.
+- Phase 14.6.8 was not started.
+
+Verification:
+
+- `git branch --show-current`: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API tests: pass, 5 suites / 116 tests.
+- Focused web tests: pass, 16 files / 168 tests.
+- Full `pnpm test`: pass, 17 tasks; API 49 suites / 446 tests, worker 7 suites / 24 tests, web 16 files / 168 tests. An earlier web Phase 7 test timeout reran cleanly and then the full suite passed.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed, 7 suites / 24 tests.
+- Scratch API integration on `zea_play_phase14_6_7_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`; scratch DB was dropped after verification.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_7_final_verify_20260925`: pass, 75 migrations applied and schema up to date.
+- `pnpm test:e2e`: pass, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared.
+- `pnpm build`: pass, 11 packages; existing Next ESLint plugin detection warning remains.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the high threshold.
+- `git diff --check`: pass; line-ending warnings only.
+- Migration count: unchanged at 75; latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected docs exclusions, legacy schema terms, tests asserting PII absence, workspace-only XP/reward/admin/point-rule paths, display-only role names, and existing webhook subscription terminology. No parent/global leaderboard path using local XP or reward points, role-name authorization, persisted parent score authority, parent ownership column, Global Score backfill, PII exposure, billing/plans/Stripe/white-label, or Phase 15 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and was not migrated.
+- Root integration remains expected-fail on shared dev DB until that DB is intentionally migrated outside this phase verification lane.
+- The web build still emits the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+
+## Phase 14.6.8 - AUTOMATION + WORKERS + BACKGROUND PROCESSING COMPLETE / PASS
+
+Phase 14.6.8 focused refinement and final verification is COMPLETE / PASS.
+
+What shipped and refined:
+
+- Added an automation execution effective hierarchy check before each uncompleted business action step.
+- Automation workers now re-read Workspace -> Agency -> Super Agency status from PostgreSQL at execution time instead of trusting enqueue-time state.
+- Suspended Workspace, Agency, or Super Agency blocks queued automation business actions as `TENANT_SUSPENDED`.
+- Archived or unavailable Workspace, Agency, or Super Agency blocks queued automation business actions as `TENANT_INACTIVE`.
+- Hierarchy status failures are non-transient and do not retry forever or dead-letter through infrastructure retry loops.
+- Multi-step executions preserve completed steps and safely fail the next uncompleted action if the parent hierarchy becomes blocked mid-run.
+- Automation domain events now validate the Task, Project, or Ticket belongs to the supplied Workspace before persistence and matching.
+- Added a worker hierarchy helper for background processors that need effective tenant status from PostgreSQL.
+- Task recurrence worker generation now blocks customer-facing Task creation when effective hierarchy is suspended or inactive and marks the recurrence series `ERROR` with the safe tenant code.
+- Refined recurrence hierarchy validation to run through the existing transaction client after the recurrence row is locked, keeping the hierarchy read and recurrence state update on the same PostgreSQL authority path.
+
+Implementation invariants:
+
+- Automation workflows, versions, events, trigger matches, executions, step executions, templates, and runtime policy remain Workspace-owned.
+- No `agencyId` or `superAgencyId` ownership column was added to automation tables.
+- PostgreSQL remains worker tenant/status authority; BullMQ and Redis remain transport only.
+- Automation execution queue payload remains minimal: `executionId` only.
+- Task recurrence scheduler payload remains global scan metadata only; no tenant authority or secrets are carried.
+- Worker hierarchy IDs are derived from database reads and used only for status validation and safe diagnostic logs.
+- WorkerHierarchyService uses the existing worker Prisma provider and can use the current transaction client; it does not instantiate ad-hoc Prisma clients.
+- Workspace replay remains Workspace-authorized and idempotent; Super Agency parent replay, publish, edit, builder, and bulk replay were not added.
+- Reactivation does not automatically replay failed automation executions or catch up blocked recurrence mutations.
+- Automation actions remain limited to the execution Workspace and still call canonical Task, Project, and Ticket services.
+- Action input cannot route work to a sibling Workspace; target Task, Project, Ticket, status, membership, and tag checks remain Workspace-scoped.
+- Depth, correlation, causation, idempotency, branch, condition, template, clone, and runtime policy semantics remain unchanged.
+- Existing Workspace monitoring remains Workspace-scoped. No Agency or Super Agency automation monitoring UI/API was introduced because no existing parent automation monitoring product surface exists.
+- Worker `/health` behavior remains infrastructure-only and exposes no tenant/customer data.
+- No Phase 15 billing, plans, subscriptions, limits, Stripe, white-label, or future scope was implemented.
+- Phase 14.6.9 was not started.
+
+Verification:
+
+- `git branch --show-current`: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API automation, tenant, and permission tests: pass, 10 suites / 76 tests.
+- Focused worker processor and health tests: pass, 7 suites / 25 tests.
+- Full `pnpm test`: pass, 17 tasks; API 49 suites / 451 tests, worker 7 suites / 25 tests, web 16 files / 168 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed, 7 suites / 25 tests.
+- Scratch API integration on `zea_play_phase14_6_8_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`.
+- Explicit worker integration: pass, 7 suites / 25 tests.
+- `pnpm test:e2e`: pass, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared.
+- `pnpm build`: pass, 11 packages; existing Next ESLint plugin detection warning remains.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below the high threshold.
+- `git diff --check`: pass; line-ending warnings only.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_8_final_verify_20260925`: pass, 75 migrations applied through `0075_phase14_6_3_super_agency_auth_rbac`, schema up to date.
+- Migration count: unchanged at 75; latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected docs/test/display text, webhook subscription terminology, safe env configuration reads, disabled billing navigation labels, legacy role-name display/test fixtures, and safe hierarchy helper identifiers. No automation parent ownership column, job parent authority, parent workflow builder/edit/publish/replay, cross-Workspace automation route, unsafe variable execution, `eval`, `new Function`, `vm`, tenant data in worker health, billing, Stripe, subscription implementation, or Phase 15 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and was not migrated.
+- Root API integration remains expected-fail on shared dev DB until that DB is intentionally migrated outside this phase verification lane.
+- Non-automation maintenance queues were audited by classification, not broadly redesigned.
+- The web build still emits the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+
+Phase 14.6.8 is COMPLETE / PASS.
+Next: Phase 14.6.9 - Notifications + Realtime + Calendar. Do not start Phase 14.6.9 automatically.
+
+## Phase 14.6.9 - NOTIFICATIONS + REALTIME + CALENDAR MAIN IMPLEMENTATION COMPLETE / PASS
+
+Phase 14.6.9 main implementation is COMPLETE / PASS. Focused refinement and final verification are next and were not started.
+
+What shipped:
+
+- Realtime Workspace membership authorization now requires active WorkspaceMembership plus active Workspace, Agency, and Super Agency status from PostgreSQL.
+- Realtime socket periodic auth recheck now revalidates the joined Workspace membership and parent hierarchy. Revoked or suspended access leaves Workspace/member rooms without trusting stale socket state.
+- Realtime room repair uses only server-generated Workspace and member room names when membership identity changes.
+- Notification reminder firing now rechecks effective Workspace -> Agency -> Super Agency status before routing customer-visible reminder notifications.
+- Reminder rows under inactive hierarchy are marked `SKIPPED` and are not retried forever.
+- Existing queued notification email delivery remains committed delivery work and continues to validate active WorkspaceMembership plus active user before sending.
+- Frontend realtime Workspace subscriptions are route-scoped to `/workspace` only. Agency and Super Agency shells do not subscribe to the last selected Workspace room.
+- Added focused backend and frontend tests for parent hierarchy realtime denial, periodic room revocation, stale member-room repair, reminder hierarchy skip behavior, committed email delivery policy, and Workspace-only realtime route subscription.
+
+Implementation invariants:
+
+- Notifications, preferences, email deliveries, reminders, and calendar events remain Workspace-owned.
+- No Notification, NotificationPreference, NotificationEmailDelivery, NotificationReminder, CalendarEvent, or CalendarEventParticipant Agency/Super Agency ownership column was added.
+- Notification center remains Workspace shell only and uses Workspace membership identity.
+- Realtime Redis adapter remains transport/fanout only; PostgreSQL remains authorization authority.
+- Realtime clients cannot request arbitrary room names or parent descendant rooms.
+- Calendar ownership, visibility, participant scope, source aggregation, timezone, and range behavior remain Workspace-scoped and unchanged.
+- Super Agency and Agency shells remain safe from Workspace notification widgets.
+- No Phase 15 billing, plans, subscriptions, limits, Stripe, white-label, or future scope was implemented.
+- Phase 14.6.10 was not started.
+
+Verification:
+
+- `git branch --show-current`: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass after targeted Prettier write for two touched files.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API notification/realtime/calendar tests: pass, 7 suites / 48 tests.
+- Focused web realtime/shell tests: pass, 17 files / 169 tests.
+- Full `pnpm test`: pass on rerun, 17 tasks; API 49 suites / 456 tests, worker 7 suites / 25 tests, web 17 files / 169 tests.
+- Security search: pass after review. Hits were expected docs exclusions, planned-date field names, existing webhook subscription terminology, disabled billing labels, and reviewed server-generated realtime room helper code. No notification/calendar parent ownership columns, parent descendant realtime room subscription, Redis authority, client room authority, billing, Stripe, subscription implementation, or Phase 15 implementation was found.
+- Database migration: none added. Migration count remains 75; latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+
+Warnings:
+
+- The first top-level `pnpm test` run hit a single existing `phase7-2.test.tsx` web timeout under full-suite timing pressure. The failing web command then passed, and a second top-level `pnpm test` passed.
+- Shared development database `zea_play` was not migrated.
+- Prompt 2 still owns integration, E2E, build, audit, and final regression for Phase 14.6.9.
+
+Next: Phase 14.6.9 - Focused Refinement + Final Verification. Do not start refinement automatically.
+
+## Phase 14.6.9 - NOTIFICATIONS + REALTIME + CALENDAR COMPLETE / PASS
+
+Phase 14.6.9 focused refinement and final verification is COMPLETE / PASS.
+
+Issues found and fixed during final verification:
+
+- Added missing focused regression coverage for same-user multi-Workspace notification isolation, active-recipient email delivery predicates, blocked reminder hierarchy variants, and realtime auth timer cleanup.
+- Fixed the health integration fixture so it tests HealthController plus correlation behavior without booting unrelated BullMQ queue processors, eliminating the integration open-handle hang instead of suppressing it.
+
+Final invariants:
+
+- Notifications remain WorkspaceMembership scoped; no Agency or Super Agency notification recipient authority exists.
+- NotificationPreference remains WorkspaceMembership/category scoped; no Agency or Super Agency inherited mute exists.
+- Multi-Workspace users keep isolated notification feeds, unread counts, read/read-all mutations, and preferences by WorkspaceMembership.
+- Notification Center exists only in valid Workspace context.
+- Notification routing targets only valid WorkspaceMembership recipients in the resource Workspace. Parent Agency/Super Agency membership alone is never a notification recipient.
+- Email delivery remains durable/idempotent under the committed-delivery policy after valid notification/delivery creation.
+- Email worker reloads DB state by `deliveryId` only and requires active WorkspaceMembership plus active User before send. Revoked membership or inactive user is skipped with `INVALID_RECIPIENT`.
+- Email queue payload remains `{ deliveryId }`; no body, recipient email, credentials, Agency ID, or Super Agency ID is queue authority.
+- Existing stale `SENDING`, `AMBIGUOUS`, terminal, retry, and duplicate delivery handling remains intact.
+- Blocked hierarchy reminders are skipped deterministically without retry storms or backlog resurrection.
+- Task due soon, Task overdue, Project due soon, and Ticket SLA warning reminders retain canonical Phase 12 behavior. Ticket SLA reminder uses stored `slaState.resolutionDueAt`.
+- Realtime rooms remain server-generated `workspace:<workspaceId>` and `member:<workspaceId>:<membershipId>` only.
+- Agency/Super Agency descendant-room fanout does not exist.
+- Socket subscribe and bounded recheck validate WorkspaceMembership, Workspace, Agency, and Super Agency status from PostgreSQL.
+- Revoked hierarchy access or membership removes both Workspace and member realtime rooms.
+- Realtime auth recheck uses one cleaned-up timer per socket; no per-event hierarchy lookup was added.
+- Redis remains transport/fanout only and degraded mode does not bypass PostgreSQL authorization.
+- Socket layer remains invalidation only and does not mutate business entities.
+- Realtime payloads remain minimal invalidation payloads; private details are not broadcast.
+- Calendar remains Workspace-owned. Calendar participants remain same-Workspace WorkspaceMembership scoped.
+- Parent hierarchy cannot bypass WORKSPACE, PARTICIPANTS_ONLY, or PRIVATE calendar visibility.
+- No parent combined Calendar exists and no parent calendar aggregation was added.
+- Workspace source aggregation remains current Workspace only, with bounded 93-day range and Workspace timezone authority.
+- Workspace switching isolates notification, realtime, and calendar state.
+- Parent/dashboard route transitions do not retain stale Workspace realtime subscription state.
+- Super Agency, Agency, Platform, and Developer shells do not show Workspace notification/timer/calendar widgets.
+- Existing Phase 12 behavior remains green.
+- No database migration was added; migration count remains 75 and latest remains `0075_phase14_6_3_super_agency_auth_rbac`.
+- No Phase 15 billing, plans, payments, subscriptions, limits, Stripe, white-label, or future scope was implemented.
+- Phase 14.6.10 was not started.
+
+Verification:
+
+- `git branch --show-current`: `developed`.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass after targeted Prettier write for `apps/api/test/health.integration-spec.ts`.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API notification/realtime/calendar tests: pass, 7 suites / 51 tests.
+- Focused API extended notification/realtime/calendar/automation tests: pass, 8 suites / 71 tests.
+- Focused web Phase 12/14.6.9 tests: pass, 17 files / 169 tests.
+- Full `pnpm test`: pass, 17 tasks; API 49 suites / 459 tests, worker 7 suites / 25 tests, web 17 files / 169 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075`; worker integration passed, 7 suites / 25 tests.
+- Scratch API integration on `zea_play_phase14_6_9_final_verify_20260925`: pass, 5 suites / 103 tests after applying all 75 migrations.
+- Explicit worker integration: pass, 7 suites / 25 tests.
+- Clean isolated migration deploy/status on `zea_play_phase14_6_9_final_verify_20260925`: pass, 75 migrations applied and schema up to date; scratch DB was dropped afterward.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- `pnpm test:e2e`: pass, 21 Playwright tests; only known `NO_COLOR`/`FORCE_COLOR` warnings appeared.
+- `pnpm build`: pass, 11 packages; existing Next ESLint plugin detection warning remains.
+- `pnpm audit --audit-level high`: pass; one moderate advisory remains below threshold.
+- Migration count: 75; latest migration `0075_phase14_6_3_super_agency_auth_rbac`.
+- `git diff --check`: pass; line-ending warnings only.
+- Security search: pass after review. Hits were expected docs exclusions, planned-date fields, webhook subscription terminology, disabled billing labels, route-scope/realtime helper references, and test text. No notification/calendar parent ownership column, SuperAgencyMembership/AgencyMembership recipient or participant authority, user-wide notification stream, read-all by User ID, global notification/calendar list, arbitrary client socket room join, Agency/Super Agency/all-descendant room, parent calendar/notification center, Redis authorization authority, socket mutation handler, suspended reminder retry loop, SLA recomputation, parent email exposure, billing, Stripe, subscription implementation, or Phase 15 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` remains intentionally behind and was not migrated.
+- Root API integration remains expected-fail on shared dev DB until that DB is intentionally migrated outside this phase verification lane.
+- Build still emits the existing Next.js ESLint plugin warning.
+- E2E still emits existing `NO_COLOR`/`FORCE_COLOR` warnings.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+
+Phase 14.6.9 is COMPLETE / PASS.
+Next: Phase 14.6.10 - Storage + Files + Cloud Drives. Do not start Phase 14.6.10 automatically.
+
+## Phase 14.6.10 - STORAGE + FILES + CLOUD DRIVES MAIN IMPLEMENTATION / PASS
+
+Phase 14.6.10 main implementation is PASS. Focused refinement and final verification are next and were not started.
+
+What shipped:
+
+- File and project-asset content operations now require direct active WorkspaceMembership, not Agency/Super Agency parent context alone.
+- Workspace file list, detail, download URL, upload finalization, archive, delete request, restore, storage usage, and retention policy routes remain Workspace-guarded and now also enforce direct Workspace membership at service boundary.
+- Project asset list, detail, download URL, upload finalization, and remove paths now enforce direct Workspace membership before asset lookup or URL signing.
+- Cloud drive connection listing, disconnect, provider file browsing, and export now require direct active WorkspaceMembership.
+- Cloud OAuth callback now validates the stored state against active actor membership, active user, active Workspace, active Agency, and active Super Agency before provider token exchange or connection write.
+- Workspace file browser preview signed URL state is cleared on Workspace switch, and query keys remain Workspace scoped.
+- No parent file browser, parent cloud account, parent signed URL route, cross-Workspace file movement, new provider, billing/plan quota, or white-label storage behavior was added.
+
+Implementation invariants:
+
+- Files/assets remain Workspace-owned.
+- Cloud-drive connections remain Workspace-owned.
+- Agency/Super Agency relationship does not grant file-content or cloud-connection access.
+- No `Asset.agencyId`, `Asset.superAgencyId`, `CloudDriveConnection.agencyId`, or `CloudDriveConnection.superAgencyId` was added.
+- Workspace membership plus effective hierarchy plus existing storage permission are required for file access.
+- File ID and object key alone never authorize access.
+- Signed URLs are issued only after Workspace authorization and remain bounded/temporary.
+- Object keys remain server-controlled and are removed from serialized file DTOs.
+- Quota remains Workspace scoped and uses active/reserved Workspace bytes.
+- Archive/restore remain Workspace scoped.
+- Retention/purge remain maintenance operations and continue through DB-authoritative lifecycle state.
+- Task/Project/Ticket attachment schema relations remain same-Workspace through composite foreign keys.
+- Parent Task/Project/Ticket oversight continues excluding files, proofs, attachments, signed URLs, object keys, and provider credentials.
+- Cloud credentials remain encrypted and server-only; safe connection DTOs do not include encrypted token material.
+- OAuth state/callback cannot use client-supplied Workspace as tenant authority.
+- Cloud Asset plus CloudConnection operations require the same Workspace.
+- Live Google Drive, OneDrive, and Dropbox OAuth remains unverified externally.
+- No Phase 15 functionality exists.
+- Phase 14.6.11 was not started.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API storage/cloud tests: pass, 2 suites / 56 tests.
+- Focused worker storage tests: pass, 2 suites / 13 tests.
+- Focused web file/browser shell tests: pass, 17 files / 170 tests.
+- Full `pnpm test`: pass on rerun, 17 tasks; API 49 suites / 463 tests, worker 7 suites / 25 tests, web 17 files / 170 tests.
+- Security search: pass after review. Hits were expected storage internals/tests, provider token adapter internals, webhook subscription terminology, disabled billing labels, docs exclusions, and provider web URL metadata. No parent ownership columns, parent file browser route, public bucket workaround, unsafe parent signed URL route, frontend object key exposure, plaintext cloud credential DTO, storage plan, Stripe, white-label, or Phase 15 implementation was found.
+- Database migration: none added. Migration count remains 75; latest migration remains `0075_phase14_6_3_super_agency_auth_rbac`.
+
+Focused refinement and final verification:
+
+- Added final guard coverage for OAuth callback after WorkspaceMembership revocation before provider token exchange.
+- Added final guard coverage for mixed-Workspace cloud export denial before Asset lookup or object read.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API storage/cloud/parent tests: pass, 3 suites / 64 tests.
+- Focused worker storage tests: pass, 2 suites / 13 tests.
+- Focused web file/browser shell tests: pass, 17 files / 170 tests.
+- Full `pnpm test`: pass, 17 tasks; API 49 suites / 465 tests, worker 7 suites / 25 tests, web 17 files / 170 tests.
+- Root `pnpm test:integration` against shared dev remains expected-fail because shared dev is intentionally stale and missing `automation_trigger_matches`; worker integration passed in that root run.
+- Clean isolated PostgreSQL migration verification: pass; scratch database applied all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`, reported schema up to date, passed API integration 5 suites / 103 tests, and was dropped afterward.
+- Explicit worker integration: pass, 7 suites / 25 tests.
+- `pnpm test:e2e`: pass, 21 browser tests.
+- `pnpm build`: pass, 11 tasks.
+- `pnpm audit --audit-level high`: pass at high threshold; one moderate advisory remains below threshold.
+- `git diff --check`: pass; line-ending warnings only.
+- Documentation updated to mark Phase 14.6.10 complete/pass and Phase 14.6.11 as next.
+
+Warnings:
+
+- The first full `pnpm test` run hit the existing Phase 7.2 web full-suite timing flake. The standalone web suite passed, and the second full `pnpm test` passed.
+- Shared development database `zea_play` was not migrated.
+- Shared development database remains intentionally pending migrations `0053` through `0075`.
+- E2E still emits existing `NO_COLOR`/`FORCE_COLOR` warnings.
+- Build still emits the existing Next.js ESLint plugin warning.
+- `git diff --check` still emits repository line-ending warnings.
+- Live Google Drive, OneDrive, and Dropbox OAuth was not externally verified.
+
+Phase 14.6.10 STORAGE + FILES + CLOUD DRIVES is COMPLETE / PASS.
+Next: Phase 14.6.11 - Public API + Webhooks + External Integrations. Do not start Phase 14.6.11 automatically.
+
+## Phase 14.6.11 - PUBLIC API + WEBHOOKS + EXTERNAL INTEGRATIONS MAIN IMPLEMENTATION / PASS
+
+Phase 14.6.11 main implementation is PASS. Focused refinement and final verification are next and were not started.
+
+What shipped:
+
+- Public API keys now reject otherwise-valid keys when the owning Workspace, Agency, or Super Agency hierarchy is inactive.
+- Public API management remains direct-WorkspaceMembership scoped; API key actor authority still derives from the stored key Workspace and explicit scopes.
+- Outbound webhook management, delivery inspection, manual retry, secret rotation, test send, and disable paths now require direct active WorkspaceMembership.
+- Outbound webhook workers now recheck the delivery subscription hierarchy and permanently fail queued deliveries with `TENANT_HIERARCHY_INACTIVE` before URL validation, secret decrypt, HMAC signing, POST, or retry scheduling.
+- Inbound webhook management now requires direct active WorkspaceMembership.
+- Public inbound webhook receipt now rejects inactive Workspace/Agency/Super Agency hierarchy before rate limiting, signature verification, replay/idempotency writes, event persistence, or normalization.
+- Integration management, test, and execute paths now require direct active WorkspaceMembership.
+- Integration test/execute now reject inactive hierarchy before credential decrypt or provider adapter calls.
+- Workspace settings clears one-time API key/webhook/inbound secrets and integration credential/action state when switching Workspaces.
+
+Implementation invariants:
+
+- API keys, outbound webhook subscriptions/events/deliveries, inbound webhook sources/events, and integration connections/actions remain Workspace-owned.
+- No Agency-owned or Super-Agency-owned API keys, webhooks, inbound sources, integration connections, credentials, or provider accounts were added.
+- Public API tenant authority comes from the stored API key Workspace, not client-supplied `x-workspace-id` or parent context.
+- Public API scopes remain explicit allowlist values with no wildcard scope.
+- Public write paths continue reusing canonical domain services.
+- Public API rate limits remain isolated by key and Workspace context.
+- Idempotency remains isolated by Workspace/key/route semantics and was not globalized.
+- Outbound webhook BullMQ payloads remain delivery-ID based; PostgreSQL remains the delivery authority.
+- Outbound HMAC signing continues using exact JSON bytes, HTTPS/TLS validation, SSRF checks, DNS rebinding protection, and no redirects.
+- Tenant suspension does not create retry floods; queued deliveries are marked failed without external POST.
+- Inbound webhook HMAC, timestamp tolerance, replay protection, idempotency, and normalization-only behavior remain intact.
+- Inbound webhooks do not mutate business objects or start automation.
+- Integration credentials remain encrypted and server-only; DTOs and logs do not expose plaintext or encrypted credential material.
+- GHL, Slack, and Webex adapters remain fixed-host/fixed-origin adapters.
+- Generic REST remains fixed HTTPS origin with relative paths, SSRF protection, DNS rebinding protection, and disabled redirects.
+- Live provider connectivity was not externally verified.
+- No background sync, GraphQL, arbitrary JavaScript, billing, plans, subscriptions, Stripe, or Phase 15 scope was added.
+- No database migration was added; migration count remains 75 through `0075_phase14_6_3_super_agency_auth_rbac`.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass after targeted Prettier write for `api-keys.service.ts` and `phase14-1.test.tsx`.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API public API/webhook/inbound/integration/security tests: pass, 7 suites / 74 tests.
+- Focused worker webhook delivery/maintenance tests: pass, 2 suites / 7 tests.
+- Focused web Workspace settings tests: pass; web runner executed 17 files / 171 tests.
+- Full `pnpm test`: pass on rerun, 17 tasks; API 49 suites / 471 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+- Security search: pass after review. Hits were expected docs, route text, safe one-time secret UI tests, encrypted credential server internals, redirect rejection paths, and existing deferred Phase 15/billing references. No parent-owned API key/webhook/integration schema fields, parent credential routes, TLS-disable flag, eval/new Function/VM execution, GraphQL implementation, or background sync implementation was found.
+
+Warnings:
+
+- The first full `pnpm test` run hit the existing Phase 7.2 web full-suite timeout flake. The targeted web rerun passed, and the second full `pnpm test` passed.
+- Shared development database `zea_play` was not migrated.
+- Shared development database remains intentionally pending migrations `0053` through `0075`.
+- Live GHL, Slack, Webex, and Generic REST provider connectivity was not externally verified.
+- Focused refinement and final verification remain next; Phase 14.6.12 and Phase 15 were not started.
+
+Focused refinement and final verification:
+
+- API key list, update, and revoke now require direct active WorkspaceMembership at the service boundary; parent Agency or Super Agency context cannot manage Workspace API keys.
+- API key authentication rejects inactive Workspace, Agency, suspended Super Agency, and archived Super Agency hierarchy before returning a public principal.
+- API key plaintext remains generated with random split identifier/secret material, stored only as a SHA-256 verifier, compared with timing-safe equality, displayed once, and omitted from ordinary list/detail responses.
+- Public API Workspace authority remains derived solely from the verified API key record. Caller tenant headers, body fields, and query fields do not widen or replace the key Workspace.
+- Explicit Task, Project, and Ticket scopes remain unchanged; no wildcard, parent, admin, root, or all scope exists.
+- Public writes continue through `TasksService`, `ProjectsService`, and `TicketsService`; no duplicate direct Prisma business mutation path was added.
+- Public API rate limits remain isolated by API key ID and Workspace ID. Buckets do not use plaintext key material or caller-supplied tenant headers.
+- Idempotent replay remains after current authentication, hierarchy, rate-limit, and scope guards; revoked keys or later-suspended hierarchy cannot replay old privileged responses.
+- Idempotency uniqueness remains Workspace/API-key/method/route/key scoped with request-fingerprint conflict rejection.
+- Outbound webhook subscriptions, events, and deliveries remain Workspace-owned with same-Workspace event/subscription/delivery matching.
+- Webhook queue payloads contain delivery identifiers only. PostgreSQL remains authority for tenant, destination, secret, event payload, hierarchy status, and delivery status.
+- Exact-byte HMAC remains authoritative: the same serialized JSON bytes are signed and posted.
+- Hierarchy-blocked outbound deliveries perform no external POST, do not decrypt/sign, are marked `FAILED` with `TENANT_HIERARCHY_INACTIVE`, and do not retry forever.
+- Tenant reactivation does not auto replay hierarchy-blocked deliveries; only explicit existing retry mechanisms can resubmit eligible failed deliveries.
+- Eligible delivery network failures remain retryable according to existing at-least-once semantics.
+- HTTPS/TLS, no-redirect, SSRF, IPv4/IPv6 private/link-local/loopback blocks, DNS multi-answer validation, DNS binding, SNI/Host preservation, response-size cap, and safe header behavior remain intact.
+- Inbound webhook sources remain Workspace-owned and public IDs remain random public identifiers, not secret authentication.
+- Inbound raw-body HMAC, timestamp tolerance, timing-safe signature comparison, source/external-event idempotency, body-size cap, and content-type/encoding checks remain intact.
+- Blocked inbound traffic is now bounded through the existing source/workspace rate limiter before inactive hierarchy is returned as the same safe not-found response used for unavailable sources.
+- Inactive hierarchy cannot persist new inbound events, decrypt/signature-check source secrets, normalize payloads, mutate domain records, or emit automation triggers.
+- Inbound webhooks remain normalization-only.
+- Integrations remain Workspace-owned. Agency/Super Agency parent membership grants no credential authority.
+- Provider credentials remain encrypted/server-only; DTOs, audit metadata, and request/response summaries do not expose plaintext credentials or encrypted credential material.
+- Inactive hierarchy blocks integration test/execute before credential decrypt and before provider network execution.
+- GHL, Slack, and Webex use fixed provider hosts. Generic REST uses a fixed validated HTTPS origin plus relative paths only, cannot escape origin through absolute/protocol-relative/traversal paths, and keeps redirects disabled.
+- No arbitrary JavaScript, VM, GraphQL, background sync, new provider, billing, plans, subscriptions, Stripe, file scope, white-label, Phase 14.6.12, or Phase 15 functionality was added.
+- Workspace switching clears transient API key plaintext, webhook/inbound secrets, selected delivery/event state, integration credential forms, and integration action/test results. Logout uses the existing session cleanup path and no secret persistence was added.
+- Live GHL, Slack, Webex, and Generic REST provider connectivity remains unverified externally.
+- No database migration was added. Migration count remains 75; latest is `0075_phase14_6_3_super_agency_auth_rbac`.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API public API/webhook/inbound/integration/security tests: pass, 8 suites / 79 tests.
+- Focused worker webhook/inbound/recurrence tests: pass, 3 suites / 10 tests.
+- Focused web Workspace settings and Phase 14 hierarchy tests: pass; web runner executed 17 files / 171 tests.
+- Full `pnpm test`: pass, 17 tasks; API 49 suites / 473 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+- Root `pnpm test:integration` against shared dev DB: expected fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075` and missing `automation_trigger_matches`; worker integration passed, 7 suites / 26 tests.
+- Clean isolated PostgreSQL migration deploy/status on `zea_play_phase14611_final_verify_20260925`: pass, all 75 migrations applied and schema up to date; scratch DB was dropped afterward.
+- Direct API integration on isolated PostgreSQL: pass, 5 suites / 103 tests.
+- Explicit worker integration: pass, 7 suites / 26 tests.
+- `pnpm test:e2e`: pass, 21 Playwright tests.
+- `pnpm build`: pass, 11 tasks.
+- `pnpm audit --audit-level high`: pass at high threshold; one moderate advisory remains below threshold.
+- `git diff --check`: pass; repository line-ending warnings only.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Security search: pass after review. Hits were expected documentation/deferred-scope text, planned-date words, webhook subscription terminology, one-time secret UI tests, encrypted credential server internals, fixed provider authorization headers, redirect rejection paths, and existing disabled billing labels. No parent-owned API key/webhook/integration schema fields, parent credential routes, plaintext secret DTO/log path, wildcard public API scope, tenant-header public authority, idempotency-before-auth path, wrong-serialization webhook signing path, redirect-follow path, TLS-disable flag, private-IP/IPv4-mapped-IPv6/DNS-bind bypass, parsed-body inbound HMAC, inbound mutation/automation trigger, Generic REST origin escape, provider host override, arbitrary code execution, background sync, GraphQL implementation, Stripe, or Phase 15 implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` was not migrated and remains intentionally pending migrations `0053` through `0075`.
+- Root API integration remains expected-fail on shared dev until that DB is intentionally migrated outside this phase lane.
+- E2E still emits existing `NO_COLOR`/`FORCE_COLOR` warnings.
+- Build still emits the existing Next.js ESLint plugin warning.
+- `git diff --check` still emits repository line-ending warnings.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+- Live GHL, Slack, Webex, and Generic REST provider connectivity was not externally verified.
+
+Phase 14.6.11 PUBLIC API + WEBHOOKS + EXTERNAL INTEGRATIONS is COMPLETE / PASS.
+Next: Phase 14.6.12 - AuditLog + Security + Parent-Level Reporting Scope. Do not start Phase 14.6.12 automatically.
+
+Phase 14.6.12 AUDITLOG + SECURITY + PARENT-LEVEL REPORTING SCOPE is COMPLETE / PASS.
+Next: Phase 14.6.13 Migration + Backfill + Backward Compatibility. Do not start Phase 14.6.13 or Phase 15 automatically.
+
+Implementation decision:
+
+- AuditLog writes now support canonical Super Agency lineage for central AuditService records by resolving Workspace -> Agency -> Super Agency and Agency -> Super Agency before persistence.
+- Organization remains legacy compatibility metadata only and is not hierarchy authority for AuditLog lineage.
+- Audit metadata is recursively sanitized for nested secrets, credential fields, bearer/provider error details, invitation tokens, OTP/code-shaped fields, cookies, raw bodies, and direct email/phone/address-style PII.
+- Audit metadata is bounded by string, array, object, depth, circular-reference, and total serialized-size limits before persistence.
+- Super Agency invitation audit metadata no longer stores the invitee email or invitation token; it records only the email domain, role, and expiration metadata.
+- Direct transactional audit writes for auth step-up, integrations, gamification, task/ticket transactional flows, ticket SLA policy changes, and storage-retention worker purges now carry Super Agency lineage when the tenant or Workspace parent is known.
+- Worker/system audit remains actorless for automated retention, with target Workspace, Agency, and Super Agency lineage preserved.
+- Parent oversight reporting remains read-only and metadata-only for Tasks, Projects, and Tickets. It keeps bounded pagination, allowlisted sort fields, scoped filters, consistent list/count fences, and safe DTO projections.
+- Parent reporting continues to exclude requester detail, conversations, notes, files, attachments, proofs, object keys, provider credentials, secrets, and raw payloads.
+- No parent mutation routes, parent file access, parent credential access, synthetic memberships, Organization-root authority, billing, plans, subscriptions, Stripe, Phase 15, or Phase 17 report-builder functionality was added.
+- No database migration was added; clean migration count remains 75 through `0075_phase14_6_3_super_agency_auth_rbac`.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API audit/parent/Super Agency tests: pass, 3 suites / 15 tests.
+- Focused worker storage retention test: pass, 1 suite / 5 tests.
+- Full `pnpm test`: pass, 17 tasks; API 50 suites / 477 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+
+Warnings:
+
+- Shared development database `zea_play` was not migrated.
+
+Focused refinement and final verification:
+
+- Audit metadata redaction was tightened to use normalized exact sensitive-key matching instead of broad token substring matching. Secret-shaped keys such as `AccessToken`, `ACCESS_TOKEN`, `refresh_token`, `authorizationHeader`, `client_secret`, `api_key`, `signedUrl`, nested array secrets, and circular objects are redacted safely, while non-secret telemetry such as `tokenCount` remains intact.
+- Provider error and signed URL redaction now covers bearer/basic authorization, signature query strings, and mixed-case credential fields.
+- Integration transactional audit metadata now routes through the central `sanitizeAuditMetadata` helper before persistence.
+- Audit metadata sanitizer accepts arbitrary unknown/circular provider objects and keeps byte, depth, array, object, and string bounds.
+- Gamification first-ticket-resolution audit replay now ignores audit null sentinels such as `[NULL]` before raw UUID locking, preventing unassigned terminal ticket resolution from crashing status updates.
+- Actor/target separation remains explicit for Platform, Super Agency, Agency, Workspace, public API, automation, and worker/system audit events.
+- Parent reporting remains read-only, metadata-only, bounded, allowlisted, and fenced by canonical Super Agency -> Agency -> Workspace lineage.
+- Organization remains legacy compatibility metadata only and is not tenant authority.
+- Query/cache isolation, tenant switching cleanup, and frontend parent shells remain unchanged; no new parent mutation surface was added.
+- No database migration was added. Clean migration count remains 75; latest is `0075_phase14_6_3_super_agency_auth_rbac`.
+
+Final verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Focused API audit/integration/parent/security regression tests: pass, 10 suites / 198 tests.
+- Focused API gamification/audit sentinel regression tests: pass, 2 suites / 106 tests.
+- Focused API integration suite that exposed the `[NULL]` audit sentinel defect: pass, 1 suite / 17 tests.
+- Direct API integration on isolated PostgreSQL `zea_play_phase14612_final_verify_20260925`: pass, 5 suites / 103 tests.
+- Explicit worker integration on isolated PostgreSQL: pass, 7 suites / 26 tests.
+- Full `pnpm test`: pass, 17 tasks; API 50 suites / 479 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+- `pnpm test:e2e`: pass, 21 Playwright tests.
+- `pnpm build`: pass, 11 tasks.
+- `pnpm audit --audit-level high`: pass at high threshold; one moderate advisory remains below threshold.
+- `git diff --check`: pass; repository line-ending warnings only.
+- Clean isolated PostgreSQL migration deploy/status: pass, all 75 migrations applied and schema up to date.
+- Shared development database migrate status was checked read-only: migrations `0053` through `0075` remain pending intentionally; no shared-dev migration was applied.
+- Root `pnpm test:integration` against shared dev DB remains expected-fail for API because shared `zea_play` is intentionally pending migrations `0053` through `0075` and missing `automation_trigger_matches`; worker integration passed.
+- Security search: pass after review. Hits were expected sanitizer/tests, fixed provider authorization internals, encrypted credential server internals, legacy/deferred documentation, disabled billing labels, and bounded parent reporting code. No raw error/request stringify, plaintext secret DTO/log path, Organization-root authority, first-membership authority, arbitrary report sort, unbounded parent report query, parent credential/file mutation route, Phase 15/17 implementation, Stripe implementation, or active billing implementation was found.
+
+Warnings:
+
+- Shared development database `zea_play` was not migrated and remains intentionally pending migrations `0053` through `0075`.
+- Root API integration remains expected-fail on shared dev until that database is intentionally migrated outside this phase lane.
+- E2E still emits existing `NO_COLOR`/`FORCE_COLOR` warnings.
+- Build still emits the existing Next.js ESLint plugin warning.
+- `git diff --check` still emits repository line-ending warnings.
+- `pnpm audit --audit-level high` passes with one moderate advisory below threshold.
+
+Phase 14.6.13 MIGRATION + BACKFILL + BACKWARD COMPATIBILITY Implementation is PASS.
+Next: Phase 14.6.13 Focused Refinement + Final Verification. Do not start Phase 14.6.14 or Phase 15.
+
+Implementation decision:
+
+- Added `scripts/phase14-6-13-migration-compatibility.mjs` and root script `pnpm phase14:6:13:migration-compat` for isolated clean-install and legacy-upgrade migration verification.
+- The harness creates and drops only phase-named scratch databases: `zea_play_phase14613_clean` and `zea_play_phase14613_legacy`.
+- Clean install applies all current migrations to `zea_play_phase14613_clean`, runs seed twice for idempotency coverage, and verifies schema status is up to date.
+- Legacy upgrade applies migrations through `0073_phase14_5_integration_audit_hardening`, inserts a pre-0074 legacy fixture, then applies the current migration tail through `0075_phase14_6_3_super_agency_auth_rbac`.
+- The legacy fixture covers 3 legacy Agencies, 4 Workspaces, Organization compatibility memberships, AgencyMemberships, WorkspaceMemberships, Department, statuses, Task, Project, Ticket, Asset, processing job, API key, outbound webhook, inbound webhook, integration connection/action/idempotency, cloud drive, storage reservation, calendar event, notification, gamification XP/global score, automation workflow/version/domain event/trigger/execution/step, feature entitlement, and AuditLog rows.
+- Existing legacy Agencies are backfilled to one distinct compatibility Super Agency each by same ID, matching the locked compatibility strategy from migration `0074`.
+- Organization remains legacy compatibility metadata only and is not used as hierarchy authority.
+- Agency IDs, Workspace IDs, AgencyMembership IDs, WorkspaceMembership IDs, operational row IDs, Workspace -> Agency FKs, object keys, API key verifier hashes, webhook secrets, inbound signing secrets, integration encrypted credentials, and cloud drive encrypted tokens are preserved across upgrade.
+- No legacy Agency user is auto-promoted to SuperAgencyMembership. Seed creates SuperAgencyMembership rows only for explicit seed demo Super Agencies.
+- Historical AuditLog rows remain compatible with nullable `super_agency_id`; new AuditLog lineage accepts Super Agency + Agency + Workspace lineage after upgrade.
+- Operational data remains Workspace-owned. No operational `super_agency_id` ownership columns were introduced outside the intended compatibility lineage tables.
+- Constraint validation, not-null transition, unique constraint, enum compatibility, timestamp preservation, seed idempotency, queued job preservation, cache/header/JWT compatibility assumptions, and frontend route compatibility remain consistent with the Phase 14.6 hierarchy contract.
+- No migration `0076` was created because no source migration defect was found.
+- Historical migrations `0074_phase14_6_2_super_agency_hierarchy` and `0075_phase14_6_3_super_agency_auth_rbac` were not modified, reordered, deleted, squashed, or rewritten.
+- Shared development database was not migrated.
+
+Verification:
+
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- `pnpm phase14:6:13:migration-compat`: pass. Clean scratch DB applied 75 migrations and was schema-up-to-date. Legacy scratch DB upgraded from 0073 to 75 migrations and was schema-up-to-date.
+- Legacy backfill result: 3 fixture Agencies produced 3 compatibility Super Agencies, 0 orphaned Agencies, and 0 unsafe SuperAgencyMembership auto-promotions.
+- Full `pnpm test`: pass, 17 tasks; API 50 suites / 479 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+
+Warnings:
+
+- Shared development database `zea_play` was not migrated and remains intentionally pending migrations `0053` through `0075`.
+- `pnpm phase14:6:13:migration-compat` requires the local Docker Postgres container, defaulting to `zeaplay-v2-postgres-1`.
+- Clean seed completed idempotently, but the seed script output does not include a fixed "Seed completed" sentinel string for the harness to report.
+- Focused refinement/final verification completed after this implementation pass.
+
+Phase 14.6.13 MIGRATION + BACKFILL + BACKWARD COMPATIBILITY Focused Refinement + Final Verification is COMPLETE / PASS.
+Next: Phase 14.6.14 Full Phase 1-14 Regression + Documentation. Do not start Phase 15.
+
+Final verification decision:
+
+- Clean install certification is PASS. Isolated scratch database `zea_play_phase14613_clean` applied all 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`, seeded idempotently, reported Prisma migrate status up to date, and retained zero orphan Agencies after broad verification.
+- Legacy upgrade certification is PASS. Isolated pre-0074 fixture upgrade from `0073_phase14_5_integration_audit_hardening` through `0075` preserved existing Agency, Workspace, membership, Task, Project, Ticket, asset, queue, credential, webhook, inbound, integration, cloud-drive, notification, calendar, automation, gamification, entitlement, and audit rows.
+- The compatibility parent strategy remains one compatibility Super Agency per legacy Agency, using the same UUID in a distinct table. No global parent, default parent, Organization grouping, name grouping, domain grouping, or user grouping was introduced.
+- Same-ID compatibility is safe only when tenant UUIDs are always paired with scope/type. Routes remain type-specific, audit rows carry entity type plus ID, cache/query keys remain scope-prefixed, and parent-child authorization uses explicit relationship checks.
+- Organization remains ignored for parent mapping and hierarchy authority. It is legacy compatibility metadata only.
+- No legacy Agency user was auto-promoted to SuperAgencyMembership. Existing AgencyMembership and WorkspaceMembership rows remain the user-authority records for legacy tenants.
+- ID/history/credential preservation is PASS. Agency IDs, Workspace IDs, operational IDs, Workspace -> Agency FKs, role links, timestamps, object keys, queued job rows, API key verifier hashes, webhook secrets, inbound secrets, integration credentials, and cloud-drive encrypted tokens were not rewritten, rotated, re-encrypted, or recomputed.
+- Historical AuditLog compatibility is PASS with nullable Super Agency lineage for old rows and canonical Super Agency + Agency + Workspace lineage for new rows.
+- Queued job compatibility is PASS. Queue payloads remain ID-based and reload tenant/hierarchy state from PostgreSQL instead of relying on migrated embedded parent context.
+- Seed behavior is PASS. Repeated seed on a clean migrated schema remains idempotent for permissions, roles, demo hierarchy, and Super Agency role names.
+- Migration harness safety is PASS. The harness reads local env-derived scratch connection defaults, refuses non-local hosts, refuses unsafe/shared database names, uses only phase-named scratch databases, redacts generated URLs in errors, validates migration inventory, and includes zero/one/many legacy Agency edge cases.
+- No `0076_phase14_6_13_hierarchy_compatibility_hardening` migration was required or created because no compatibility defect required a new forward migration.
+- Historical migrations `0074_phase14_6_2_super_agency_hierarchy` and `0075_phase14_6_3_super_agency_auth_rbac` were not modified, reordered, deleted, squashed, or rewritten during final verification.
+- Production deployment guidance: take a backup first, deploy application code that understands nullable Super Agency lineage and compatibility parents, run migrations in a controlled maintenance window with normal database locking/monitoring, verify migration status and orphan checks after deploy, then enable traffic. Mixed-version deployment where old code writes hierarchy-sensitive records during or after the migration remains unsupported.
+- Rollback policy is restore-from-backup. No downgrade migration, destructive rollback, or historical migration rewrite was added.
+- Shared development database remains intentionally read-only and pending migrations `0053` through `0075`; no shared-dev migration was applied.
+- Final verification passed Prisma generate/validate, format, lint, typecheck, migration compatibility harness, full unit tests, clean isolated API integration, normalized legacy-upgraded API integration, worker integration, E2E, build, high-threshold audit, diff check, migration inventory check, clean/legacy scratch migrate status checks, read-only shared-dev migration status, and security search.
+- Phase 14.6.13 is complete/pass. Phase 14.6.14 Full Phase 1-14 Regression + Documentation is next. Phase 15 was not started.
+
+Phase 14.6.14 FULL PHASE 1-14 REGRESSION + DOCUMENTATION Implementation is PASS.
+Next: Phase 14.6.14 Focused Refinement + Final Verification. Do not mark Phase 14.6.14 complete. Do not start Phase 14.7 or Phase 15.
+
+Implementation decision:
+
+- Full Phase 1-14 architecture regression found no source regression in the completed application hierarchy. The canonical hierarchy remains Platform / Super Admin -> Super Agency -> Agency -> Workspace / Sub-account.
+- Developer and Platform authority remains internal and non-tenant. Super Admin / Platform is not Super Agency. Organization remains legacy compatibility metadata only and is not hierarchy authority.
+- Five application environments remain distinct: Developer, Platform / Super Admin, Super Agency, Agency, and Workspace / Sub-account.
+- Tenant context has no first-membership authorization fallback. `memberships[0]` usage in auth response mapping is limited to a relation already filtered to the active current user's Workspace membership and is not tenant authority.
+- Parent management remains management, not impersonation. No synthetic AgencyMembership or WorkspaceMembership is created for parent access.
+- Tasks, Projects, Tickets, Automation, Notifications, Realtime, Calendar, Files/Assets, CloudDriveConnections, Public API keys, Webhooks, Integrations, and operational credentials remain Workspace-owned.
+- Parent Task/Project/Ticket oversight remains read-only safe metadata and excludes private operational data, files, comments/conversations/internal notes, proofs, signed URLs, object keys, and credentials.
+- Workspace/Department gamification continues to use local XP. Agency, Super Agency, and Platform leaderboards continue to use canonical normalized Global Score without formula change, double normalization, or backfill.
+- Automation remains Workspace-owned and workers remain PostgreSQL-authoritative before business mutation. Queue payloads remain durable IDs, not parent-authority payloads.
+- Notifications remain WorkspaceMembership-owned, realtime remains `workspace:<workspaceId>` and `member:<workspaceId>:<membershipId>` scoped, and Calendar remains Workspace-owned with visibility rules intact.
+- Files/Assets and CloudDriveConnections require direct active WorkspaceMembership. Parent hierarchy does not grant file, signed URL, object key, cloud credential, API key, webhook secret, inbound secret, or integration credential access.
+- AuditLog continues recording real actors plus canonical Super Agency, Agency, and Workspace lineage with centralized bounded secret redaction.
+- Legacy compatibility remains certified: 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`, one compatibility Super Agency per legacy Agency, no legacy user auto-promotion, IDs preserved, object keys preserved, scores preserved, queue rows preserved, and credentials preserved.
+- No migration `0076` was created because this regression found no schema defect requiring it.
+- Confirmed issues fixed: stale Organization-era documentation in `docs/architecture.md` and `docs/api-standards.md`; stale frontend context wording in `docs/frontend-architecture.md`; missing `x-super-agency-id` Swagger API-key metadata in `apps/api/src/main.ts`.
+- External provider live verification remains not performed for Google Drive, OneDrive, Dropbox, GHL, Slack, and Webex.
+- Shared development database remains intentionally untouched and pending migrations `0053` through `0075`.
+- Phase 14.7 and Phase 15 were not started.
+
+Verification:
+
+- Focused API regression: pass, 46 suites / 468 tests.
+- Focused worker regression: pass, 6 suites / 25 tests.
+- Focused frontend regression: pass, 16 files / 170 tests.
+- Post-fix focused auth/tenant regression: pass, 4 suites / 19 tests.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Full `pnpm test`: pass, 17 tasks; API 50 suites / 479 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+- `pnpm phase14:6:13:migration-compat`: pass, 75 migrations, clean/legacy/zero/one/many scratch matrix.
+- Security/performance/doc searches: pass after review. Hits were expected scoped `findFirst` lookups, response shaping, docs/fixtures, disabled billing navigation labels, planned-date fields, webhook subscription terms, offline OAuth scopes, and existing health/security setup.
+
+Warnings:
+
+- Shared development database `zea_play` was not migrated and remains intentionally pending migrations `0053` through `0075`.
+- Docker Desktop was initially stopped; it was launched locally and Postgres readiness was awaited before the successful migration compatibility run.
+- Existing accepted warnings remain: Next ESLint plugin warning, one moderate audit advisory below high threshold, Windows LF/CRLF warnings, and `NO_COLOR` / `FORCE_COLOR` E2E warning.
+- Live external provider verification remains not performed for Google Drive, OneDrive, Dropbox, GHL, Slack, and Webex.
+- Phase 14.7 and Phase 15 were not started.
+
+Final verification and remediation closure:
+
+- Phase 14.6.14 final verification is COMPLETE / PASS.
+- Final remediation during this closure was documentation-only: `docs/dashboard-shells.md` now documents all five dashboard environments and includes the Super Agency dashboard/navigation surface. No source code or migration remediation was required during final closure.
+- Canonical hierarchy remains Platform / Super Admin -> Super Agency -> Agency -> Workspace / Sub-account.
+- Five application environments remain distinct: Developer, Platform / Super Admin, Super Agency, Agency, and Workspace / Sub-account.
+- Organization remains legacy compatibility metadata only and is not tenant or parent authority.
+- Tenant headers remain canonical as `x-super-agency-id`, `x-agency-id`, and `x-workspace-id`; `x-organization-id` remains non-authoritative legacy compatibility.
+- Authentication, JWT/session behavior, RBAC, membership resolution, invitations, effective status chain, tenant switching, query cache isolation, logout cleanup, dashboard shells, navigation, theme, i18n, responsive behavior, and accessibility regressions remain pass.
+- Platform, Super Agency, Agency, and Workspace scopes remain separated. Parent access remains management/reporting only and does not create synthetic child memberships, child-shell impersonation, parent transfer, parent credential access, parent file access, or parent operational mutation.
+- Tasks, Projects, Tickets, Automation, Workers, Notifications, Realtime, Calendar, Storage/Files, Cloud Drives, Public API, API keys, webhooks, inbound webhooks, integrations, credentials, and AuditLog remain Workspace-owned or canonical-lineage scoped as designed.
+- Parent Task/Project/Ticket oversight remains read-only safe metadata and excludes comments, conversations, internal notes, files, attachments, proofs, signed URLs, object keys, requester-private operational payloads, secrets, and credentials.
+- Workspace and Department gamification remain local-XP based. Agency, Super Agency, and Platform leaderboard surfaces remain canonical Global Score based without formula changes, double normalization, or backfill.
+- Same-ID compatibility remains certified: one compatibility Super Agency per legacy Agency in a distinct table, no global/default parent, no Organization grouping, no legacy user auto-promotion, and IDs/history/object keys/queue rows/credential ciphertext preserved.
+- Migration compatibility remains PASS with 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`; no `0076` was created.
+- Historical migrations `0074_phase14_6_2_super_agency_hierarchy` and `0075_phase14_6_3_super_agency_auth_rbac` remain preserved and were not edited during final verification.
+- Final verification passed focused API regression (46 suites / 468 tests), focused worker regression (6 suites / 25 tests), focused frontend regression (16 files / 170 tests), Prisma generate/validate, format, lint, typecheck, full unit tests (API 50 suites / 479 tests, worker 7 suites / 26 tests, web 17 files / 171 tests), migration compatibility, normalized legacy-upgraded API integration (5 suites / 103 tests), worker integration (7 suites / 26 tests), E2E (21 tests), build (11 packages), high-threshold audit, git diff check, migration inventory, read-only shared-dev migration status, and final stale hierarchy/future-phase searches.
+- Shared development database `zea_play` remains intentionally read-only and pending migrations `0053` through `0075`; no shared-dev migration was applied.
+- Documentation is updated for Phase 14.6.14 final verification and closure. Hierarchy Remediation 14.6 is complete/pass. Phase 14.7 Final Hierarchy Certification is ready to start only when explicitly requested. Phase 15 remains frozen until after Phase 14.7 passes.
+
+Phase 14.7 FINAL HIERARCHY CERTIFICATION Prompt 1 - Independent Certification Audit is PASS.
+Next: Phase 14.7 - Final Certification + Phase 15 Gate. Do not mark Phase 14.7 complete. Do not start Prompt 2 automatically. Do not unfreeze or start Phase 15.
+
+Certification audit decision:
+
+- Created `docs/hierarchy-certification-phase14-7.md` as the formal Prompt 1 hierarchy certification record.
+- Independently inspected current schema, migrations, guards, tenant context, management services, parent oversight, operational Workspace services, worker processors, frontend tenant switching/query keys, realtime rooms, migration harness safety, and active architecture docs.
+- Canonical hierarchy is certified for Prompt 1 as Platform / Super Admin -> Super Agency -> Agency -> Workspace / Sub-account.
+- Five environments remain distinct: Developer, Platform / Super Admin, Super Agency, Agency, and Workspace / Sub-account.
+- Organization remains legacy compatibility metadata only and is not tenant authority, parent authority, RBAC root, or commercial hierarchy root.
+- Platform / Super Admin remains internal non-tenant authority and is not implemented as Super Agency or a hidden top tenant.
+- Super Agency access requires real SuperAgencyMembership. Agency access requires real AgencyMembership. Workspace operational access requires direct WorkspaceMembership for child operational resources and credentials.
+- Agency parent administration remains limited to allowed child Workspace management and parent oversight; Agency roles do not receive child Task, Project, Ticket, file, credential, webhook, integration, automation, calendar, notification, or Workspace gamification operational permissions.
+- No first-membership authorization fallback, synthetic parent visibility membership, parent child-shell impersonation, parent transfer, Organization authority, raw UUID tenant-type inference, or client-provided tenant-ID widening was certified.
+- Parent Task/Project/Ticket oversight is read-only GET-only metadata and excludes private operational data, comments, conversations, notes, attachments, proofs, signed URLs, object keys, requester-private payloads, secrets, and credentials.
+- Workspace/Department gamification remains local XP. Agency, Super Agency, and Platform ranking remains canonical normalized Global Score; no new formula, double normalization, or historical backfill was introduced.
+- Workers remain PostgreSQL-authoritative before mutation. Redis/BullMQ remain transport only. Normal business mutations re-check effective Workspace -> Agency -> Super Agency status, while retention/cleanup maintenance remains allowed where needed.
+- Notifications remain WorkspaceMembership-scoped; realtime remains server-generated `workspace:<workspaceId>` and `member:<workspaceId>:<membershipId>` only; Calendar remains Workspace-owned with WorkspaceMembership participants.
+- Storage, signed URLs, attachments, CloudDriveConnections, OAuth callbacks, API keys, outbound webhooks, inbound webhooks, integrations, credentials, and idempotency remain Workspace-owned and hierarchy-gated as applicable.
+- AuditLog preserves actor/target separation and canonical lineage; Organization is nullable legacy metadata only; redaction remains bounded and secret-safe.
+- Migration compatibility remains PASS with 75 migrations through `0075_phase14_6_3_super_agency_auth_rbac`; no `0076` exists or was needed. Historical `0074` and `0075` were not edited.
+- Migration harness safety is PASS and explicitly refused unsafe names `zea_play`, `zea_play_test`, `random_db`, and `postgres`.
+- Same-ID compatibility remains PASS only through explicit scope/type namespacing across routes, headers, query keys, audit entity type, and relationship queries.
+- Future phase leakage search found no active Phase 15 billing/plans/subscriptions/payments/trials implementation, Phase 17 analytics implementation, Phase 18 custom-domain implementation, Phase 19 PWA/offline implementation, or Phase 20 release-system implementation introduced by remediation. Disabled billing labels, white-label branding comment, and OAuth `offline` scopes remain expected legacy/deferred text.
+- External live provider verification remains PENDING for Google Drive OAuth, OneDrive OAuth, Dropbox OAuth, GoHighLevel, Slack, and Webex.
+
+Verification:
+
+- Focused API certification: pass, 31 suites / 391 tests.
+- Focused worker certification: pass, 6 suites / 25 tests.
+- Focused frontend certification: pass, 16 files / 170 tests.
+- `pnpm prisma:generate`: pass.
+- `pnpm prisma:validate`: pass.
+- `pnpm format`: pass.
+- `pnpm lint`: pass, 17 tasks.
+- `pnpm typecheck`: pass, 17 tasks.
+- Full `pnpm test`: pass, 17 tasks; API 51 suites / 485 tests, worker 7 suites / 26 tests, web 17 files / 171 tests.
+- `pnpm phase14:6:13:migration-compat`: pass, 75 migrations, latest `0075_phase14_6_3_super_agency_auth_rbac`, clean/legacy/zero/one/many scratch matrix.
+- `pnpm audit --audit-level high`: pass with one moderate advisory below threshold.
+- Migration inventory: 75 directories, latest `0075_phase14_6_3_super_agency_auth_rbac`, no `0076`.
+- Read-only shared development migration status: pending `0053` through `0075`; no shared-dev migration was applied.
+- Documentation certification search: pass after review; remaining `x-organization-id` hits are deliberate legacy compatibility warnings.
+
+Warnings:
+
+- Phase 14.7 is not complete. Prompt 2 final certification and Phase 15 gate remain pending.
+- Phase 15 remains frozen.
+- Shared development database `zea_play` remains intentionally stale and pending migrations `0053` through `0075`.
+- Live external provider verification remains pending for Google Drive OAuth, OneDrive OAuth, Dropbox OAuth, GoHighLevel, Slack, and Webex.
+- Existing accepted warnings remain: one moderate audit advisory below high threshold, Next ESLint plugin warning, LF/CRLF warnings, NO_COLOR / FORCE_COLOR E2E warning, and the known historical Phase 7 web-suite timing flake condition.
+
+Phase 15.3 HIERARCHICAL ALLOCATION + USAGE + ENFORCEMENT Focused Refinement + Final Certification is COMPLETE / PASS.
+Next: Phase 15.4 Billing UI + Invoices + Payment Management. Do not start Phase 15.4 without explicit request.
+
+Main implementation gate decision:
+
+- The remaining backend feature-enforcement blocker is remediated and exhaustively certified by an executable matrix.
+- Added `docs/phase15-3-feature-enforcement-matrix.md` with the required Domain, Controller/Entry Point, Operation, Classification, Feature Key, Entitlement Check Location, Read Allowed When Disabled, Reduction Allowed, Test Reference, and Status columns.
+- Added `apps/api/src/modules/billing/phase15-3-feature-enforcement.matrix.ts` as the machine-readable matrix and `phase15-3-feature-enforcement-matrix.spec.ts` as the route reflection guard. The spec fails if a controlled non-GET mutation route is added without matrix classification.
+- Controlled domains certified in the matrix: Tasks, Projects, Tickets, Calendar, Files/Assets, Automation, Public API, Webhooks, provider integrations for GHL/Slack/Webex, Generic REST, Gamification active actions, and worker/internal bypass surfaces.
+- Gamification active mutation paths now call `BillingEntitlementService.assertWorkspaceFeatureAvailable(workspaceId, 'gamification.enabled')` before manager/admin/reward/point-rule/reconciliation writes. Existing XP history reads and system XP ledger preservation remain available.
+- Generic REST remains intentionally `NOT-COMMERCIALLY-GATED` because the current Phase 15.3 feature catalog has no Generic REST feature key. Existing fixed-origin, SSRF, credential, and action safeguards remain authoritative.
+- Reduction/recovery paths remain allowed where they reduce usage, disable activity, archive/delete data, or preserve committed historical semantics.
+- Billing customer advisory-lock test fixtures now expose `$executeRaw`, matching the current transaction lock implementation.
+- Migration count remains 79 through `0079_phase15_3_allocation_usage_enforcement`; no `0080` migration was created. Shared development database was not migrated.
+
+Validation evidence:
+
+- Migration inventory: PASS, 79 directories, latest `0079_phase15_3_allocation_usage_enforcement`, no `0080`.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Phase 15.3 feature matrix inventory: PASS, 176 rows, 171 route keys, 169 enforced entries, 6 exempt-by-design entries, 1 not-commercially-gated Generic REST entry, 0 unknown/unreviewed/partial entries.
+- Focused feature-enforcement and gamification tests: PASS, 2 suites / 106 tests.
+- Focused backend matrix/domain tests: PASS, 14 suites / 296 tests.
+- Phase 15.3 PostgreSQL concurrency integration: PASS, 1 suite / 6 tests.
+- Migration compatibility harness: PASS, 79 migrations through `0079_phase15_3_allocation_usage_enforcement`; clean install, legacy upgrade, zero/one/many legacy agency edge cases, and populated 0078-to-0079 Phase 15.2 upgrade fixture passed.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 56 suites / 550 tests; worker PASS, 8 suites / 28 tests; web PASS, 20 files / 186 tests.
+- Root `pnpm test:integration`: PASS, 8 tasks; API PASS, 6 suites / 109 tests; worker PASS, 8 suites / 28 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm audit --audit-level high`: PASS; one moderate advisory remains below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Read-only shared development migration status: PASS, 79 migrations found and `zea_play` reports database schema up to date; no shared-dev migration was applied during this pass.
+- Security/source search: PASS after review; hits were expected documentation/test wording, safe notification critical-bypass semantics, harness unsafe-name assertions, and allowed raw SQL in test/harness cleanup paths.
+
+Warnings:
+
+- Phase 15.4 was not started.
+- Shared development database was checked read-only only; no shared-dev migration was applied during this pass.

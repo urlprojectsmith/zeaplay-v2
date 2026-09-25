@@ -9,10 +9,14 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
+  AgencyStatus,
   InboundWebhookEventStatus,
   InboundWebhookSourceStatus,
   InboundWebhookSourceType,
   Prisma,
+  SuperAgencySubscriptionStatus,
+  SuperAgencyStatus,
+  WorkspaceStatus,
 } from '@prisma/client';
 import { validateEnvironment } from '@zea-play/config';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
@@ -89,6 +93,7 @@ export class InboundWebhooksService {
   ) {}
 
   async listSources(tenant: WorkspaceTenantContext, query: InboundWebhookListQueryDto) {
+    this.requireActiveWorkspaceMembership(tenant);
     const where = {
       workspaceId: tenant.workspaceId,
     } satisfies Prisma.InboundWebhookSourceWhereInput;
@@ -155,6 +160,7 @@ export class InboundWebhooksService {
   }
 
   async getSource(tenant: WorkspaceTenantContext, sourceId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     return this.serializeSource(await this.findSourceOrThrow(tenant.workspaceId, sourceId));
   }
 
@@ -163,6 +169,7 @@ export class InboundWebhooksService {
     sourceId: string,
     dto: UpdateInboundWebhookSourceDto,
   ) {
+    this.requireActiveWorkspaceMembership(tenant);
     await this.findSourceOrThrow(tenant.workspaceId, sourceId);
     const source = await this.prisma.inboundWebhookSource.update({
       where: { id: sourceId },
@@ -185,6 +192,7 @@ export class InboundWebhooksService {
   }
 
   async rotateSecret(tenant: WorkspaceTenantContext, sourceId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     await this.findSourceOrThrow(tenant.workspaceId, sourceId);
     const plaintextSecret = this.crypto.generateSecret();
     const source = await this.prisma.inboundWebhookSource.update({
@@ -205,6 +213,7 @@ export class InboundWebhooksService {
   }
 
   async disableSource(tenant: WorkspaceTenantContext, sourceId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     const existing = await this.findSourceOrThrow(tenant.workspaceId, sourceId);
     if (existing.status === InboundWebhookSourceStatus.DISABLED) {
       return this.serializeSource(existing);
@@ -231,6 +240,7 @@ export class InboundWebhooksService {
     sourceId: string,
     query: InboundWebhookListQueryDto,
   ) {
+    this.requireActiveWorkspaceMembership(tenant);
     await this.findSourceOrThrow(tenant.workspaceId, sourceId);
     const where = {
       workspaceId: tenant.workspaceId,
@@ -250,6 +260,7 @@ export class InboundWebhooksService {
   }
 
   async getEvent(tenant: WorkspaceTenantContext, eventId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     const event = await this.prisma.inboundWebhookEvent.findFirst({
       where: { id: eventId, workspaceId: tenant.workspaceId },
       select: eventDetailSelect,
@@ -270,13 +281,29 @@ export class InboundWebhooksService {
         type: true,
         status: true,
         encryptedSigningSecret: true,
+        workspace: {
+          select: {
+            status: true,
+            agency: {
+              select: {
+                superAgencyId: true,
+                status: true,
+                superAgency: { select: { status: true } },
+              },
+            },
+          },
+        },
       },
     });
     if (!source) throw new NotFoundException('INBOUND_SOURCE_NOT_FOUND');
-    if (source.status !== InboundWebhookSourceStatus.ACTIVE) {
+    await this.rateLimit.assertWithinLimit(source.id, source.workspaceId);
+    if (
+      source.status !== InboundWebhookSourceStatus.ACTIVE ||
+      !hasActiveHierarchy(source.workspace)
+    ) {
       throw new NotFoundException('INBOUND_SOURCE_NOT_FOUND');
     }
-    await this.rateLimit.assertWithinLimit(source.id, source.workspaceId);
+    await this.assertCommercialIngestionAllowed(source.workspace.agency.superAgencyId);
 
     const timestamp = this.requireSingleHeader(headers, INBOUND_WEBHOOK_HEADERS.timestamp, 20);
     this.assertTimestampFresh(timestamp, now);
@@ -459,6 +486,24 @@ export class InboundWebhooksService {
     }
   }
 
+  private async assertCommercialIngestionAllowed(superAgencyId: string) {
+    const subscription = await this.prisma.superAgencySubscription.findFirst({
+      where: { superAgencyId, isCurrent: true },
+      select: { status: true, graceEndsAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!subscription) return;
+    const restricted =
+      subscription.status === SuperAgencySubscriptionStatus.RESTRICTED ||
+      subscription.status === SuperAgencySubscriptionStatus.SUSPENDED ||
+      subscription.status === SuperAgencySubscriptionStatus.CANCELED ||
+      subscription.status === SuperAgencySubscriptionStatus.EXPIRED ||
+      (subscription.graceEndsAt?.getTime() ?? Number.POSITIVE_INFINITY) < Date.now();
+    if (restricted) {
+      throw new HttpException('ACCOUNT_RESTRICTED', HttpStatus.FORBIDDEN);
+    }
+  }
+
   private assertContentHeaders(headers: HeaderBag) {
     const contentType = this.optionalSingleHeader(headers, 'content-type', 120);
     if (!contentType || !/^application\/json(?:\s*;|$)/i.test(contentType)) {
@@ -581,4 +626,15 @@ function resolveNormalizationErrorCode(error: unknown) {
     if (typeof response === 'string') return response;
   }
   return 'INBOUND_NORMALIZATION_FAILED';
+}
+
+function hasActiveHierarchy(workspace: {
+  status: WorkspaceStatus;
+  agency: { status: AgencyStatus; superAgency: { status: SuperAgencyStatus } };
+}) {
+  return (
+    workspace.status === WorkspaceStatus.ACTIVE &&
+    workspace.agency.status === AgencyStatus.ACTIVE &&
+    workspace.agency.superAgency.status === SuperAgencyStatus.ACTIVE
+  );
 }

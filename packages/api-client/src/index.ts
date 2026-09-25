@@ -22,13 +22,18 @@ export interface TenantHeaders {
   workspaceId?: string | null;
 }
 
+export interface ApiRequestInit extends RequestInit {
+  skipTenantContext?: boolean;
+}
+
 export const AGENCY_HEADER = 'x-agency-id';
 export const WORKSPACE_HEADER = 'x-workspace-id';
 
 export class ApiClient {
   constructor(private readonly options: ApiClientOptions) {}
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<StandardResponse<T>> {
+  async request<T>(path: string, init: ApiRequestInit = {}): Promise<StandardResponse<T>> {
+    const { skipTenantContext, ...requestInit } = init;
     const headers = new Headers(init.headers);
     headers.set('content-type', headers.get('content-type') ?? 'application/json');
     headers.set('x-correlation-id', this.options.getCorrelationId?.() ?? crypto.randomUUID());
@@ -37,16 +42,18 @@ export class ApiClient {
     if (token) {
       headers.set('authorization', `Bearer ${token}`);
     }
-    const tenant = this.options.getTenantContext?.();
-    if (tenant?.agencyId && !headers.has(AGENCY_HEADER))
-      headers.set(AGENCY_HEADER, tenant.agencyId);
-    if (tenant?.workspaceId && !headers.has(WORKSPACE_HEADER)) {
-      headers.set(WORKSPACE_HEADER, tenant.workspaceId);
+    if (!skipTenantContext) {
+      const tenant = this.options.getTenantContext?.();
+      if (tenant?.agencyId && !headers.has(AGENCY_HEADER))
+        headers.set(AGENCY_HEADER, tenant.agencyId);
+      if (tenant?.workspaceId && !headers.has(WORKSPACE_HEADER)) {
+        headers.set(WORKSPACE_HEADER, tenant.workspaceId);
+      }
     }
 
     const response = await fetch(resolveApiUrl(path, this.options.baseUrl), {
-      ...init,
-      credentials: init.credentials ?? this.options.credentials,
+      ...requestInit,
+      credentials: requestInit.credentials ?? this.options.credentials,
       headers,
     });
     const body = (await response.json().catch(() => null)) as

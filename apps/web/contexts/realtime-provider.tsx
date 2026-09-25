@@ -1,6 +1,7 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
+import { usePathname } from 'next/navigation';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../stores/session';
 import {
@@ -18,13 +19,17 @@ const RealtimeContext = createContext<{ status: RealtimeStatus }>({ status: 'off
 
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
+  const pathname = usePathname();
   const accessToken = useSessionStore((state) => state.accessToken);
   const workspaceId = useSessionStore((state) => state.selectedWorkspaceId);
-  const membershipId = useSessionStore(
-    (state) =>
-      state.agencies
-        .flatMap((agency) => agency.workspaces)
-        .find((workspace) => workspace.id === state.selectedWorkspaceId)?.membershipId ?? null,
+  const workspaceRealtimeEnabled = isWorkspaceRealtimePath(pathname);
+  const activeWorkspaceId = workspaceRealtimeEnabled ? workspaceId : null;
+  const membershipId = useSessionStore((state) =>
+    workspaceRealtimeEnabled
+      ? (state.agencies
+          .flatMap((agency) => agency.workspaces)
+          .find((workspace) => workspace.id === state.selectedWorkspaceId)?.membershipId ?? null)
+      : null,
   );
   const [status, setStatus] = useState<RealtimeStatus>('offline');
   const seenEvents = useRef<Map<string, number>>(new Map());
@@ -33,9 +38,9 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const disableNetworkRealtime = process.env.NODE_ENV === 'test';
 
   useEffect(() => {
-    workspaceIdRef.current = workspaceId;
+    workspaceIdRef.current = activeWorkspaceId;
     membershipIdRef.current = membershipId;
-  }, [membershipId, workspaceId]);
+  }, [activeWorkspaceId, membershipId]);
 
   useEffect(() => {
     if (disableNetworkRealtime) return;
@@ -78,16 +83,16 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (disableNetworkRealtime) return;
-    if (!accessToken || !workspaceId) return;
+    if (!accessToken || !activeWorkspaceId) return;
     const socket = getSharedRealtimeSocket(accessToken);
     if (socket.connected) {
-      subscribeWorkspace(socket, workspaceId);
-      void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] });
+      subscribeWorkspace(socket, activeWorkspaceId);
+      void queryClient.invalidateQueries({ queryKey: ['workspace', activeWorkspaceId] });
     }
     return () => {
       if (socket.connected) unsubscribeWorkspace(socket);
     };
-  }, [accessToken, disableNetworkRealtime, queryClient, workspaceId]);
+  }, [accessToken, activeWorkspaceId, disableNetworkRealtime, queryClient]);
 
   const value = useMemo(() => ({ status }), [status]);
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
@@ -98,6 +103,10 @@ export function useRealtime() {
 }
 
 export const useWorkspaceRealtime = useRealtime;
+
+export function isWorkspaceRealtimePath(pathname: string) {
+  return pathname === '/workspace' || pathname.startsWith('/workspace/');
+}
 
 function isDuplicate(events: Map<string, number>, eventId: string) {
   const now = Date.now();

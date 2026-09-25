@@ -100,6 +100,7 @@ export class StorageRetentionProcessor extends WorkerHost {
         sourceEntityType: true,
         sourceEntityId: true,
         purgeAfter: true,
+        workspace: { select: { agencyId: true, agency: { select: { superAgencyId: true } } } },
       },
       orderBy: { purgeAfter: 'asc' },
       take: BATCH_SIZE,
@@ -124,6 +125,7 @@ export class StorageRetentionProcessor extends WorkerHost {
       sourceEntityType: string | null;
       sourceEntityId: string | null;
       purgeAfter: Date | null;
+      workspace: { agencyId: string; agency: { superAgencyId: string } };
     },
     now: Date,
   ) {
@@ -185,6 +187,8 @@ export class StorageRetentionProcessor extends WorkerHost {
       }),
       this.prisma.auditLog.create({
         data: {
+          superAgencyId: asset.workspace.agency.superAgencyId,
+          agencyId: asset.workspace.agencyId,
           workspaceId: asset.workspaceId,
           action: 'storage.file_purged',
           entityType: 'Asset',

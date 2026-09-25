@@ -7,6 +7,7 @@ import type { DashboardConfig } from '../navigation/navigation-config';
 import { AgencySwitcher } from '../navigation/AgencySwitcher';
 import { LanguageSwitcher } from '../navigation/LanguageSwitcher';
 import { ProfileMenu } from '../navigation/ProfileMenu';
+import { SuperAgencySwitcher } from '../navigation/SuperAgencySwitcher';
 import { ThemeSwitcher } from '../navigation/ThemeSwitcher';
 import { WorkspaceSwitcher } from '../navigation/WorkspaceSwitcher';
 import { NotificationCenter } from '../notifications/NotificationCenter';
@@ -62,7 +63,10 @@ export function AppHeader({
             <Search aria-hidden="true" className="h-4 w-4" />
             <span>{t(locale, 'common.search')}</span>
           </div>
-          <AgencySwitcher compact />
+          {config.scope === 'super-agency' ? <SuperAgencySwitcher compact /> : null}
+          {config.scope === 'agency' || config.scope === 'workspace' ? (
+            <AgencySwitcher compact />
+          ) : null}
           {config.scope === 'workspace' ? <WorkspaceSwitcher compact /> : null}
         </div>
         <div className="hidden items-center gap-2 md:flex">

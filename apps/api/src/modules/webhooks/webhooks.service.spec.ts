@@ -91,6 +91,23 @@ describe('Phase 14.2 webhook service final guards', () => {
     expect(prisma.webhookSubscription.create).not.toHaveBeenCalled();
   });
 
+  it('requires direct Workspace membership before listing webhook subscriptions', async () => {
+    const { service, prisma } = buildService();
+
+    await expect(
+      service.list(
+        {
+          ...tenant,
+          workspaceMembershipId: null,
+          accessSource: 'AGENCY_ADMINISTRATION',
+        },
+        { page: 1, pageSize: 25 },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.webhookSubscription.findMany).not.toHaveBeenCalled();
+  });
+
   it('deduplicates capture by source automation domain event', async () => {
     const { service, prisma, queue } = buildService();
     prisma.automationDomainEvent.findUnique.mockResolvedValue(domainEvent());

@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LanguageProvider } from '../contexts/language-provider';
 import { WorkspaceFilesPage } from '../components/workspace/files/WorkspaceFilesPage';
@@ -13,6 +13,7 @@ import {
 
 const listWorkspaceFiles = vi.fn();
 const getWorkspaceStorageUsage = vi.fn();
+const getWorkspaceFileDownloadUrl = vi.fn();
 const listWorkspaceRoles = vi.fn();
 const getCloudProviders = vi.fn();
 const getCloudConnections = vi.fn();
@@ -33,6 +34,7 @@ vi.mock('../services/workspace-files', async () => {
     ...actual,
     listWorkspaceFiles: (...args: unknown[]) => listWorkspaceFiles(...args),
     getWorkspaceStorageUsage: (...args: unknown[]) => getWorkspaceStorageUsage(...args),
+    getWorkspaceFileDownloadUrl: (...args: unknown[]) => getWorkspaceFileDownloadUrl(...args),
   };
 });
 
@@ -86,6 +88,16 @@ describe('Phase 13.4 workspace file browser', () => {
               role: 'OWNER',
               membershipId: 'member-1',
             },
+            {
+              id: 'workspace-2',
+              agencyId: 'agency-1',
+              name: 'Workspace Two',
+              slug: 'workspace-two',
+              timezone: 'UTC',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'member-2',
+            },
           ],
         },
       ],
@@ -119,6 +131,10 @@ describe('Phase 13.4 workspace file browser', () => {
     ]);
     getCloudConnections.mockResolvedValue([]);
     listCloudDriveFiles.mockResolvedValue({ items: [], nextCursor: null });
+    getWorkspaceFileDownloadUrl.mockResolvedValue({
+      downloadUrl: 'https://files.test/workspace-1/creative-brief.pdf',
+      expiresInSeconds: 300,
+    });
   });
 
   it('scopes file query keys by workspace, filters, sort, and pagination', () => {
@@ -156,6 +172,25 @@ describe('Phase 13.4 workspace file browser', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Grid View' }));
     expect(screen.getByText('creative-brief.pdf')).toBeInTheDocument();
+  });
+
+  it('clears preview signed URL state when the Workspace changes', async () => {
+    renderFiles();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
+    expect(await screen.findByTitle('creative-brief.pdf')).toBeInTheDocument();
+    expect(getWorkspaceFileDownloadUrl).toHaveBeenCalledWith(
+      'workspace-1',
+      '00000000-0000-4000-8000-000000000010',
+    );
+
+    act(() => {
+      useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTitle('creative-brief.pdf')).not.toBeInTheDocument();
+    });
   });
 });
 

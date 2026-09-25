@@ -1,7 +1,12 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class CreateAgencyDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  superAgencyId?: string;
+
   @ApiProperty({ minLength: 2, maxLength: 160 })
   @IsString()
   @MinLength(2)

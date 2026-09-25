@@ -1,9 +1,15 @@
 import { INestApplication } from '@nestjs/common';
+import type { NextFunction, Request, Response } from 'express';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { CorrelationMiddleware } from '../src/common/middleware/correlation.middleware';
 import { PrismaService } from '../src/infrastructure/database/prisma.service';
+import { MetricsService } from '../src/infrastructure/monitoring/metrics.service';
 import { RedisService } from '../src/infrastructure/redis/redis.service';
 import { STORAGE_ADAPTER } from '../src/infrastructure/storage/storage.tokens';
+import { HealthController } from '../src/modules/health/health.controller';
+import { HealthService } from '../src/modules/health/health.service';
+import { RealtimeService } from '../src/modules/realtime/realtime.service';
 
 describe('HealthController', () => {
   let app: INestApplication;
@@ -28,8 +34,26 @@ describe('HealthController', () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
     };
 
-    const { AppModule } = await import('../src/app.module');
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    const moduleRef = await Test.createTestingModule({
+      controllers: [HealthController],
+      providers: [
+        HealthService,
+        { provide: PrismaService, useValue: { isHealthy: jest.fn().mockResolvedValue(true) } },
+        { provide: MetricsService, useValue: { dependencyHealth: { set: jest.fn() } } },
+        {
+          provide: RedisService,
+          useValue: {
+            cache: {},
+            queue: {},
+            realtime: {},
+            rateLimit: {},
+            ping: jest.fn().mockResolvedValue('PONG'),
+          },
+        },
+        { provide: RealtimeService, useValue: { isRedisFanoutHealthy: jest.fn(() => true) } },
+        { provide: STORAGE_ADAPTER, useValue: { isHealthy: jest.fn().mockResolvedValue(true) } },
+      ],
+    })
       .overrideProvider(PrismaService)
       .useValue({ isHealthy: jest.fn().mockResolvedValue(true) })
       .overrideProvider(RedisService)
@@ -40,11 +64,15 @@ describe('HealthController', () => {
         rateLimit: {},
         ping: jest.fn().mockResolvedValue('PONG'),
       })
+      .overrideProvider(RealtimeService)
+      .useValue({ isRedisFanoutHealthy: jest.fn(() => true) })
       .overrideProvider(STORAGE_ADAPTER)
       .useValue({ isHealthy: jest.fn().mockResolvedValue(true) })
       .compile();
 
     app = moduleRef.createNestApplication();
+    const correlation = new CorrelationMiddleware();
+    app.use((req: Request, res: Response, next: NextFunction) => correlation.use(req, res, next));
     app.setGlobalPrefix('api/v1');
     await app.init();
   });

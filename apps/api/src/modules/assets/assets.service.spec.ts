@@ -419,6 +419,39 @@ describe('AssetsService Phase 13.1 storage core', () => {
     );
   });
 
+  it('requires direct Workspace membership for file content operations', async () => {
+    const { service, prisma, storage } = buildService();
+    const parentTenant = {
+      ...tenant,
+      workspaceMembershipId: null,
+      accessSource: 'AGENCY_ADMINISTRATION' as const,
+    };
+
+    await expect(
+      service.createWorkspaceDownloadUrl(parentTenant, '00000000-0000-4000-8000-000000000010'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.asset.findFirst).not.toHaveBeenCalled();
+    expect(storage.createPresignedDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('does not sign a URL for a known foreign file id', async () => {
+    const { service, prisma, storage } = buildService();
+    prisma.asset.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.createWorkspaceDownloadUrl(tenant, '00000000-0000-4000-8000-000000000099'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.asset.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: '00000000-0000-4000-8000-000000000099',
+          workspaceId: tenant.workspaceId,
+        }),
+      }),
+    );
+    expect(storage.createPresignedDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it('archives active files idempotently and excludes archived files from the default list', async () => {
     const { service, prisma, audit } = buildService();
     const active = assetRecord({ status: AssetStatus.READY, lifecycle: AssetLifecycle.ACTIVE });
@@ -857,6 +890,10 @@ function buildService() {
     ...mockPrismaCore(),
     $transaction: jest.fn((input) => (Array.isArray(input) ? Promise.all(input) : input(tx))),
   };
+  prisma.workspaceMembership.findUnique.mockResolvedValue({
+    id: tenant.workspaceMembershipId,
+    status: MembershipStatus.ACTIVE,
+  });
   const audit = { record: jest.fn() };
   const storage = {
     createPresignedUploadUrl: jest.fn().mockResolvedValue('https://storage/upload'),

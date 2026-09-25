@@ -4610,11 +4610,27 @@ describe('Phase 6.3A shared statuses integration', () => {
       user('owner-b@zeaplay.test', 'Owner B'),
     ]);
     limitedUserId = limited.id;
+    const superAgencyA = await prisma.superAgency.create({
+      data: { name: 'Super Agency A', slug: 'super-agency-a', createdById: owner.id },
+    });
+    const superAgencyB = await prisma.superAgency.create({
+      data: { name: 'Super Agency B', slug: 'super-agency-b', createdById: betaOwner.id },
+    });
     const agency = await prisma.agency.create({
-      data: { name: 'Agency A', slug: 'agency-a', createdById: owner.id },
+      data: {
+        superAgencyId: superAgencyA.id,
+        name: 'Agency A',
+        slug: 'agency-a',
+        createdById: owner.id,
+      },
     });
     const beta = await prisma.agency.create({
-      data: { name: 'Agency B', slug: 'agency-b', createdById: betaOwner.id },
+      data: {
+        superAgencyId: superAgencyB.id,
+        name: 'Agency B',
+        slug: 'agency-b',
+        createdById: betaOwner.id,
+      },
     });
     agencyA = agency.id;
     agencyB = beta.id;
@@ -4755,6 +4771,12 @@ async function resetDatabase() {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE "automation_trigger_matches", "automation_domain_events" CASCADE',
   );
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "automation_step_executions", "automation_executions", "automation_workflow_templates", "automation_workflow_versions", "automation_workflows", "automation_workspace_policies" CASCADE',
+  );
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE TABLE "billing_usage_counters", "billing_history", "billing_checkout_attempts", "stripe_billing_events", "super_agency_billing_accounts", "super_agency_subscriptions", "billing_prices", "plan_entitlements", "master_plan_versions", "master_plans", "agency_resource_allocations", "workspace_resource_allocations" CASCADE',
+  );
   await prisma.$transaction([
     prisma.taskCommentReaction.deleteMany(),
     prisma.taskCommentMention.deleteMany(),
@@ -4813,8 +4835,11 @@ async function resetDatabase() {
     prisma.department.deleteMany(),
     prisma.statusDefinition.deleteMany(),
     prisma.agencyMembership.deleteMany(),
+    prisma.superAgencyMembership.deleteMany(),
+    prisma.featureEntitlement.deleteMany(),
     prisma.workspace.deleteMany(),
     prisma.agency.deleteMany(),
+    prisma.superAgency.deleteMany(),
     prisma.rolePermission.deleteMany(),
     prisma.permission.deleteMany(),
     prisma.role.deleteMany(),

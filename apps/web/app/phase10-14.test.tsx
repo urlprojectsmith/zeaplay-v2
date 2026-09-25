@@ -11,6 +11,10 @@ import { useSessionStore } from '../stores/session';
 
 const getAgencyGlobalSubaccounts = vi.fn();
 const getAgencyGlobalUsers = vi.fn();
+const getSuperAgencyGlobalAgencies = vi.fn();
+const getSuperAgencyGlobalSubaccounts = vi.fn();
+const getSuperAgencyGlobalUsers = vi.fn();
+const getPlatformGlobalSuperAgencies = vi.fn();
 const getPlatformGlobalAgencies = vi.fn();
 const getPlatformGlobalSubaccounts = vi.fn();
 const getPlatformGlobalUsers = vi.fn();
@@ -43,16 +47,21 @@ vi.mock('../services/global-gamification', () => ({
       workspaceId,
       params,
     ],
-    platform: (agencyId: string | null, tab: string, params: unknown) => [
+    superAgency: (superAgencyId: string | null, tab: string, params: unknown) => [
       'global-gamification',
-      'platform',
-      agencyId,
+      'super-agency',
+      superAgencyId,
       tab,
       params,
     ],
+    platform: (tab: string, params: unknown) => ['global-gamification', 'platform', tab, params],
   },
   getAgencyGlobalSubaccounts: (...args: unknown[]) => getAgencyGlobalSubaccounts(...args),
   getAgencyGlobalUsers: (...args: unknown[]) => getAgencyGlobalUsers(...args),
+  getSuperAgencyGlobalAgencies: (...args: unknown[]) => getSuperAgencyGlobalAgencies(...args),
+  getSuperAgencyGlobalSubaccounts: (...args: unknown[]) => getSuperAgencyGlobalSubaccounts(...args),
+  getSuperAgencyGlobalUsers: (...args: unknown[]) => getSuperAgencyGlobalUsers(...args),
+  getPlatformGlobalSuperAgencies: (...args: unknown[]) => getPlatformGlobalSuperAgencies(...args),
   getPlatformGlobalAgencies: (...args: unknown[]) => getPlatformGlobalAgencies(...args),
   getPlatformGlobalSubaccounts: (...args: unknown[]) => getPlatformGlobalSubaccounts(...args),
   getPlatformGlobalUsers: (...args: unknown[]) => getPlatformGlobalUsers(...args),
@@ -131,6 +140,22 @@ describe('Phase 10.14 Gamification integration surfaces', () => {
       ],
     });
     getAgencyGlobalUsers.mockResolvedValue(pageResult([]));
+    getSuperAgencyGlobalAgencies.mockResolvedValue(pageResult([]));
+    getSuperAgencyGlobalSubaccounts.mockResolvedValue(pageResult([]));
+    getSuperAgencyGlobalUsers.mockResolvedValue(pageResult([]));
+    getPlatformGlobalSuperAgencies.mockResolvedValue(
+      pageResult([
+        {
+          rank: 1,
+          superAgencyId: 'super-agency-1',
+          superAgencyName: 'Super Agency One',
+          globalScore: 1200,
+          agencies: 1,
+          subaccounts: 1,
+          scoredUsers: 4,
+        },
+      ]),
+    );
     getPlatformGlobalAgencies.mockResolvedValue(
       pageResult([
         {
@@ -189,6 +214,7 @@ describe('Phase 10.14 Gamification integration surfaces', () => {
   });
 
   it('keeps Super Admin sections and nested leaderboard tabs on normalized Global Score only', async () => {
+    useSessionStore.setState({ selectedAgencyId: null });
     renderWithProviders(<PlatformGlobalLeaderboardPage />);
 
     expect(await screen.findByRole('tab', { name: 'Overview' })).toBeInTheDocument();
@@ -196,7 +222,8 @@ describe('Phase 10.14 Gamification integration surfaces', () => {
     expect(screen.getByRole('tab', { name: 'Governance Status' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Global Leaderboard' }));
-    expect(await screen.findByRole('tab', { name: 'Agencies' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: 'Super Agencies' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Agencies' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Subaccounts' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Users' })).toBeInTheDocument();
     expect(screen.getByText('Global Score')).toBeInTheDocument();
@@ -207,6 +234,7 @@ describe('Phase 10.14 Gamification integration surfaces', () => {
       await screen.findByText(/pending platform feature-control implementation/i),
     ).toBeInTheDocument();
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    expect(getPlatformGlobalAgencies).toHaveBeenCalled();
   });
 
   it('keeps Developer Gamification URL-backed and read-only', async () => {

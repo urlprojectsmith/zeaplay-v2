@@ -1,2 +1,6 @@
 export type DashboardRoute =
-  '/developer/dashboard' | '/super-admin/dashboard' | '/agency/dashboard' | '/workspace/dashboard';
+  | '/developer/dashboard'
+  | '/super-admin/dashboard'
+  | '/super-agency'
+  | '/agency/dashboard'
+  | '/workspace/dashboard';

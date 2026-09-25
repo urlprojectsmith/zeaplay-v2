@@ -118,6 +118,7 @@ export class TicketSlaService {
       }
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -179,6 +180,7 @@ export class TicketSlaService {
       }
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,

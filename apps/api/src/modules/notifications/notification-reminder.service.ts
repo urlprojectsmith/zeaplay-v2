@@ -1,6 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  AgencyStatus,
   NotificationCategory,
   NotificationEntityType,
   NotificationPriority,
@@ -9,6 +10,8 @@ import {
   NotificationType,
   Prisma,
   ProjectStatus,
+  SuperAgencyStatus,
+  WorkspaceStatus,
 } from '@prisma/client';
 import type { Job } from 'bullmq';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
@@ -191,6 +194,14 @@ export class NotificationReminderProcessor extends WorkerHost {
       });
       if (claimed.count !== 1) continue;
       try {
+        const hierarchyActive = await this.workspaceHierarchyActive(row.workspaceId);
+        if (!hierarchyActive) {
+          await this.prisma.notificationReminder.update({
+            where: { id: row.id },
+            data: { status: NotificationReminderStatus.SKIPPED, skippedAt: now },
+          });
+          continue;
+        }
         const intent = await this.intentForReminder(row, now);
         if (!intent) {
           await this.prisma.notificationReminder.update({
@@ -209,6 +220,26 @@ export class NotificationReminderProcessor extends WorkerHost {
       }
     }
     return fired;
+  }
+
+  private async workspaceHierarchyActive(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: {
+        status: true,
+        agency: {
+          select: {
+            status: true,
+            superAgency: { select: { status: true } },
+          },
+        },
+      },
+    });
+    return (
+      workspace?.status === WorkspaceStatus.ACTIVE &&
+      workspace.agency.status === AgencyStatus.ACTIVE &&
+      workspace.agency.superAgency.status === SuperAgencyStatus.ACTIVE
+    );
   }
 
   private async intentForReminder(row: DueReminder, now: Date) {

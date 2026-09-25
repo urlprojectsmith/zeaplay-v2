@@ -1,4 +1,10 @@
-import { UserStatus, WorkspaceStatus, MembershipStatus } from '@prisma/client';
+import {
+  AgencyStatus,
+  MembershipStatus,
+  SuperAgencyStatus,
+  UserStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import { RealtimeService } from './realtime.service';
 import { REALTIME_CLIENT_EVENT } from './realtime.types';
 
@@ -54,7 +60,7 @@ describe('RealtimeService', () => {
     prisma.workspaceMembership.findUnique.mockResolvedValue({
       id: 'member-1',
       status: MembershipStatus.ACTIVE,
-      workspace: { id: '00000000-0000-4000-8000-000000000001', status: WorkspaceStatus.ACTIVE },
+      workspace: activeWorkspace('00000000-0000-4000-8000-000000000001'),
     });
     await expect(
       service.resolveWorkspaceMembership('user-1', '00000000-0000-4000-8000-000000000001'),
@@ -66,10 +72,36 @@ describe('RealtimeService', () => {
     prisma.workspaceMembership.findUnique.mockResolvedValue({
       id: 'member-2',
       status: MembershipStatus.SUSPENDED,
-      workspace: { id: '00000000-0000-4000-8000-000000000002', status: WorkspaceStatus.ACTIVE },
+      workspace: activeWorkspace('00000000-0000-4000-8000-000000000002'),
     });
     await expect(
       service.resolveWorkspaceMembership('user-1', '00000000-0000-4000-8000-000000000002'),
+    ).resolves.toBeNull();
+  });
+
+  it('rejects realtime workspace rooms when parent Agency or Super Agency is inactive', async () => {
+    const service = new RealtimeService(prisma as never, tokens as never);
+
+    prisma.workspaceMembership.findUnique.mockResolvedValueOnce({
+      id: 'member-1',
+      status: MembershipStatus.ACTIVE,
+      workspace: activeWorkspace('00000000-0000-4000-8000-000000000001', {
+        agencyStatus: AgencyStatus.SUSPENDED,
+      }),
+    });
+    await expect(
+      service.resolveWorkspaceMembership('user-1', '00000000-0000-4000-8000-000000000001'),
+    ).resolves.toBeNull();
+
+    prisma.workspaceMembership.findUnique.mockResolvedValueOnce({
+      id: 'member-1',
+      status: MembershipStatus.ACTIVE,
+      workspace: activeWorkspace('00000000-0000-4000-8000-000000000001', {
+        superAgencyStatus: SuperAgencyStatus.ARCHIVED,
+      }),
+    });
+    await expect(
+      service.resolveWorkspaceMembership('user-1', '00000000-0000-4000-8000-000000000001'),
     ).resolves.toBeNull();
   });
 
@@ -127,3 +159,17 @@ describe('RealtimeService', () => {
     expect(service.isRedisFanoutHealthy()).toBe(false);
   });
 });
+
+function activeWorkspace(
+  id: string,
+  overrides: { agencyStatus?: AgencyStatus; superAgencyStatus?: SuperAgencyStatus } = {},
+) {
+  return {
+    id,
+    status: WorkspaceStatus.ACTIVE,
+    agency: {
+      status: overrides.agencyStatus ?? AgencyStatus.ACTIVE,
+      superAgency: { status: overrides.superAgencyStatus ?? SuperAgencyStatus.ACTIVE },
+    },
+  };
+}

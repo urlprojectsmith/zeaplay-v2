@@ -3,6 +3,7 @@ import {
   Bell,
   Blocks,
   BriefcaseBusiness,
+  Building2,
   CalendarDays,
   ClipboardList,
   Clock,
@@ -33,13 +34,14 @@ import {
   Webhook,
 } from 'lucide-react';
 
-export type DashboardScope = 'developer' | 'super-admin' | 'agency' | 'workspace';
+export type DashboardScope = 'developer' | 'super-admin' | 'super-agency' | 'agency' | 'workspace';
 
 export interface NavigationItemConfig {
   labelKey: `navigation.${string}`;
   href: string;
   icon: LucideIcon;
   disabled?: boolean;
+  locked?: boolean;
   badge?: string;
   featureKey?: string;
   requiredPermissions?: string[];
@@ -126,7 +128,11 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           disabled('navigation.agencies', BriefcaseBusiness),
           disabled('navigation.subAccounts', Blocks),
           disabled('navigation.users', Users),
-          disabled('navigation.billing', Receipt),
+          {
+            labelKey: 'navigation.billing',
+            href: '/super-admin/plans',
+            icon: Receipt,
+          },
           disabled('navigation.featureManagement', Flag),
           disabled('navigation.modules', Puzzle),
           disabled('navigation.isolatedSpace', LockKeyhole),
@@ -150,6 +156,67 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
       },
     ],
   },
+  'super-agency': {
+    scope: 'super-agency',
+    title: 'Super Agency Dashboard',
+    description: 'Parent tenant shell for Super Agency context, members, roles, and settings.',
+    basePath: '/super-agency',
+    groups: [
+      {
+        label: 'Super Agency',
+        items: [
+          {
+            labelKey: 'navigation.dashboard',
+            href: '/super-agency',
+            icon: LayoutDashboard,
+            requiredPermissions: ['super_agency.view'],
+          },
+          {
+            labelKey: 'navigation.agencies',
+            href: '/super-agency/agencies',
+            icon: Building2,
+            requiredPermissions: ['agency.read'],
+          },
+          {
+            labelKey: 'navigation.docs',
+            href: '/super-agency/docs',
+            icon: FileText,
+            requiredPermissions: ['docs.parent.read'],
+          },
+          {
+            labelKey: 'navigation.members',
+            href: '/super-agency/members',
+            icon: Users,
+            requiredPermissions: ['super_agency.members.view'],
+          },
+          {
+            labelKey: 'navigation.roles',
+            href: '/super-agency/roles',
+            icon: Shield,
+            requiredPermissions: ['super_agency.roles.view'],
+          },
+          {
+            labelKey: 'navigation.globalLeaderboard',
+            href: '/super-agency/gamification',
+            icon: Trophy,
+            requiredPermissions: ['gamification.global_leaderboard.view_super_agency'],
+          },
+          {
+            labelKey: 'navigation.billing',
+            href: '/super-agency/billing',
+            icon: Receipt,
+            requiredPermissions: ['billing.subscription.view'],
+          },
+          {
+            labelKey: 'navigation.settings',
+            href: '/super-agency/settings',
+            icon: Settings,
+            requiredPermissions: ['super_agency.view'],
+          },
+        ],
+      },
+    ],
+  },
   agency: {
     scope: 'agency',
     title: 'Agency Dashboard',
@@ -164,7 +231,18 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
           disabled('navigation.users', Users),
           disabled('navigation.departments', BriefcaseBusiness),
           disabled('navigation.rolesPermissions', Shield),
-          disabled('navigation.plansUsage', Receipt),
+          {
+            labelKey: 'navigation.plansUsage',
+            href: '/agency/usage',
+            icon: Receipt,
+            requiredPermissions: ['billing.allocation.read'],
+          },
+          {
+            labelKey: 'navigation.docs',
+            href: '/agency/docs',
+            icon: FileText,
+            requiredPermissions: ['docs.parent.read'],
+          },
           disabled('navigation.featureControls', Flag),
           {
             labelKey: 'navigation.agencyLeaderboard',
@@ -195,39 +273,89 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
         label: 'Work',
         items: [
           { labelKey: 'navigation.dashboard', href: '/workspace/dashboard', icon: LayoutDashboard },
-          { labelKey: 'navigation.tasks', href: '/workspace/tasks', icon: ListChecks },
+          {
+            labelKey: 'navigation.tasks',
+            href: '/workspace/tasks',
+            icon: ListChecks,
+            featureKey: 'tasks.enabled',
+          },
           {
             labelKey: 'navigation.recurringTasks',
             href: '/workspace/tasks/recurring',
             icon: Repeat,
+            featureKey: 'tasks.enabled',
           },
-          { labelKey: 'navigation.templates', href: '/workspace/tasks/templates', icon: FileText },
-          { labelKey: 'navigation.timeTracking', href: '/workspace/tasks/time', icon: Clock },
-          { labelKey: 'navigation.workload', href: '/workspace/tasks/workload', icon: Gauge },
-          { labelKey: 'navigation.team', href: '/workspace/tasks/team', icon: Users },
+          {
+            labelKey: 'navigation.templates',
+            href: '/workspace/tasks/templates',
+            icon: FileText,
+            featureKey: 'tasks.enabled',
+          },
+          {
+            labelKey: 'navigation.timeTracking',
+            href: '/workspace/tasks/time',
+            icon: Clock,
+            featureKey: 'tasks.enabled',
+          },
+          {
+            labelKey: 'navigation.workload',
+            href: '/workspace/tasks/workload',
+            icon: Gauge,
+            featureKey: 'tasks.enabled',
+          },
+          {
+            labelKey: 'navigation.team',
+            href: '/workspace/tasks/team',
+            icon: Users,
+            featureKey: 'tasks.enabled',
+          },
           {
             labelKey: 'navigation.calendar',
             href: '/workspace/calendar',
             icon: CalendarDays,
+            featureKey: 'calendar.enabled',
           },
-          { labelKey: 'navigation.gantt', href: '/workspace/tasks?view=gantt', icon: Activity },
-          { labelKey: 'navigation.reports', href: '/workspace/tasks/reports', icon: ClipboardList },
+          {
+            labelKey: 'navigation.gantt',
+            href: '/workspace/tasks?view=gantt',
+            icon: Activity,
+            featureKey: 'tasks.enabled',
+          },
+          {
+            labelKey: 'navigation.reports',
+            href: '/workspace/tasks/reports',
+            icon: ClipboardList,
+            featureKey: 'tasks.enabled',
+          },
           {
             labelKey: 'navigation.activityLogs',
             href: '/workspace/tasks/activity',
             icon: ScrollText,
+            featureKey: 'tasks.enabled',
           },
-          { labelKey: 'navigation.projects', href: '/workspace/projects', icon: ClipboardList },
-          { labelKey: 'navigation.tickets', href: '/workspace/tickets', icon: SearchCode },
+          {
+            labelKey: 'navigation.projects',
+            href: '/workspace/projects',
+            icon: ClipboardList,
+            featureKey: 'projects.enabled',
+          },
+          {
+            labelKey: 'navigation.tickets',
+            href: '/workspace/tickets',
+            icon: SearchCode,
+            featureKey: 'tickets.enabled',
+          },
           {
             labelKey: 'navigation.ticketReports',
             href: '/workspace/tickets/reports',
             icon: ClipboardList,
+            featureKey: 'tickets.enabled',
           },
           {
             labelKey: 'navigation.gamification',
             href: '/workspace/gamification',
             icon: Sparkles,
+            featureKey: 'gamification.enabled',
             requiredPermissions: ['gamification.view'],
           },
         ],
@@ -247,15 +375,28 @@ export const dashboardConfigs: Record<DashboardScope, DashboardConfig> = {
             labelKey: 'navigation.automation',
             href: '/workspace/automations',
             icon: Rocket,
+            featureKey: 'automation.enabled',
             requiredPermissions: ['automation.view'],
           },
           {
             labelKey: 'navigation.files',
             href: '/workspace/files',
             icon: FileText,
+            featureKey: 'files.enabled',
             requiredPermissions: ['storage.view'],
           },
-          disabled('navigation.docs', FileText),
+          {
+            labelKey: 'navigation.docs',
+            href: '/workspace/docs',
+            icon: FileText,
+            requiredPermissions: ['docs.view'],
+          },
+          {
+            labelKey: 'navigation.usageLimits',
+            href: '/workspace/usage',
+            icon: Receipt,
+            requiredPermissions: ['billing.allocation.read'],
+          },
           disabled('navigation.forms', ScrollText),
           disabled('navigation.goals', Goal),
           disabled('navigation.reports', ClipboardList),

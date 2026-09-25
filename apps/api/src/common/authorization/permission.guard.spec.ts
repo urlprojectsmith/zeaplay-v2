@@ -4,21 +4,39 @@ import { PermissionGuard } from './permission.guard';
 import { REQUIRED_PERMISSIONS_KEY } from './require-permissions.decorator';
 
 describe('PermissionGuard', () => {
-  it('requires explicit permissions instead of owner role-name bypasses', () => {
+  it('requires explicit permissions instead of owner role-name bypasses', async () => {
     const guard = new PermissionGuard(reflector(['project.delete']));
-    expect(() => guard.canActivate(context({ roleName: 'OWNER', permissions: [] }))).toThrow(
-      ForbiddenException,
-    );
-    expect(guard.canActivate(context({ roleName: 'OWNER', permissions: ['project.delete'] }))).toBe(
-      true,
-    );
+    await expect(
+      guard.canActivate(context({ roleName: 'OWNER', permissions: [] })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      guard.canActivate(context({ roleName: 'OWNER', permissions: ['project.delete'] })),
+    ).resolves.toBe(true);
   });
 
-  it('rejects users missing required permissions', () => {
+  it('rejects users missing required permissions', async () => {
     const guard = new PermissionGuard(reflector(['member.create']));
-    expect(() =>
+    await expect(
       guard.canActivate(context({ roleName: 'MEMBER', permissions: ['project.read'] })),
-    ).toThrow(ForbiddenException);
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('blocks tenant business writes when billing access is restricted', async () => {
+    const prisma = {
+      superAgencySubscription: {
+        findFirst: jest.fn().mockResolvedValue({ status: 'RESTRICTED', graceEndsAt: null }),
+      },
+    };
+    const guard = new PermissionGuard(reflector(['project.delete']), prisma as never);
+
+    await expect(
+      guard.canActivate(
+        context(
+          { roleName: 'ADMIN', permissions: ['project.delete'], superAgencyId: 'super-agency-1' },
+          { method: 'DELETE', url: '/api/v1/projects/project-1' },
+        ),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
 
@@ -28,10 +46,13 @@ function reflector(required: string[]) {
   } as unknown as Reflector;
 }
 
-function context(tenant: { roleName: string; permissions: string[] }) {
+function context(
+  tenant: { roleName: string; permissions: string[]; superAgencyId?: string },
+  request: { method?: string; url?: string } = {},
+) {
   return {
     getHandler: jest.fn(),
     getClass: jest.fn(),
-    switchToHttp: () => ({ getRequest: () => ({ tenant }) }),
+    switchToHttp: () => ({ getRequest: () => ({ tenant, ...request }) }),
   } as unknown as ExecutionContext;
 }

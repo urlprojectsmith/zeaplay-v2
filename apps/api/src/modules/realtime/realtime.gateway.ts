@@ -97,14 +97,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     const membership = await this.realtime.resolveWorkspaceMembership(user.id, body.workspaceId);
     if (!membership) return { ok: false, code: 'WORKSPACE_ACCESS_DENIED' };
     await this.leaveCurrentRooms(client);
-    const rooms = [
-      this.realtime.workspaceRoom(membership.workspaceId),
-      this.realtime.memberRoom(membership.workspaceId, membership.membershipId),
-    ];
-    for (const room of rooms) await client.join(room);
-    data.workspaceId = membership.workspaceId;
-    data.membershipId = membership.membershipId;
-    data.rooms = rooms;
+    await this.joinWorkspaceRooms(client, membership);
     return { ok: true, workspaceId: membership.workspaceId, membershipId: membership.membershipId };
   }
 
@@ -122,6 +115,21 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     data.rooms = [];
     data.workspaceId = undefined;
     data.membershipId = undefined;
+  }
+
+  private async joinWorkspaceRooms(
+    client: Socket,
+    membership: { workspaceId: string; membershipId: string },
+  ) {
+    const data = client.data as RealtimeSocketData;
+    const rooms = [
+      this.realtime.workspaceRoom(membership.workspaceId),
+      this.realtime.memberRoom(membership.workspaceId, membership.membershipId),
+    ];
+    for (const room of rooms) await client.join(room);
+    data.workspaceId = membership.workspaceId;
+    data.membershipId = membership.membershipId;
+    data.rooms = rooms;
   }
 
   private startAuthRecheck(client: Socket) {
@@ -148,6 +156,28 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       return null;
     }
     data.user = user;
+    if (data.workspaceId) {
+      const membership = await this.realtime
+        .resolveWorkspaceMembership(user.id, data.workspaceId)
+        .catch(() => null);
+      if (!membership) {
+        await this.leaveCurrentRooms(client);
+        return user;
+      }
+      const expectedRooms = [
+        this.realtime.workspaceRoom(membership.workspaceId),
+        this.realtime.memberRoom(membership.workspaceId, membership.membershipId),
+      ];
+      const currentRooms = data.rooms ?? [];
+      const roomsMatch =
+        data.membershipId === membership.membershipId &&
+        currentRooms.length === expectedRooms.length &&
+        expectedRooms.every((room) => currentRooms.includes(room));
+      if (!roomsMatch) {
+        await this.leaveCurrentRooms(client);
+        await this.joinWorkspaceRooms(client, membership);
+      }
+    }
     return user;
   }
 

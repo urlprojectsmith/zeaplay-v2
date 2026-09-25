@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Card, CardContent, CardHeader, EmptyState, Input } from '@zea-play/ui';
 import { useLanguage } from '../../contexts/language-provider';
 import { useSessionStore } from '../../stores/session';
 import {
+  getPlatformGlobalSuperAgencies,
   getPlatformGlobalAgencies,
   getPlatformGlobalSubaccounts,
   getPlatformGlobalUsers,
   globalGamificationKeys,
   type GlobalAgencyLeaderboardItem,
+  type GlobalSuperAgencyLeaderboardItem,
   type GlobalSubaccountLeaderboardItem,
 } from '../../services/global-gamification';
 import { PageContainer } from '../layout/PageContainer';
@@ -25,15 +27,15 @@ import {
   writeGlobalTab,
 } from './AgencyGlobalLeaderboardPage';
 
-type PlatformTab = 'agencies' | 'subaccounts' | 'users';
+type PlatformTab = 'super-agencies' | 'agencies' | 'subaccounts' | 'users';
 type PlatformSection = 'overview' | 'leaderboard' | 'governance';
 
-const tabs: PlatformTab[] = ['agencies', 'subaccounts', 'users'];
+const tabs: PlatformTab[] = ['super-agencies', 'agencies', 'subaccounts', 'users'];
 const pageSize = 20;
 
 export function PlatformGlobalLeaderboardPage() {
   const { locale, t } = useLanguage();
-  const { accessToken, selectedAgencyId } = useSessionStore();
+  const { accessToken } = useSessionStore();
   const [section, setSection] = useState<PlatformSection>(() =>
     readGlobalTab('overview', ['overview', 'leaderboard', 'governance']),
   );
@@ -59,62 +61,48 @@ export function PlatformGlobalLeaderboardPage() {
     [drilldownPage, selectedSubaccount?.agencyId, selectedSubaccount?.workspaceId],
   );
 
-  useEffect(() => {
-    setSearch('');
-    setPage(1);
-    setSelectedAgency(null);
-    setSelectedSubaccount(null);
-    setDrilldownPage(1);
-  }, [selectedAgencyId]);
-
+  const superAgenciesQuery = useQuery({
+    queryKey: globalGamificationKeys.platform('super-agencies', params),
+    queryFn: () => getPlatformGlobalSuperAgencies(params),
+    enabled: Boolean(accessToken && section === 'leaderboard' && activeTab === 'super-agencies'),
+  });
   const agenciesQuery = useQuery({
-    queryKey: globalGamificationKeys.platform(selectedAgencyId, 'agencies', params),
+    queryKey: globalGamificationKeys.platform('agencies', params),
     queryFn: () => getPlatformGlobalAgencies(params),
     enabled: Boolean(
       accessToken &&
-      selectedAgencyId &&
       (section === 'overview' || (section === 'leaderboard' && activeTab === 'agencies')),
     ),
   });
   const subaccountsQuery = useQuery({
-    queryKey: globalGamificationKeys.platform(selectedAgencyId, 'subaccounts', params),
+    queryKey: globalGamificationKeys.platform('subaccounts', params),
     queryFn: () => getPlatformGlobalSubaccounts(params),
-    enabled: Boolean(
-      accessToken && selectedAgencyId && section === 'leaderboard' && activeTab === 'subaccounts',
-    ),
+    enabled: Boolean(accessToken && section === 'leaderboard' && activeTab === 'subaccounts'),
   });
   const usersQuery = useQuery({
-    queryKey: globalGamificationKeys.platform(selectedAgencyId, 'users', params),
+    queryKey: globalGamificationKeys.platform('users', params),
     queryFn: () => getPlatformGlobalUsers(params),
-    enabled: Boolean(
-      accessToken && selectedAgencyId && section === 'leaderboard' && activeTab === 'users',
-    ),
+    enabled: Boolean(accessToken && section === 'leaderboard' && activeTab === 'users'),
   });
   const agencySubaccountsQuery = useQuery({
-    queryKey: globalGamificationKeys.platform(
-      selectedAgencyId,
-      'agency-subaccounts',
-      agencySubaccountParams,
-    ),
+    queryKey: globalGamificationKeys.platform('agency-subaccounts', agencySubaccountParams),
     queryFn: () => getPlatformGlobalSubaccounts(agencySubaccountParams),
-    enabled: Boolean(accessToken && selectedAgencyId && selectedAgency),
+    enabled: Boolean(accessToken && selectedAgency),
   });
   const subaccountUsersQuery = useQuery({
-    queryKey: globalGamificationKeys.platform(
-      selectedAgencyId,
-      'subaccount-users',
-      subaccountUsersParams,
-    ),
+    queryKey: globalGamificationKeys.platform('subaccount-users', subaccountUsersParams),
     queryFn: () => getPlatformGlobalUsers(subaccountUsersParams),
-    enabled: Boolean(accessToken && selectedAgencyId && selectedSubaccount),
+    enabled: Boolean(accessToken && selectedSubaccount),
   });
 
   const totalPages =
-    activeTab === 'agencies'
-      ? agenciesQuery.data?.totalPages
-      : activeTab === 'subaccounts'
-        ? subaccountsQuery.data?.totalPages
-        : usersQuery.data?.totalPages;
+    activeTab === 'super-agencies'
+      ? superAgenciesQuery.data?.totalPages
+      : activeTab === 'agencies'
+        ? agenciesQuery.data?.totalPages
+        : activeTab === 'subaccounts'
+          ? subaccountsQuery.data?.totalPages
+          : usersQuery.data?.totalPages;
 
   return (
     <PageContainer>
@@ -187,7 +175,12 @@ export function PlatformGlobalLeaderboardPage() {
                       setDrilldownPage(1);
                     }}
                   >
-                    {t(locale, `globalLeaderboard.${tab}`)}
+                    {t(
+                      locale,
+                      tab === 'super-agencies'
+                        ? 'globalLeaderboard.superAgencies'
+                        : `globalLeaderboard.${tab}`,
+                    )}
                   </Button>
                 ))}
               </div>
@@ -204,7 +197,13 @@ export function PlatformGlobalLeaderboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {activeTab === 'agencies' ? (
+            {activeTab === 'super-agencies' ? (
+              <SuperAgenciesTable
+                isLoading={superAgenciesQuery.isLoading}
+                isError={superAgenciesQuery.isError}
+                items={superAgenciesQuery.data?.items ?? []}
+              />
+            ) : activeTab === 'agencies' ? (
               <AgenciesTable
                 isLoading={agenciesQuery.isLoading}
                 isError={agenciesQuery.isError}
@@ -359,6 +358,50 @@ function AgenciesTable({
                   {t(locale, 'globalLeaderboard.subaccounts')}
                 </Button>
               </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SuperAgenciesTable({
+  isLoading,
+  isError,
+  items,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  items: GlobalSuperAgencyLeaderboardItem[];
+}) {
+  const { locale, t } = useLanguage();
+  if (isLoading) return <TableSkeleton />;
+  if (isError) return <EmptyState title={t(locale, 'globalLeaderboard.unableToLoadLeaderboard')} />;
+  if (items.length === 0)
+    return <EmptyState title={t(locale, 'globalLeaderboard.noLeaderboardData')} />;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-left text-sm">
+        <thead>
+          <tr className="border-b border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]">
+            <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.rank')}</th>
+            <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.superAgency')}</th>
+            <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.globalScore')}</th>
+            <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.agencies')}</th>
+            <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.subaccounts')}</th>
+            <th className="py-2 pr-3">{t(locale, 'globalLeaderboard.scoredUsers')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.superAgencyId} className="border-b border-[hsl(var(--border))]">
+              <td className="py-3 pr-3 font-medium">#{item.rank}</td>
+              <td className="py-3 pr-3">{item.superAgencyName}</td>
+              <td className="py-3 pr-3">{formatScore(item.globalScore)}</td>
+              <td className="py-3 pr-3">{item.agencies}</td>
+              <td className="py-3 pr-3">{item.subaccounts}</td>
+              <td className="py-3 pr-3">{item.scoredUsers}</td>
             </tr>
           ))}
         </tbody>

@@ -83,6 +83,16 @@ describe('NotificationEmailProcessor', () => {
 
     await processor.sendDelivery('delivery-1');
 
+    expect(prisma.workspaceMembership.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'member-1',
+        workspaceId: 'workspace-1',
+        status: 'ACTIVE',
+        user: { status: 'ACTIVE' },
+      },
+      select: { user: { select: { email: true } } },
+    });
+
     expect(prisma.notificationEmailDelivery.update).toHaveBeenCalledWith({
       where: { id: 'delivery-1' },
       data: {
@@ -196,6 +206,43 @@ describe('NotificationEmailProcessor', () => {
         status: NotificationEmailDeliveryStatus.FAILED,
         failureCode: 'MAIL_DELIVERY_PERMANENT',
       },
+    });
+  });
+
+  it('sends committed deliveries when the recipient membership and user remain active', async () => {
+    const prisma = {
+      notificationEmailDelivery: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'delivery-1',
+          workspaceId: 'workspace-1',
+          recipientMembershipId: 'member-1',
+          templateKey: 'task.assigned',
+          templateData: { taskTitle: 'Launch' },
+          status: NotificationEmailDeliveryStatus.QUEUED,
+          attemptCount: 0,
+          maxAttempts: 3,
+          updatedAt: new Date(),
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      workspaceMembership: {
+        findFirst: jest.fn().mockResolvedValue({ user: { email: 'member@example.com' } }),
+      },
+    };
+    const mail = { send: jest.fn().mockResolvedValue(undefined) };
+
+    await new NotificationEmailProcessor(prisma as never, mail as never).sendDelivery('delivery-1');
+
+    expect(mail.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'member@example.com',
+        subject: expect.stringContaining('Task assigned'),
+      }),
+    );
+    expect(prisma.notificationEmailDelivery.update).toHaveBeenCalledWith({
+      where: { id: 'delivery-1' },
+      data: expect.objectContaining({ status: NotificationEmailDeliveryStatus.SENT }),
     });
   });
 

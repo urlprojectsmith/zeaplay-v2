@@ -12,6 +12,7 @@ import {
   MembershipStatus,
   Prisma,
   SecurityStepUpPurpose,
+  SuperAgencyStatus,
   UserStatus,
   WorkspaceStatus,
 } from '@prisma/client';
@@ -113,6 +114,7 @@ export class AuthService {
       refreshToken: tokenPair.refreshToken,
       csrfToken: tokenPair.csrfToken,
       user: { id: user.id, email: user.email, name: user.name },
+      superAgencies: profile.superAgencies,
       agencies: profile.agencies,
     };
   }
@@ -250,6 +252,29 @@ export class AuthService {
         email: true,
         name: true,
         status: true,
+        superAgencyMemberships: {
+          where: {
+            status: MembershipStatus.ACTIVE,
+            superAgency: { status: 'ACTIVE' },
+          },
+          select: {
+            id: true,
+            superAgency: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                status: true,
+                agencies: {
+                  select: { id: true, name: true, slug: true, status: true },
+                  orderBy: { createdAt: 'asc' },
+                },
+              },
+            },
+            role: { select: { key: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
         agencyMemberships: {
           where: {
             status: MembershipStatus.ACTIVE,
@@ -292,6 +317,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       status: user.status,
+      superAgencies: mapSuperAgencyMemberships(user.superAgencyMemberships),
       agencies: mapAgencyMemberships(user.agencyMemberships),
     };
   }
@@ -496,6 +522,8 @@ export class AuthService {
       });
       await tx.auditLog.create({
         data: {
+          superAgencyId: input.tenant.superAgencyId,
+          agencyId: input.tenant.agencyId,
           userId: input.userId,
           workspaceId: challenge.workspaceId,
           action: 'security.step_up_otp_verified',
@@ -783,5 +811,34 @@ function mapAgencyMemberships(
       membershipId: workspace.memberships[0]?.id ?? null,
       role: workspace.memberships[0]?.role.key ?? null,
     })),
+  }));
+}
+
+function mapSuperAgencyMemberships(
+  memberships: {
+    id: string;
+    role: { key: string };
+    superAgency: {
+      id: string;
+      name: string;
+      slug: string;
+      status: SuperAgencyStatus;
+      agencies: {
+        id: string;
+        name: string;
+        slug: string;
+        status: AgencyStatus;
+      }[];
+    };
+  }[],
+) {
+  return memberships.map((membership) => ({
+    membershipId: membership.id,
+    role: membership.role.key,
+    id: membership.superAgency.id,
+    name: membership.superAgency.name,
+    slug: membership.superAgency.slug,
+    status: membership.superAgency.status,
+    agencies: membership.superAgency.agencies,
   }));
 }

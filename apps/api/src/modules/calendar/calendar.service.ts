@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   CalendarEvent,
@@ -18,6 +19,7 @@ import { PermissionKeys } from '../../common/authorization/permissions';
 import { safeWorkspaceTimezone } from '../../common/timezones';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import {
   CalendarQueryDto,
@@ -51,6 +53,7 @@ export class CalendarService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly realtime: RealtimeService,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async list(tenant: WorkspaceTenantContext, query: CalendarQueryDto) {
@@ -87,6 +90,10 @@ export class CalendarService {
   }
 
   async createCustomEvent(tenant: WorkspaceTenantContext, dto: CreateCalendarEventDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'calendar.enabled',
+    );
     const actorMembershipId = this.requireMembership(tenant);
     const workspaceTimezone = await this.workspaceTimezone(tenant.workspaceId);
     const input = await this.normalizeCustomEventInput(tenant, dto, workspaceTimezone);
@@ -135,6 +142,10 @@ export class CalendarService {
     eventId: string,
     dto: UpdateCalendarEventDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'calendar.enabled',
+    );
     const existing = await this.findVisibleCustomEvent(tenant, eventId);
     this.assertCanEdit(tenant, existing);
     const workspaceTimezone = await this.workspaceTimezone(tenant.workspaceId);
@@ -183,6 +194,10 @@ export class CalendarService {
   }
 
   async cancelCustomEvent(tenant: WorkspaceTenantContext, eventId: string) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'calendar.enabled',
+    );
     const existing = await this.findVisibleCustomEvent(tenant, eventId);
     this.assertCanEdit(tenant, existing);
     if (existing.cancelledAt) return this.customEventPayload(tenant, existing);

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
@@ -12,6 +12,7 @@ import {
   WORKSPACE_HEADER,
 } from '../../common/tenant/tenant-context.decorator';
 import { AgencyTenantGuard, WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
+import { WorkspaceManagementListQueryDto } from '../agencies/dto/agency-management.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspaceMembershipParamsDto } from './dto/workspace-params.dto';
@@ -40,8 +41,11 @@ export class WorkspacesController {
   @ApiHeader({ name: AGENCY_HEADER, required: true })
   @UseGuards(AgencyTenantGuard, PermissionGuard)
   @RequirePermissions(PermissionKeys.workspaceRead)
-  listForAgency(@CurrentAgencyTenant() tenant: AgencyTenantContext) {
-    return this.workspaces.listForAgency(tenant);
+  listForAgency(
+    @CurrentAgencyTenant() tenant: AgencyTenantContext,
+    @Query() query: WorkspaceManagementListQueryDto,
+  ) {
+    return this.workspaces.listForAgencyPaginated(tenant, query);
   }
 
   @Get('workspaces/:workspaceId')

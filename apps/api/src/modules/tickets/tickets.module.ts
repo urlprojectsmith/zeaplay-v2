@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AutomationModule } from '../automation/automation.module';
+import { BillingModule } from '../billing/billing.module';
 import { GamificationModule } from '../gamification/gamification.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TicketSlaSchedulerService } from './ticket-sla-scheduler.service';
@@ -9,7 +10,7 @@ import { TicketsController } from './tickets.controller';
 import { TicketsService } from './tickets.service';
 
 @Module({
-  imports: [AuditModule, GamificationModule, AutomationModule, NotificationsModule],
+  imports: [AuditModule, GamificationModule, AutomationModule, NotificationsModule, BillingModule],
   controllers: [TicketsController],
   providers: [TicketsService, TicketSlaService, TicketSlaSchedulerService],
   exports: [TicketsService, TicketSlaService],

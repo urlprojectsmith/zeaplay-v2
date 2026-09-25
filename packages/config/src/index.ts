@@ -100,6 +100,14 @@ const environmentSchema = z.object({
     .max(5_242_880)
     .default(1_048_576),
   INTEGRATION_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(10000),
+  STRIPE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  STRIPE_SECRET_KEY: z.string().optional().default(''),
+  STRIPE_WEBHOOK_SECRET: z.string().optional().default(''),
+  STRIPE_PORTAL_CONFIGURATION_ID: z.string().optional().default(''),
+  STRIPE_WEBHOOK_MAX_BODY_BYTES: z.coerce.number().int().min(1024).max(1_048_576).default(262_144),
   MINIO_ENDPOINT: z.string().min(1),
   MINIO_PORT: z.coerce.number().int().positive().default(9000),
   MINIO_USE_SSL: z
@@ -148,10 +156,24 @@ export function validateEnvironment(source: NodeJS.ProcessEnv): Environment {
       parsed.STORAGE_DEFAULT_WORKSPACE_QUOTA_BYTES ?? parsed.DEFAULT_STORAGE_LIMIT_BYTES,
   };
   assertEmailProviderConfig(env);
+  assertStripeConfig(env);
   if (env.APP_ENV === 'production' || env.NODE_ENV === 'production') {
     assertProductionSafe(env);
   }
   return env;
+}
+
+function assertStripeConfig(env: Environment) {
+  if (!env.STRIPE_ENABLED) return;
+  if (!env.STRIPE_SECRET_KEY) {
+    throw new Error('STRIPE_SECRET_KEY is required when STRIPE_ENABLED=true.');
+  }
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    throw new Error('STRIPE_WEBHOOK_SECRET is required when STRIPE_ENABLED=true.');
+  }
+  if (!env.STRIPE_PORTAL_CONFIGURATION_ID) {
+    throw new Error('STRIPE_PORTAL_CONFIGURATION_ID is required when STRIPE_ENABLED=true.');
+  }
 }
 
 export function parseCorsOrigins(value: string): string[] {
@@ -175,6 +197,8 @@ function assertProductionSafe(env: Environment) {
     env.OTP_PEPPER,
     env.EMAIL_PROVIDER === 'resend' ? env.RESEND_API_KEY : '',
     env.EMAIL_PROVIDER === 'smtp' ? env.SMTP_PASSWORD : '',
+    env.STRIPE_ENABLED ? env.STRIPE_SECRET_KEY : '',
+    env.STRIPE_ENABLED ? env.STRIPE_WEBHOOK_SECRET : '',
   ].filter(Boolean);
 
   for (const value of secretValues) {

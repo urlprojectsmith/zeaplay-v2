@@ -24,7 +24,13 @@ describe('StorageRetentionProcessor', () => {
     });
     expect(prisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ action: 'storage.file_purged', entityId: due.id }),
+        data: expect.objectContaining({
+          superAgencyId: 'super-agency-1',
+          agencyId: 'agency-1',
+          workspaceId: 'workspace-1',
+          action: 'storage.file_purged',
+          entityId: due.id,
+        }),
       }),
     );
   });
@@ -165,6 +171,10 @@ function dueAsset(overrides: Record<string, unknown> = {}) {
     sourceEntityType: null,
     sourceEntityId: null,
     purgeAfter: new Date(Date.now() - 60_000),
+    workspace: {
+      agencyId: 'agency-1',
+      agency: { superAgencyId: 'super-agency-1' },
+    },
     ...overrides,
   };
 }

@@ -10,14 +10,18 @@ The worker application is separate so request paths remain stateless and respons
 
 Storage uses an S3-compatible `StorageAdapter`. MinIO is the local implementation, but product code should depend on the adapter contract so production can use any compatible object storage.
 
-## Phase 2 Domain Boundary
+## Tenant Domain Boundary
 
-Phase 2 adds authentication, organizations, memberships, RBAC, audit logs, and
-the initial tenant-owned `Project` entity. Tenant-owned reads and writes must
-include both the current organization context and the target resource ID.
+The current canonical hierarchy is Platform / Super Admin -> Super Agency ->
+Agency -> Workspace / Sub-account. Developer and Platform authority is internal
+and non-tenant. `Organization` remains legacy compatibility metadata only and
+is not tenant authority.
 
-The API resolves tenant context centrally from `X-Organization-Id` plus the
-authenticated user. Controllers use permission metadata and guards; they do not
+Tenant-owned reads and writes must include the appropriate explicit scope:
+`x-super-agency-id` for Super Agency routes, `x-agency-id` for Agency routes,
+and `x-workspace-id` for Workspace routes. The API resolves and validates tenant
+context centrally from the authenticated user plus the relevant scope header or
+route parameter. Controllers use permission metadata and guards; they do not
 trust frontend route state for authorization.
 
 ## Phase 3 Domain Boundary

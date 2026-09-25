@@ -1,7 +1,7 @@
 import { apiClient } from './api';
 
 export type IntegrationProvider = 'GOHIGHLEVEL' | 'SLACK' | 'WEBEX' | 'GENERIC_REST';
-export type IntegrationAuthType = 'OAUTH' | 'BEARER_TOKEN' | 'API_KEY' | 'BASIC_AUTH';
+export type IntegrationAuthType = 'NONE' | 'OAUTH' | 'BEARER_TOKEN' | 'API_KEY' | 'BASIC_AUTH';
 export type IntegrationStatus =
   'CONNECTED' | 'DISCONNECTED' | 'REAUTH_REQUIRED' | 'ERROR' | 'DISABLED';
 

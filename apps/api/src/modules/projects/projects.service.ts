@@ -48,6 +48,7 @@ import type { AutomationMutationContext } from '../automation/automation-action.
 import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { GamificationService } from '../gamification/gamification.service';
 import { NotificationReminderService } from '../notifications/notification-reminder.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -115,6 +116,8 @@ export class ProjectsService {
     private readonly notificationReminders: NotificationReminderService = missingNotificationReminderService,
     @Optional()
     private readonly realtime: RealtimeService = missingRealtimeService,
+    @Optional()
+    private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async create(
@@ -122,6 +125,10 @@ export class ProjectsService {
     dto: CreateProjectDto,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     const name = normalizeName(dto.name);
     const description = normalizeDescription(dto.description);
     const { plannedStartAt, dueAt } = normalizeProjectDates(dto);
@@ -271,6 +278,10 @@ export class ProjectsService {
     dto: UpdateProjectDto,
     _automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     const existing = await this.readAccessibleProject(tenant, id, {
       id: true,
       statusDefinitionId: true,
@@ -410,6 +421,10 @@ export class ProjectsService {
     reopenDueAtInput?: string | Date | null,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     const existing = await this.readAccessibleProject(tenant, id, {
       id: true,
       statusDefinitionId: true,
@@ -601,6 +616,10 @@ export class ProjectsService {
   }
 
   async addMembers(tenant: WorkspaceTenantContext, id: string, dto: ProjectMembersDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     const project = await this.readAccessibleProject(tenant, id, {
       id: true,
       ownerMembershipId: true,
@@ -670,6 +689,10 @@ export class ProjectsService {
   }
 
   async updateOwner(tenant: WorkspaceTenantContext, id: string, workspaceMembershipId: string) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     const project = await this.readAccessibleProject(tenant, id, {
       id: true,
       ownerMembershipId: true,
@@ -750,6 +773,10 @@ export class ProjectsService {
     dto: UploadInitDto,
     correlationId: string,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
     const uploadedByMembershipId = requireUploadMembership(tenant);
     const filename = sanitizeFilename(dto.filename);
@@ -768,7 +795,12 @@ export class ProjectsService {
     const uploadExpiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
     const sizeBytes = BigInt(dto.sizeBytes);
     const created = await this.prisma.$transaction(async (tx) => {
-      await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
+      const managed = await this.billingEntitlements?.assertWorkspaceStorageAvailableTx(
+        tx,
+        tenant.workspaceId,
+        sizeBytes,
+      );
+      if (!managed) await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
       const asset = await tx.asset.create({
         data: {
           id: assetId,
@@ -914,6 +946,10 @@ export class ProjectsService {
     id: string,
     dto: CreateProjectUrlAttachmentDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
     const url = normalizeAttachmentUrl(dto.url);
     const displayName = normalizeAttachmentDisplayName(dto.displayName) ?? url;
@@ -954,6 +990,10 @@ export class ProjectsService {
   }
 
   async linkAttachments(tenant: WorkspaceTenantContext, id: string, dto: ProjectAttachmentIdsDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
     const attachmentIds = uniqueIds(dto.attachmentIds);
     const attachments = await this.prisma.attachment.findMany({
@@ -1287,6 +1327,10 @@ export class ProjectsService {
   }
 
   async addTags(tenant: WorkspaceTenantContext, id: string, dto: ProjectTagIdsDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     await this.readAccessibleProject(tenant, id, { id: true } satisfies Prisma.ProjectSelect);
     const tagIds = uniqueIds(dto.tagIds);
     const changed = await withSerializableRetry(() =>
@@ -1407,6 +1451,10 @@ export class ProjectsService {
   }
 
   async updateProgress(tenant: WorkspaceTenantContext, id: string, dto: UpdateProjectProgressDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'projects.enabled',
+    );
     const project = await this.readAccessibleProject(tenant, id, {
       id: true,
       manualProgressPercent: true,

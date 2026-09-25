@@ -33,6 +33,7 @@ import { GamificationService } from './gamification.service';
 import { GamificationAdminAdjustmentOperation } from './dto/gamification-admin.dto';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
+const superAgencyId = '00000000-0000-4000-8000-000000000015';
 const membershipId = '00000000-0000-4000-8000-000000000002';
 const actorMembershipId = '00000000-0000-4000-8000-000000000003';
 const otherWorkspaceId = '00000000-0000-4000-8000-000000000008';
@@ -1988,7 +1989,6 @@ describe('GamificationService', () => {
 
   it('ranks platform agencies and subaccounts from normalized score with deterministic dense ties', async () => {
     const { service, prisma } = makeService();
-    const platformTenant = globalAgencyTenant(['gamification.global_leaderboard.view_platform']);
     (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
       {
         rank: 1,
@@ -2010,7 +2010,7 @@ describe('GamificationService', () => {
       },
     ]);
 
-    const agencies = await service.getPlatformGlobalLeaderboard(platformTenant, 'agencies', {
+    const agencies = await service.getPlatformGlobalLeaderboard('agencies', {
       page: 1,
       pageSize: 20,
       search: 'Agency',
@@ -2042,7 +2042,7 @@ describe('GamificationService', () => {
         totalCount: 1,
       },
     ]);
-    const subaccounts = await service.getPlatformGlobalLeaderboard(platformTenant, 'subaccounts', {
+    const subaccounts = await service.getPlatformGlobalLeaderboard('subaccounts', {
       page: 2,
       pageSize: 5,
       agencyId: tenant.agencyId,
@@ -2057,6 +2057,156 @@ describe('GamificationService', () => {
     expect(subaccountSql).toContain('a.id =');
     expect(subaccountSql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
     expect(subaccountSql).toContain('ORDER BY rank ASC, workspace_name ASC, workspace_id ASC');
+  });
+
+  it('serves Super Agency Global Score leaderboards through child Agency fences', async () => {
+    const { service, prisma } = makeService();
+    const superTenant = globalSuperAgencyTenant([
+      'gamification.global_leaderboard.view_super_agency',
+    ]);
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        globalScore: 700,
+        subaccounts: 2,
+        scoredUsers: 5,
+        totalCount: 1,
+      },
+    ]);
+
+    const agencies = await service.getSuperAgencyGlobalLeaderboardAgencies(superTenant, {
+      page: 1,
+      pageSize: 20,
+      search: 'Alpha',
+    });
+    const agencySql = String(
+      (prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '),
+    );
+
+    expect(agencies).toMatchObject({
+      scope: 'SUPER_AGENCY_AGENCIES',
+      items: [{ agencyName: 'Agency Alpha', globalScore: 700, subaccounts: 2 }],
+    });
+    expect(agencySql).toContain('SUM(gse.normalized_score)');
+    expect(agencySql).toContain("gse.status = 'APPLIED'");
+    expect(agencySql).toContain('a.super_agency_id =');
+    expect(agencySql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
+    expect(agencySql).toContain('ORDER BY rank ASC, agency_name ASC, agency_id ASC');
+    expect(agencySql).not.toContain('gamification_xp_entries');
+
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        workspaceId,
+        workspaceName: 'Alpha Workspace',
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        globalScore: 450,
+        scoredUsers: 3,
+        totalCount: 1,
+      },
+    ]);
+    const subaccounts = await service.getSuperAgencyGlobalLeaderboardSubaccounts(superTenant, {
+      page: 1,
+      pageSize: 20,
+      agencyId: tenant.agencyId,
+      workspaceId,
+    });
+    const subaccountSql = String(
+      (prisma.$queryRaw as jest.Mock).mock.calls[1]?.[0]?.strings?.join(' '),
+    );
+
+    expect(subaccounts).toMatchObject({
+      scope: 'SUPER_AGENCY_SUBACCOUNTS',
+      items: [{ workspaceName: 'Alpha Workspace', agencyName: 'Agency Alpha' }],
+    });
+    expect(subaccountSql).toContain('a.super_agency_id =');
+    expect(subaccountSql).toContain('a.id =');
+    expect(subaccountSql).toContain('w.id =');
+    expect(subaccountSql).toContain('SUM(gse.normalized_score)');
+  });
+
+  it('keeps Super Agency users membership-scoped, private, and cross-parent isolated', async () => {
+    const { service, prisma } = makeService();
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        membershipId,
+        workspaceId,
+        workspaceName: 'Alpha Workspace',
+        agencyId: tenant.agencyId,
+        agencyName: 'Agency Alpha',
+        name: 'Hidden Name',
+        departmentName: 'Support',
+        privacyMode: GamificationLeaderboardPrivacyMode.ANONYMOUS,
+        globalScore: 250,
+        totalCount: 1,
+      },
+    ]);
+
+    const result = await service.getSuperAgencyGlobalLeaderboardUsers(
+      globalSuperAgencyTenant(['gamification.global_leaderboard.view_super_agency']),
+      { page: 1, pageSize: 20, agencyId: tenant.agencyId, workspaceId, search: 'Alpha' },
+    );
+    const sql = String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '));
+
+    expect(result).toMatchObject({
+      scope: 'SUPER_AGENCY_USERS',
+      items: [
+        {
+          rank: 1,
+          membershipId: null,
+          displayName: 'Anonymous User',
+          departmentName: null,
+          globalScore: 250,
+        },
+      ],
+    });
+    expect(sql).toContain('wm.id AS membership_id');
+    expect(sql).toContain('gse.recipient_membership_id = wm.id');
+    expect(sql).toContain('a.super_agency_id =');
+    expect(sql).toContain('a.id =');
+    expect(sql).toContain('w.id =');
+    expect(sql).toContain("wm.status = 'ACTIVE'");
+    expect(sql).toContain("<> 'OPT_OUT'");
+    expect(sql).not.toContain('u.email');
+    expect(sql).not.toContain('GROUP BY u.id');
+  });
+
+  it('adds Platform Super Agency ranking without changing Global Score authority', async () => {
+    const { service, prisma } = makeService();
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([
+      {
+        rank: 1,
+        superAgencyId,
+        superAgencyName: 'Parent One',
+        globalScore: 900,
+        agencies: 2,
+        subaccounts: 3,
+        scoredUsers: 8,
+        totalCount: 1,
+      },
+    ]);
+
+    const result = await service.getPlatformGlobalLeaderboard('super-agencies', {
+      page: 1,
+      pageSize: 20,
+      search: 'Parent',
+    });
+    const sql = String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '));
+
+    expect(result).toMatchObject({
+      scope: 'PLATFORM_SUPER_AGENCIES',
+      items: [{ superAgencyName: 'Parent One', globalScore: 900, agencies: 2 }],
+    });
+    expect(sql).toContain('FROM super_agencies sa');
+    expect(sql).toContain('JOIN agencies a ON a.super_agency_id = sa.id');
+    expect(sql).toContain('SUM(gse.normalized_score)');
+    expect(sql).toContain('DENSE_RANK() OVER (ORDER BY global_score DESC)');
+    expect(sql).toContain('ORDER BY rank ASC, super_agency_name ASC, super_agency_id ASC');
+    expect(sql).not.toContain('gamification_xp_entries');
   });
 
   it('uses WorkspaceMembership as platform user rank unit and applies privacy/inactive filters before rank', async () => {
@@ -2090,11 +2240,13 @@ describe('GamificationService', () => {
       },
     ]);
 
-    const result = await service.getPlatformGlobalLeaderboard(
-      globalAgencyTenant(['gamification.global_leaderboard.view_platform']),
-      'users',
-      { page: 1, pageSize: 20, agencyId: tenant.agencyId, workspaceId, search: 'Same User' },
-    );
+    const result = await service.getPlatformGlobalLeaderboard('users', {
+      page: 1,
+      pageSize: 20,
+      agencyId: tenant.agencyId,
+      workspaceId,
+      search: 'Same User',
+    });
     const sql = String((prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0]?.strings?.join(' '));
     const userItems = result.items as Array<{
       rank: number;
@@ -2119,11 +2271,10 @@ describe('GamificationService', () => {
     const { service, prisma } = makeService();
     (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
 
-    const result = await service.getPlatformGlobalLeaderboard(
-      globalAgencyTenant(['gamification.global_leaderboard.view_platform']),
-      'users',
-      { page: -12, pageSize: 500 },
-    );
+    const result = await service.getPlatformGlobalLeaderboard('users', {
+      page: -12,
+      pageSize: 500,
+    });
     const sql = (prisma.$queryRaw as jest.Mock).mock.calls[0]?.[0];
 
     expect(result).toMatchObject({ page: 1, pageSize: 100, total: 0, totalPages: 1 });
@@ -2147,11 +2298,7 @@ describe('GamificationService', () => {
     expect(orgSql).not.toContain('OPT_OUT');
 
     (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
-    await service.getPlatformGlobalLeaderboard(
-      globalAgencyTenant(['gamification.global_leaderboard.view_platform']),
-      'users',
-      { page: 1, pageSize: 20 },
-    );
+    await service.getPlatformGlobalLeaderboard('users', { page: 1, pageSize: 20 });
     const userSql = String((prisma.$queryRaw as jest.Mock).mock.calls[1]?.[0]?.strings?.join(' '));
 
     expect(userSql).toContain("wm.status = 'ACTIVE'");
@@ -2164,11 +2311,10 @@ describe('GamificationService', () => {
       service.getAgencyGlobalLeaderboardSubaccounts(globalAgencyTenant([])),
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
-      service.getPlatformGlobalLeaderboard(
-        globalAgencyTenant(['gamification.global_leaderboard.view_agency']),
-        'agencies',
-        { page: 1, pageSize: 20 },
-      ),
+      service.getSuperAgencyGlobalLeaderboardAgencies(globalSuperAgencyTenant([]), {
+        page: 1,
+        pageSize: 20,
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     (prisma.workspace.findFirst as jest.Mock).mockResolvedValueOnce(null);
@@ -3119,6 +3265,36 @@ describe('GamificationService', () => {
     ).rejects.toThrow(ConflictException);
   });
 
+  it('blocks commercial-disabled Gamification management without touching historical XP', async () => {
+    const billingEntitlements = {
+      assertWorkspaceFeatureAvailable: jest.fn().mockRejectedValue(
+        new ForbiddenException({
+          code: 'FEATURE_NOT_ENTITLED',
+          featureKey: 'gamification.enabled',
+        }),
+      ),
+    };
+    const { service, entries, levels, audit } = makeService({ billingEntitlements });
+
+    await service.awardSystemXp(baseInput({ amount: 40, idempotencyKey: 'earn:commercial' }));
+    await expect(service.getMyXpSummary(tenant)).resolves.toMatchObject({ currentXp: 40 });
+    await expect(
+      service.createLevel(managerTenant, { name: 'Blocked', levelNumber: 1, xpThreshold: 0 }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'FEATURE_NOT_ENTITLED' }),
+    });
+
+    expect(billingEntitlements.assertWorkspaceFeatureAvailable).toHaveBeenCalledWith(
+      workspaceId,
+      'gamification.enabled',
+    );
+    expect(levels).toHaveLength(0);
+    expect(entries).toHaveLength(1);
+    expect(audit.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'gamification.level.created' }),
+    );
+  });
+
   it('keeps inactive levels out of viewer lists and progression', async () => {
     const { service } = makeService({
       levels: [
@@ -3298,6 +3474,34 @@ describe('GamificationService', () => {
 
     expect(streakDays).toHaveLength(1);
     expect(streakDays[0]).toMatchObject({ membershipId });
+  });
+
+  it('ignores audit null sentinels when deriving first ticket resolver membership', async () => {
+    const { service, streakDays } = makeService({
+      streakConfig: enabledStreakConfig(),
+      statusDefinitions: [
+        {
+          id: '00000000-0000-4000-8000-000000000013',
+          workspaceId,
+          entityType: 'TICKET',
+          isTerminal: true,
+        },
+      ],
+      auditRows: [
+        ticketTerminalAuditRow({
+          id: '00000000-0000-4000-8000-000000000034',
+          assignedToMembershipId: '[NULL]',
+          createdAt: new Date(Date.UTC(2026, 0, 1, 10)),
+        }),
+      ],
+      memberships: [{ id: membershipId, workspaceId, status: MembershipStatus.ACTIVE }],
+    });
+
+    await expect(
+      service.evaluateTicketResolutionAchievements(workspaceId, ticketId, null),
+    ).resolves.toBeUndefined();
+
+    expect(streakDays).toHaveLength(0);
   });
 
   it('derives current and longest streaks from immutable Workspace-local days', async () => {
@@ -3896,6 +4100,18 @@ function globalAgencyTenant(permissions: string[]) {
   };
 }
 
+function globalSuperAgencyTenant(permissions: string[]) {
+  return {
+    userId: tenant.userId,
+    superAgencyId,
+    superAgencyMembershipId: '00000000-0000-4000-8000-000000000778',
+    roleId: tenant.roleId,
+    roleName: 'SUPER_AGENCY_ADMIN',
+    status: 'ACTIVE',
+    permissions,
+  };
+}
+
 function hashString(value: string) {
   return [...value].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) | 0, 7);
 }
@@ -4223,6 +4439,7 @@ function makeService(options?: {
   task?: Record<string, unknown> | null;
   project?: Record<string, unknown> | null;
   ticket?: Record<string, unknown> | null;
+  billingEntitlements?: { assertWorkspaceFeatureAvailable: jest.Mock };
 }) {
   const memberships = options?.memberships ?? [
     { id: membershipId, workspaceId, status: MembershipStatus.ACTIVE },
@@ -5661,7 +5878,15 @@ function makeService(options?: {
   };
   const tokens = { createTokenHash: jest.fn((value: string) => `hash:${value}`) };
   return {
-    service: new GamificationService(prisma as never, audit as never, tokens as never),
+    service: new GamificationService(
+      prisma as never,
+      audit as never,
+      tokens as never,
+      undefined,
+      undefined,
+      options?.billingEntitlements as never,
+    ),
+    levels,
     entries,
     rewardPointEntries,
     workXpEvents,

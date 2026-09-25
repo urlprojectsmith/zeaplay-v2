@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceSettingsPage } from '../components/workspace/WorkspaceSettingsPage';
 import { LanguageProvider } from '../contexts/language-provider';
@@ -367,6 +367,44 @@ describe('Phase 14.1 API key settings', () => {
     await waitFor(() =>
       expect(revokeWorkspaceApiKey).toHaveBeenCalledWith('workspace-1', 'api-key-1'),
     );
+  });
+
+  it('clears one-time API key plaintext when switching Workspace', async () => {
+    renderSettings();
+
+    fireEvent.change(
+      await screen.findAllByLabelText('Name', { selector: 'input' }).then((items) => items[0]!),
+      {
+        target: { value: 'Build bot' },
+      },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Create API Key' }));
+
+    await screen.findByText('zea_live_new_secret');
+
+    act(() => {
+      useSessionStore.setState((state) => ({
+        selectedWorkspaceId: 'workspace-2',
+        agencies: state.agencies.map((agency) => ({
+          ...agency,
+          workspaces: [
+            ...agency.workspaces,
+            {
+              id: 'workspace-2',
+              agencyId: agency.id,
+              name: 'Second Workspace',
+              slug: 'second-workspace',
+              timezone: 'UTC',
+              status: 'ACTIVE',
+              role: 'OWNER',
+              membershipId: 'member-2',
+            },
+          ],
+        })),
+      }));
+    });
+
+    await waitFor(() => expect(screen.queryByText('zea_live_new_secret')).not.toBeInTheDocument());
   });
 
   it('creates a webhook, shows the signing secret once, and opens delivery history', async () => {

@@ -1,11 +1,15 @@
 import {
   AssetLifecycle,
   AssetStatus,
+  AgencyStatus,
   CloudDriveConnectionStatus,
   CloudDriveProvider,
   MembershipStatus,
+  SuperAgencyStatus,
+  UserStatus,
+  WorkspaceStatus,
 } from '@prisma/client';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Readable } from 'node:stream';
 import { CloudDriveProviderRegistry } from './cloud-drive-provider.registry';
 import { CloudDriveTokenEncryptionService } from './cloud-drive-token-encryption.service';
@@ -143,6 +147,20 @@ describe('CloudDrivesService Phase 13.3 foundation', () => {
     );
   });
 
+  it('requires direct Workspace membership before listing cloud connections', async () => {
+    const { service, prisma } = buildService();
+    prisma.workspaceMembership.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.listConnections({
+        ...tenant,
+        workspaceMembershipId: null,
+        accessSource: 'AGENCY_ADMINISTRATION',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.cloudDriveConnection.findMany).not.toHaveBeenCalled();
+  });
+
   it('stores OAuth state as a hash and encrypts the PKCE verifier', async () => {
     process.env.CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY = 'z'.repeat(32);
     process.env.GOOGLE_DRIVE_CLIENT_ID = 'google-client';
@@ -196,18 +214,9 @@ describe('CloudDrivesService Phase 13.3 foundation', () => {
 
   it('rejects expired OAuth state before code exchange', async () => {
     const { service, tx } = buildService();
-    tx.cloudDriveOAuthState.findUnique.mockResolvedValue({
-      id: 'state-id',
-      workspaceId: tenant.workspaceId,
-      provider: CloudDriveProvider.GOOGLE_DRIVE,
-      actorMembershipId: tenant.workspaceMembershipId,
-      encryptedPkceVerifier: null,
-      expiresAt: new Date(Date.now() - 1_000),
-      consumedAt: null,
-      redirectPath: '/workspace/settings',
-      workspace: { agencyId: tenant.agencyId },
-      actorMembership: { userId: tenant.userId, status: MembershipStatus.ACTIVE },
-    } as never);
+    tx.cloudDriveOAuthState.findUnique.mockResolvedValue(
+      oauthState({ expiresAt: new Date(Date.now() - 1_000) }) as never,
+    );
 
     await expect(
       service.completeOAuthCallback({ code: 'code', state: 'state' }),
@@ -220,23 +229,59 @@ describe('CloudDrivesService Phase 13.3 foundation', () => {
     process.env.GOOGLE_DRIVE_CLIENT_ID = 'google-client';
     process.env.GOOGLE_DRIVE_CLIENT_SECRET = 'google-secret';
     const { service, tx } = buildService();
-    tx.cloudDriveOAuthState.findUnique.mockResolvedValue({
-      id: 'state-id',
-      workspaceId: tenant.workspaceId,
-      provider: CloudDriveProvider.GOOGLE_DRIVE,
-      actorMembershipId: tenant.workspaceMembershipId,
-      encryptedPkceVerifier: null,
-      expiresAt: new Date(Date.now() + 60_000),
-      consumedAt: null,
-      redirectPath: '/workspace/settings',
-      workspace: { agencyId: tenant.agencyId },
-      actorMembership: { userId: tenant.userId, status: MembershipStatus.ACTIVE },
-    } as never);
+    tx.cloudDriveOAuthState.findUnique.mockResolvedValue(oauthState() as never);
     tx.cloudDriveOAuthState.updateMany.mockResolvedValueOnce({ count: 0 });
 
     await expect(
       service.completeOAuthCallback({ code: 'code', state: 'state' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects OAuth callback after hierarchy suspension before provider token exchange', async () => {
+    process.env.CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY = 'z'.repeat(32);
+    process.env.GOOGLE_DRIVE_CLIENT_ID = 'google-client';
+    process.env.GOOGLE_DRIVE_CLIENT_SECRET = 'google-secret';
+    const { service, tx, registry } = buildService();
+    tx.cloudDriveOAuthState.findUnique.mockResolvedValue(
+      oauthState({
+        workspace: {
+          agencyId: tenant.agencyId,
+          status: WorkspaceStatus.ACTIVE,
+          agency: {
+            status: AgencyStatus.ACTIVE,
+            superAgency: { status: SuperAgencyStatus.SUSPENDED },
+          },
+        },
+      }) as never,
+    );
+
+    await expect(
+      service.completeOAuthCallback({ code: 'code', state: 'state' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.cloudDriveOAuthState.updateMany).not.toHaveBeenCalled();
+    expect(registry.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects OAuth callback after Workspace membership revocation before provider token exchange', async () => {
+    process.env.CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY = 'z'.repeat(32);
+    process.env.GOOGLE_DRIVE_CLIENT_ID = 'google-client';
+    process.env.GOOGLE_DRIVE_CLIENT_SECRET = 'google-secret';
+    const { service, tx, registry } = buildService();
+    tx.cloudDriveOAuthState.findUnique.mockResolvedValue(
+      oauthState({
+        actorMembership: {
+          userId: tenant.userId,
+          status: MembershipStatus.SUSPENDED,
+          user: { status: UserStatus.ACTIVE },
+        },
+      }) as never,
+    );
+
+    await expect(
+      service.completeOAuthCallback({ code: 'code', state: 'state' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.cloudDriveOAuthState.updateMany).not.toHaveBeenCalled();
+    expect(registry.get).not.toHaveBeenCalled();
   });
 
   it('refreshes with a lock, preserves missing rotated refresh token, and encrypts replacement access token', async () => {
@@ -410,6 +455,19 @@ describe('CloudDrivesService Phase 13.3 foundation', () => {
     expect(tx.asset.create).not.toHaveBeenCalled();
   });
 
+  it('rejects export through a foreign cloud connection before reading the Asset object', async () => {
+    process.env.CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY = 'z'.repeat(32);
+    const { service, prisma, storage } = buildService();
+    prisma.cloudDriveConnection.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.exportAsset(tenant, 'foreign-connection', { assetId: 'asset-id' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(prisma.asset.findFirst).not.toHaveBeenCalled();
+    expect(storage.getObject).not.toHaveBeenCalled();
+  });
+
   it('builds provider authorization URLs with PKCE challenge parameters', () => {
     process.env.GOOGLE_DRIVE_CLIENT_ID = 'google-client';
     process.env.ONEDRIVE_CLIENT_ID = 'one-client';
@@ -498,6 +556,10 @@ function buildService() {
       deleteMany: jest.fn(),
     },
   };
+  prisma.workspaceMembership.findUnique.mockResolvedValue({
+    id: tenant.workspaceMembershipId,
+    status: MembershipStatus.ACTIVE,
+  });
   const realRegistry = new CloudDriveProviderRegistry(
     new GoogleDriveAdapter(),
     new OneDriveAdapter(),
@@ -528,6 +590,33 @@ function buildService() {
       audit as never,
       storage as never,
     ),
+  };
+}
+
+function oauthState(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'state-id',
+    workspaceId: tenant.workspaceId,
+    provider: CloudDriveProvider.GOOGLE_DRIVE,
+    actorMembershipId: tenant.workspaceMembershipId,
+    encryptedPkceVerifier: null,
+    expiresAt: new Date(Date.now() + 60_000),
+    consumedAt: null,
+    redirectPath: '/workspace/settings',
+    workspace: {
+      agencyId: tenant.agencyId,
+      status: WorkspaceStatus.ACTIVE,
+      agency: {
+        status: AgencyStatus.ACTIVE,
+        superAgency: { status: SuperAgencyStatus.ACTIVE },
+      },
+    },
+    actorMembership: {
+      userId: tenant.userId,
+      status: MembershipStatus.ACTIVE,
+      user: { status: UserStatus.ACTIVE },
+    },
+    ...overrides,
   };
 }
 

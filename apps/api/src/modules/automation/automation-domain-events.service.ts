@@ -69,6 +69,7 @@ export class AutomationDomainEventsService {
     client: Tx | PrismaService,
     input: RecordAutomationDomainEventInput,
   ) {
+    await assertDomainEventEntityWorkspace(client, input);
     const payloadSize = Buffer.byteLength(JSON.stringify(input.payload), 'utf8');
     if (payloadSize > AUTOMATION_DOMAIN_EVENT_MAX_PAYLOAD_BYTES) {
       throw new BadRequestException('Automation domain event payload is too large.');
@@ -335,6 +336,33 @@ function payloadString(payload: Prisma.JsonValue, key: string) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const value = payload[key];
   return typeof value === 'string' ? value : null;
+}
+
+async function assertDomainEventEntityWorkspace(
+  client: Tx | PrismaService,
+  input: RecordAutomationDomainEventInput,
+) {
+  const where = { id: input.entityId, workspaceId: input.workspaceId };
+  let record: { id: string } | null = null;
+  if (input.entityType === AutomationDomainEventEntityType.TASK) {
+    record = await client.task.findFirst({
+      where: { ...where, deletedAt: null },
+      select: { id: true },
+    });
+  } else if (input.entityType === AutomationDomainEventEntityType.PROJECT) {
+    record = await client.project.findFirst({
+      where,
+      select: { id: true },
+    });
+  } else if (input.entityType === AutomationDomainEventEntityType.TICKET) {
+    record = await client.ticket.findFirst({
+      where: { ...where, deletedAt: null },
+      select: { id: true },
+    });
+  }
+  if (!record) {
+    throw new BadRequestException('AUTOMATION_DOMAIN_EVENT_WORKSPACE_MISMATCH');
+  }
 }
 
 async function createTriggerMatchIfAbsent(

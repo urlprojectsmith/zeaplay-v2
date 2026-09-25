@@ -1,6 +1,7 @@
 import { FeaturesService } from './features.service';
 
 describe('FeaturesService', () => {
+  const superAgencyId = '00000000-0000-4000-8000-000000000010';
   const agencyId = '00000000-0000-4000-8000-000000000001';
   const workspaceId = '00000000-0000-4000-8000-000000000002';
 
@@ -37,6 +38,9 @@ describe('FeaturesService', () => {
           entitlements: rows,
         }),
       },
+      agency: {
+        findUnique: jest.fn().mockResolvedValue({ superAgencyId }),
+      },
     } as never);
 
     await expect(service.isEnabled('projects', agencyId, workspaceId)).resolves.toBe(expected);
@@ -44,5 +48,5 @@ describe('FeaturesService', () => {
 });
 
 function row(agencyId: string | null, workspaceId: string | null, enabled: boolean) {
-  return { agencyId, workspaceId, enabled };
+  return { superAgencyId: null, agencyId, workspaceId, enabled };
 }

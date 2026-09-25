@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   HttpException,
   NotFoundException,
@@ -6,7 +7,13 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { InboundWebhookEventStatus, InboundWebhookSourceStatus } from '@prisma/client';
+import {
+  AgencyStatus,
+  InboundWebhookEventStatus,
+  InboundWebhookSourceStatus,
+  SuperAgencyStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { CloudDriveTokenEncryptionService } from '../cloud-drives/cloud-drive-token-encryption.service';
 import {
@@ -107,6 +114,21 @@ describe('InboundWebhooksService', () => {
     expect(result.plaintextSecret).toMatch(/^ziwhsec_/);
   });
 
+  it('requires direct Workspace membership before listing inbound webhook sources', async () => {
+    await expect(
+      service.listSources(
+        {
+          ...tenant(),
+          workspaceMembershipId: null,
+          accessSource: 'AGENCY_ADMINISTRATION',
+        },
+        { page: 1, pageSize: 25 },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.inboundWebhookSource.findMany).not.toHaveBeenCalled();
+  });
+
   it('enforces the active source cap inside the workspace lock', async () => {
     prisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) =>
       callback({
@@ -152,6 +174,28 @@ describe('InboundWebhooksService', () => {
       replayed: false,
     });
     expect(rateLimit.assertWithinLimit).toHaveBeenCalledWith(sourceId, workspaceId);
+  });
+
+  it('rate-limits suspended hierarchy before signature verification or event persistence', async () => {
+    const secret = 'sender-secret';
+    const body = validBody();
+    mockActiveSource(secret, {
+      workspace: {
+        status: WorkspaceStatus.ACTIVE,
+        agency: {
+          status: AgencyStatus.SUSPENDED,
+          superAgency: { status: SuperAgencyStatus.ACTIVE },
+        },
+      },
+    });
+
+    await expect(
+      service.receive('iw_public', signedHeaders(secret, nowSeconds(), body), body),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(rateLimit.assertWithinLimit).toHaveBeenCalledWith(sourceId, workspaceId);
+    expect(prisma.inboundWebhookEvent.findUnique).not.toHaveBeenCalled();
+    expect(prisma.inboundWebhookEvent.create).not.toHaveBeenCalled();
   });
 
   it('rejects wrong signatures and byte changes after signing', async () => {
@@ -426,13 +470,22 @@ describe('InboundWebhooksService', () => {
     );
   });
 
-  function mockActiveSource(secret: string) {
+  function mockActiveSource(secret: string, overrides: Record<string, unknown> = {}) {
     prisma.inboundWebhookSource.findUnique.mockResolvedValue({
       id: sourceId,
       workspaceId,
       type: 'GENERIC_HMAC_V1',
       status: InboundWebhookSourceStatus.ACTIVE,
       encryptedSigningSecret: encryption.encrypt(secret),
+      workspace: {
+        status: WorkspaceStatus.ACTIVE,
+        agency: {
+          superAgencyId: '00000000-0000-4000-8000-000000000005',
+          status: AgencyStatus.ACTIVE,
+          superAgency: { status: SuperAgencyStatus.ACTIVE },
+        },
+      },
+      ...overrides,
     });
   }
 
@@ -474,6 +527,9 @@ function createPrismaMock() {
     normalizedInboundEvent: {
       create: jest.fn(),
       deleteMany: jest.fn(),
+    },
+    superAgencySubscription: {
+      findFirst: jest.fn().mockResolvedValue(null),
     },
   };
 }

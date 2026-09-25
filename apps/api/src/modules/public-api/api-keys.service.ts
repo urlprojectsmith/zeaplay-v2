@@ -4,7 +4,13 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ApiKeyStatus, Prisma } from '@prisma/client';
+import {
+  AgencyStatus,
+  ApiKeyStatus,
+  Prisma,
+  SuperAgencyStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import { validateEnvironment } from '@zea-play/config';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
@@ -91,6 +97,7 @@ export class ApiKeysService {
   }
 
   async list(tenant: WorkspaceTenantContext, query: { page: number; pageSize: number }) {
+    this.requireActiveWorkspaceMembership(tenant);
     const where = { workspaceId: tenant.workspaceId } satisfies Prisma.ApiKeyWhereInput;
     const [items, total] = await this.prisma.$transaction([
       this.prisma.apiKey.findMany({
@@ -111,6 +118,7 @@ export class ApiKeysService {
   }
 
   async update(tenant: WorkspaceTenantContext, apiKeyId: string, dto: UpdateApiKeyDto) {
+    this.requireActiveWorkspaceMembership(tenant);
     const scopes = dto.scopes ? validateScopes(dto.scopes) : undefined;
     const expiresAt = dto.expiresAt === undefined ? undefined : parseFutureExpiry(dto.expiresAt);
     const existing = await this.prisma.apiKey.findFirst({
@@ -148,6 +156,7 @@ export class ApiKeysService {
   }
 
   async revoke(tenant: WorkspaceTenantContext, apiKeyId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     const existing = await this.prisma.apiKey.findFirst({
       where: { id: apiKeyId, workspaceId: tenant.workspaceId },
       select: { id: true, status: true, prefix: true },
@@ -180,7 +189,19 @@ export class ApiKeysService {
       select: {
         ...apiKeySelect,
         secretHash: true,
-        workspace: { select: { id: true, agencyId: true, status: true } },
+        workspace: {
+          select: {
+            id: true,
+            agencyId: true,
+            status: true,
+            agency: {
+              select: {
+                status: true,
+                superAgency: { select: { status: true } },
+              },
+            },
+          },
+        },
         createdByMembership: {
           select: {
             id: true,
@@ -197,7 +218,7 @@ export class ApiKeysService {
     }
     if (
       apiKey.status !== ApiKeyStatus.ACTIVE ||
-      apiKey.workspace.status !== 'ACTIVE' ||
+      !hasActiveHierarchy(apiKey.workspace) ||
       (apiKey.expiresAt && apiKey.expiresAt <= new Date())
     ) {
       throw new UnauthorizedException('PUBLIC_API_AUTHENTICATION_FAILED');
@@ -356,6 +377,17 @@ function effectiveStatus(status: ApiKeyStatus, expiresAt: Date | null) {
     return ApiKeyStatus.EXPIRED;
   }
   return status;
+}
+
+function hasActiveHierarchy(workspace: {
+  status: WorkspaceStatus;
+  agency: { status: AgencyStatus; superAgency: { status: SuperAgencyStatus } };
+}) {
+  return (
+    workspace.status === WorkspaceStatus.ACTIVE &&
+    workspace.agency.status === AgencyStatus.ACTIVE &&
+    workspace.agency.superAgency.status === SuperAgencyStatus.ACTIVE
+  );
 }
 
 function internalPermissionsForScopes(scopes: PublicApiScope[]) {

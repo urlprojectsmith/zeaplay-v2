@@ -9,6 +9,7 @@ import { AutomationWorkflowVersionState, Prisma } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { AUTOMATION_DEFINITION_VERSION, defaultAutomationDefinition } from './automation.constants';
 import { AutomationPolicyService } from './automation-policy.service';
@@ -40,6 +41,7 @@ export class AutomationService {
     private readonly audit: AuditService,
     @Optional() private readonly policy?: AutomationPolicyService,
     @Optional() private readonly realtime?: RealtimeService,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async list(tenant: WorkspaceTenantContext, query: AutomationWorkflowQueryDto) {
@@ -107,6 +109,10 @@ export class AutomationService {
   }
 
   async create(tenant: WorkspaceTenantContext, dto: CreateAutomationWorkflowDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'automation.enabled',
+    );
     const definition = definitionFromDto(dto, defaultAutomationDefinition);
     const validated = validateAutomationDefinition(definition);
     await this.assertActionLimit(tenant.workspaceId, validated.definition, this.prisma);
@@ -147,6 +153,10 @@ export class AutomationService {
     workflowId: string,
     dto: CloneAutomationWorkflowDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'automation.enabled',
+    );
     const source = await this.sourceVersionForAuthoring(
       tenant.workspaceId,
       workflowId,
@@ -201,6 +211,10 @@ export class AutomationService {
     workflowId: string,
     dto: UpdateAutomationWorkflowDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'automation.enabled',
+    );
     await this.assertWorkflowExists(tenant.workspaceId, workflowId);
     const workflow = await this.prisma.automationWorkflow.update({
       where: { id: workflowId },
@@ -225,6 +239,10 @@ export class AutomationService {
     workflowId: string,
     dto: UpdateAutomationDraftDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'automation.enabled',
+    );
     const workflow = await this.findWorkflowForMutation(tenant.workspaceId, workflowId);
     const draft = await this.getOrCreateDraft(tenant, workflow);
     if (
@@ -293,6 +311,11 @@ export class AutomationService {
               await this.policy?.assertPublishedWorkflowLimit(tenant.workspaceId, workflowId, tx);
             });
           }
+          await this.billingEntitlements?.assertActiveAutomationAvailableTx(
+            tx,
+            tenant.workspaceId,
+            workflowId,
+          );
           const maxVersion = await tx.automationWorkflowVersion.aggregate({
             where: { workflowId, workspaceId: tenant.workspaceId, state: 'PUBLISHED' },
             _max: { versionNumber: true },
@@ -353,6 +376,10 @@ export class AutomationService {
     workflowId: string,
     versionId: string,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'automation.enabled',
+    );
     const result = await this.prisma
       .$transaction(
         async (tx) => {
@@ -426,11 +453,24 @@ export class AutomationService {
     if (!workflow.activePublishedVersionId) {
       throw new BadRequestException('Workflow must have a published version before enabling.');
     }
-    const updated = await this.prisma.automationWorkflow.update({
-      where: { id: workflowId },
-      data: { status: 'PUBLISHED', updatedByMembershipId: this.requireWorkspaceMembership(tenant) },
-      select: workflowDetailSelect,
-    });
+    const updated = await this.prisma.$transaction(
+      async (tx) => {
+        await this.billingEntitlements?.assertActiveAutomationAvailableTx(
+          tx,
+          tenant.workspaceId,
+          workflowId,
+        );
+        return tx.automationWorkflow.update({
+          where: { id: workflowId },
+          data: {
+            status: 'PUBLISHED',
+            updatedByMembershipId: this.requireWorkspaceMembership(tenant),
+          },
+          select: workflowDetailSelect,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
     await this.record(tenant, 'automation.workflow_enabled', workflowId, {
       activePublishedVersionId: updated.activePublishedVersionId,
     });

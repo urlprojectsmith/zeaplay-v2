@@ -4,6 +4,7 @@ import { initializeDefaultStatuses } from '../src/modules/statuses/status-templa
 
 const prisma = new PrismaClient();
 const passwords = new PasswordService();
+const DEVELOPMENT_PASSWORD = 'DevelopmentPassword123!';
 
 const workspacePermissions = [
   'workspace.read',
@@ -158,6 +159,18 @@ const workspacePermissions = [
   'storage.cloud.manage',
   'storage.cloud.import',
   'storage.cloud.export',
+  'docs.view',
+  'docs.create',
+  'docs.edit',
+  'docs.manage',
+  'docs.share.manage',
+  'docs.versions.view',
+  'docs.versions.restore',
+  'docs.comments.view',
+  'docs.comments.create',
+  'docs.comments.update_own',
+  'docs.comments.moderate',
+  'billing.allocation.read',
 ];
 
 const agencyPermissions = [
@@ -172,12 +185,62 @@ const agencyPermissions = [
   'workspace.member.read',
   'workspace.member.create',
   'workspace.member.update',
+  'billing.allocation.read',
+  'billing.allocation.manage',
   'feature.read',
   'feature.update',
+  'tasks.parent.read',
+  'projects.parent.read',
+  'tickets.parent.read',
+  'docs.parent.read',
   'gamification.global_leaderboard.view_agency',
 ];
 
+const superAgencyPermissions = [
+  'super_agency.view',
+  'super_agency.manage',
+  'super_agency.members.view',
+  'super_agency.members.invite',
+  'super_agency.members.manage',
+  'super_agency.roles.view',
+  'super_agency.roles.manage',
+  'super_agency.audit.view',
+  'billing.subscription.view',
+  'billing.checkout.create',
+  'billing.portal.create',
+  'billing.subscription.cancel',
+  'billing.subscription.change',
+  'billing.invoice.view',
+  'billing.invoice.refresh',
+  'billing.payment_method.view',
+  'billing.history.view',
+  'billing.allocation.read',
+  'billing.allocation.manage',
+  'agency.create',
+  'agency.read',
+  'agency.update',
+  'agency.member.read',
+  'agency.member.create',
+  'agency.member.update',
+  'workspace.read',
+  'workspace.create',
+  'feature.read',
+  'feature.update',
+  'tasks.parent.read',
+  'projects.parent.read',
+  'tickets.parent.read',
+  'docs.parent.read',
+  'gamification.global_leaderboard.view_super_agency',
+];
+
 const platformPermissions = [
+  'billing.plan.manage',
+  'billing.price.manage',
+  'billing.trial.manage',
+  'billing.support.view',
+  'billing.subscription.cancel',
+  'billing.allocation.read',
+  'billing.allocation.manage',
   'gamification.global_leaderboard.view_platform',
   'gamification.developer.diagnostics',
 ];
@@ -191,15 +254,38 @@ async function main() {
   const member = await upsertUser('member@zeaplay.test', 'Member User');
   const otherOwner = await upsertUser('other-owner@zeaplay.test', 'Other Owner');
 
+  const superAgencyA = await upsertSuperAgency('super-agency-a', 'Super Agency A', owner.id);
+  const superAgencyB = await upsertSuperAgency('super-agency-b', 'Super Agency B', otherOwner.id);
+
   const agencyAlpha = await prisma.agency.upsert({
     where: { slug: 'agency-alpha' },
-    update: {},
-    create: { name: 'Agency Alpha', slug: 'agency-alpha', createdById: owner.id },
+    update: { superAgencyId: superAgencyA.id },
+    create: {
+      superAgencyId: superAgencyA.id,
+      name: 'Agency Alpha',
+      slug: 'agency-alpha',
+      createdById: owner.id,
+    },
+  });
+  const agencyAlphaTwo = await prisma.agency.upsert({
+    where: { slug: 'agency-alpha-two' },
+    update: { superAgencyId: superAgencyA.id },
+    create: {
+      superAgencyId: superAgencyA.id,
+      name: 'Agency Alpha Two',
+      slug: 'agency-alpha-two',
+      createdById: owner.id,
+    },
   });
   const agencyBeta = await prisma.agency.upsert({
     where: { slug: 'agency-beta' },
-    update: {},
-    create: { name: 'Agency Beta', slug: 'agency-beta', createdById: otherOwner.id },
+    update: { superAgencyId: superAgencyB.id },
+    create: {
+      superAgencyId: superAgencyB.id,
+      name: 'Agency Beta',
+      slug: 'agency-beta',
+      createdById: otherOwner.id,
+    },
   });
 
   const workspaceAlphaMain = await prisma.workspace.upsert({
@@ -213,10 +299,10 @@ async function main() {
     },
   });
   const workspaceAlphaSecondary = await prisma.workspace.upsert({
-    where: { agencyId_slug: { agencyId: agencyAlpha.id, slug: 'alpha-secondary' } },
+    where: { agencyId_slug: { agencyId: agencyAlphaTwo.id, slug: 'alpha-secondary' } },
     update: {},
     create: {
-      agencyId: agencyAlpha.id,
+      agencyId: agencyAlphaTwo.id,
       name: 'Alpha Secondary',
       slug: 'alpha-secondary',
       createdById: owner.id,
@@ -236,7 +322,11 @@ async function main() {
   await upsertAgencyMembership(owner.id, agencyAlpha.id, roles.AGENCY_OWNER.id);
   await upsertAgencyMembership(admin.id, agencyAlpha.id, roles.AGENCY_ADMIN.id);
   await upsertAgencyMembership(member.id, agencyAlpha.id, roles.AGENCY_USER.id);
+  await upsertAgencyMembership(owner.id, agencyAlphaTwo.id, roles.AGENCY_OWNER.id);
   await upsertAgencyMembership(otherOwner.id, agencyBeta.id, roles.AGENCY_OWNER.id);
+  await upsertSuperAgencyMembership(owner.id, superAgencyA.id, roles.SUPER_AGENCY_OWNER.id);
+  await upsertSuperAgencyMembership(admin.id, superAgencyA.id, roles.SUPER_AGENCY_MANAGER.id);
+  await upsertSuperAgencyMembership(otherOwner.id, superAgencyB.id, roles.SUPER_AGENCY_OWNER.id);
 
   const ownerAlphaMainMembership = await upsertWorkspaceMembership(
     owner.id,
@@ -359,7 +449,12 @@ async function main() {
 
 async function seedPermissions() {
   const allPermissions = [
-    ...new Set([...workspacePermissions, ...agencyPermissions, ...platformPermissions]),
+    ...new Set([
+      ...workspacePermissions,
+      ...agencyPermissions,
+      ...superAgencyPermissions,
+      ...platformPermissions,
+    ]),
   ];
   for (const key of allPermissions) {
     await prisma.permission.upsert({
@@ -372,6 +467,43 @@ async function seedPermissions() {
 
 async function seedRoles() {
   const definitions = [
+    {
+      key: 'SUPER_AGENCY_OWNER',
+      name: 'Super Agency Owner',
+      scope: RoleScope.SUPER_AGENCY,
+      permissions: superAgencyPermissions,
+    },
+    {
+      key: 'SUPER_AGENCY_ADMIN',
+      name: 'Super Agency Admin',
+      scope: RoleScope.SUPER_AGENCY,
+      permissions: superAgencyPermissions,
+    },
+    {
+      key: 'SUPER_AGENCY_MANAGER',
+      name: 'Super Agency Manager',
+      scope: RoleScope.SUPER_AGENCY,
+      permissions: [
+        'super_agency.view',
+        'super_agency.members.view',
+        'agency.read',
+        'workspace.read',
+        'billing.allocation.read',
+        'feature.read',
+      ],
+    },
+    {
+      key: 'SUPER_AGENCY_MEMBER',
+      name: 'Super Agency Member',
+      scope: RoleScope.SUPER_AGENCY,
+      permissions: [
+        'super_agency.view',
+        'agency.read',
+        'workspace.read',
+        'billing.allocation.read',
+        'feature.read',
+      ],
+    },
     {
       key: 'AGENCY_OWNER',
       name: 'Agency Owner',
@@ -433,6 +565,15 @@ async function seedRoles() {
         'storage.cloud.connect',
         'storage.cloud.import',
         'storage.cloud.export',
+        'docs.view',
+        'docs.create',
+        'docs.edit',
+        'docs.share.manage',
+        'docs.versions.view',
+        'docs.versions.restore',
+        'docs.comments.view',
+        'docs.comments.create',
+        'docs.comments.update_own',
         'integrations.view',
         'integrations.create',
         'integrations.manage',
@@ -519,6 +660,13 @@ async function seedRoles() {
         'storage.cloud.connect',
         'storage.cloud.import',
         'storage.cloud.export',
+        'docs.view',
+        'docs.create',
+        'docs.edit',
+        'docs.versions.view',
+        'docs.comments.view',
+        'docs.comments.create',
+        'docs.comments.update_own',
         'integrations.view',
         'tasks.view',
         'tasks.time.view_own',
@@ -571,6 +719,10 @@ async function seedRoles() {
     }
   }
   return roles as Record<
+    | 'SUPER_AGENCY_OWNER'
+    | 'SUPER_AGENCY_ADMIN'
+    | 'SUPER_AGENCY_MANAGER'
+    | 'SUPER_AGENCY_MEMBER'
     | 'AGENCY_OWNER'
     | 'AGENCY_ADMIN'
     | 'AGENCY_MANAGER'
@@ -584,10 +736,27 @@ async function seedRoles() {
 }
 
 async function upsertUser(email: string, name: string) {
+  const passwordHash = passwords.hash(DEVELOPMENT_PASSWORD);
   return prisma.user.upsert({
     where: { email },
-    update: { name },
-    create: { email, name, passwordHash: passwords.hash('Password123!') },
+    update: { name, passwordHash },
+    create: { email, name, passwordHash },
+  });
+}
+
+async function upsertSuperAgency(slug: string, name: string, createdById: string) {
+  return prisma.superAgency.upsert({
+    where: { slug },
+    update: { name, createdById },
+    create: { slug, name, createdById },
+  });
+}
+
+async function upsertSuperAgencyMembership(userId: string, superAgencyId: string, roleId: string) {
+  await prisma.superAgencyMembership.upsert({
+    where: { userId_superAgencyId: { userId, superAgencyId } },
+    update: { roleId },
+    create: { userId, superAgencyId, roleId },
   });
 }
 

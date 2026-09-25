@@ -1,4 +1,10 @@
-import { WebhookDeliveryStatus, WebhookSubscriptionStatus } from '@prisma/client';
+import {
+  AgencyStatus,
+  SuperAgencyStatus,
+  WebhookDeliveryStatus,
+  WebhookSubscriptionStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import { createCipheriv, randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { WebhookDeliveryProcessor } from './webhook-delivery.processor';
@@ -107,6 +113,44 @@ describe('WebhookDeliveryProcessor', () => {
     );
   });
 
+  it('does not POST while the delivery Workspace hierarchy is suspended', async () => {
+    const { processor, prisma, queue } = buildProcessor();
+    const received: Array<{ body: string; headers: http.IncomingHttpHeaders; method?: string }> =
+      [];
+    const server = await startWebhookServer(204, '', received);
+    prisma.webhookDelivery.findUnique.mockResolvedValue(
+      deliveryRow({
+        endpointUrl: server.url,
+        subscription: {
+          workspace: {
+            status: WorkspaceStatus.ACTIVE,
+            agency: {
+              status: AgencyStatus.ACTIVE,
+              superAgency: { status: SuperAgencyStatus.SUSPENDED },
+            },
+          },
+        },
+      }),
+    );
+
+    try {
+      await processor.dispatch('delivery-1');
+    } finally {
+      await server.close();
+    }
+
+    expect(received).toHaveLength(0);
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(prisma.webhookDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: WebhookDeliveryStatus.FAILED,
+          safeErrorCode: 'TENANT_HIERARCHY_INACTIVE',
+        }),
+      }),
+    );
+  });
+
   it('schedules bounded retries for retryable HTTP responses', async () => {
     const { processor, prisma, queue } = buildProcessor();
     const server = await startWebhookServer(500, 'temporary');
@@ -192,6 +236,13 @@ function deliveryRow(overrides: Record<string, unknown> = {}) {
     status: WebhookSubscriptionStatus.ACTIVE,
     endpointUrl: typeof endpointUrl === 'string' ? endpointUrl : 'http://localhost/webhook',
     encryptedSecret: encryptSecret('whsec_test'),
+    workspace: {
+      status: WorkspaceStatus.ACTIVE,
+      agency: {
+        status: AgencyStatus.ACTIVE,
+        superAgency: { status: SuperAgencyStatus.ACTIVE },
+      },
+    },
     ...((subscriptionOverrides as Record<string, unknown> | undefined) ?? {}),
   };
   return {

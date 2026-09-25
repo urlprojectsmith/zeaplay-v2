@@ -24,6 +24,21 @@ export interface SessionAgency {
   workspaces: SessionWorkspace[];
 }
 
+export interface SessionSuperAgency {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  role: string;
+  membershipId: string;
+  agencies: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+  }[];
+}
+
 interface SessionUser {
   id: string;
   email: string;
@@ -34,10 +49,12 @@ interface LoginResponse {
   accessToken: string;
   csrfToken: string;
   user: SessionUser;
+  superAgencies: SessionSuperAgency[];
   agencies: SessionAgency[];
 }
 
 interface MeResponse extends SessionUser {
+  superAgencies: SessionSuperAgency[];
   agencies: SessionAgency[];
 }
 
@@ -45,7 +62,9 @@ interface SessionState {
   accessToken: string | null;
   csrfToken: string | null;
   user: SessionUser | null;
+  superAgencies: SessionSuperAgency[];
   agencies: SessionAgency[];
+  selectedSuperAgencyId: string | null;
   selectedAgencyId: string | null;
   selectedWorkspaceId: string | null;
   hydrated: boolean;
@@ -53,6 +72,7 @@ interface SessionState {
   logout: () => Promise<void>;
   hydrate: () => Promise<void>;
   refresh: () => Promise<void>;
+  setSuperAgency: (superAgencyId: string) => void;
   setAgency: (agencyId: string) => void;
   setWorkspace: (workspaceId: string) => void;
 }
@@ -64,7 +84,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   accessToken: null,
   csrfToken: null,
   user: null,
+  superAgencies: [],
   agencies: [],
+  selectedSuperAgencyId: null,
   selectedAgencyId: null,
   selectedWorkspaceId: null,
   hydrated: false,
@@ -90,7 +112,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async hydrate() {
     if (get().hydrated) return;
     const stored = safeParse(localStorage.getItem(storageKey));
-    setTenant(stored.selectedAgencyId, stored.selectedWorkspaceId);
+    setTenant(
+      stored.selectedSuperAgencyId ? null : stored.selectedAgencyId,
+      stored.selectedSuperAgencyId ? null : stored.selectedWorkspaceId,
+    );
     set(stored);
     await get()
       .refresh()
@@ -108,26 +133,46 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     );
     setApiAccessToken(response.data.accessToken);
     const me = await apiClient.request<MeResponse>('/auth/me');
+    const superAgencies = me.data.superAgencies ?? [];
     const selected = normalizeSelection(
+      superAgencies,
       me.data.agencies,
+      get().selectedSuperAgencyId,
       get().selectedAgencyId,
       get().selectedWorkspaceId,
     );
-    setTenant(selected.selectedAgencyId, selected.selectedWorkspaceId);
+    setTenant(
+      selected.selectedSuperAgencyId ? null : selected.selectedAgencyId,
+      selected.selectedSuperAgencyId ? null : selected.selectedWorkspaceId,
+    );
     persistSelection(selected);
     set({
       accessToken: response.data.accessToken,
       csrfToken: response.data.csrfToken,
       user: { id: me.data.id, email: me.data.email, name: me.data.name },
+      superAgencies,
       agencies: me.data.agencies,
       ...selected,
       hydrated: true,
     });
   },
+  setSuperAgency(superAgencyId) {
+    const superAgency = get().superAgencies.find((item) => item.id === superAgencyId);
+    if (!superAgency) return;
+    const next = {
+      selectedSuperAgencyId: superAgency.id,
+      selectedAgencyId: null,
+      selectedWorkspaceId: null,
+    };
+    setTenant(null, null);
+    persistSelection(next);
+    set(next);
+  },
   setAgency(agencyId) {
     const agency = get().agencies.find((item) => item.id === agencyId);
     if (!agency) return;
     const next = {
+      selectedSuperAgencyId: null,
       selectedAgencyId: agency.id,
       selectedWorkspaceId: agency.workspaces[0]?.id ?? null,
     };
@@ -139,7 +184,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const current = get();
     const agency = current.agencies.find((item) => item.id === current.selectedAgencyId);
     if (!agency?.workspaces.some((workspace) => workspace.id === workspaceId)) return;
-    const next = { selectedAgencyId: agency.id, selectedWorkspaceId: workspaceId };
+    const next = {
+      selectedSuperAgencyId: null,
+      selectedAgencyId: agency.id,
+      selectedWorkspaceId: workspaceId,
+    };
     setTenant(next.selectedAgencyId, next.selectedWorkspaceId);
     persistSelection(next);
     set(next);
@@ -148,13 +197,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 function applySession(data: LoginResponse, set: (state: Partial<SessionState>) => void) {
   setApiAccessToken(data.accessToken);
-  const selected = normalizeSelection(data.agencies, null, null);
-  setTenant(selected.selectedAgencyId, selected.selectedWorkspaceId);
+  const superAgencies = data.superAgencies ?? [];
+  const selected = normalizeSelection(superAgencies, data.agencies, null, null, null);
+  setTenant(
+    selected.selectedSuperAgencyId ? null : selected.selectedAgencyId,
+    selected.selectedSuperAgencyId ? null : selected.selectedWorkspaceId,
+  );
   persistSelection(selected);
   set({
     accessToken: data.accessToken,
     csrfToken: data.csrfToken,
     user: data.user,
+    superAgencies,
     agencies: data.agencies,
     ...selected,
     hydrated: true,
@@ -169,7 +223,9 @@ function clearSession(set: (state: Partial<SessionState>) => void) {
     accessToken: null,
     csrfToken: null,
     user: null,
+    superAgencies: [],
     agencies: [],
+    selectedSuperAgencyId: null,
     selectedAgencyId: null,
     selectedWorkspaceId: null,
     hydrated: true,
@@ -177,17 +233,35 @@ function clearSession(set: (state: Partial<SessionState>) => void) {
 }
 
 function normalizeSelection(
+  superAgencies: SessionSuperAgency[],
   agencies: SessionAgency[],
+  superAgencyId: string | null,
   agencyId: string | null,
   workspaceId: string | null,
 ) {
+  const storedSuperAgency = superAgencies.find((item) => item.id === superAgencyId) ?? null;
+  const onlySuperAgency =
+    superAgencies.length === 1 ? (superAgencies.find(() => true) ?? null) : null;
+  const selectedSuperAgency = storedSuperAgency ?? onlySuperAgency;
+  if (selectedSuperAgency) {
+    return {
+      selectedSuperAgencyId: selectedSuperAgency.id,
+      selectedAgencyId: null,
+      selectedWorkspaceId: null,
+    };
+  }
   const agency = agencies.find((item) => item.id === agencyId) ?? agencies[0] ?? null;
   const workspace =
     agency?.workspaces.find((item) => item.id === workspaceId) ?? agency?.workspaces[0] ?? null;
-  return { selectedAgencyId: agency?.id ?? null, selectedWorkspaceId: workspace?.id ?? null };
+  return {
+    selectedSuperAgencyId: null,
+    selectedAgencyId: agency?.id ?? null,
+    selectedWorkspaceId: workspace?.id ?? null,
+  };
 }
 
 function persistSelection(selection: {
+  selectedSuperAgencyId: string | null;
   selectedAgencyId: string | null;
   selectedWorkspaceId: string | null;
 }) {
@@ -209,17 +283,22 @@ function readCookie(name: string) {
 }
 
 function safeParse(raw: string | null): {
+  selectedSuperAgencyId: string | null;
   selectedAgencyId: string | null;
   selectedWorkspaceId: string | null;
 } {
-  if (!raw) return { selectedAgencyId: null, selectedWorkspaceId: null };
+  if (!raw)
+    return { selectedSuperAgencyId: null, selectedAgencyId: null, selectedWorkspaceId: null };
   try {
     const parsed = JSON.parse(raw) as {
+      selectedSuperAgencyId?: unknown;
       selectedAgencyId?: unknown;
       selectedWorkspaceId?: unknown;
       organizationId?: unknown;
     };
     return {
+      selectedSuperAgencyId:
+        typeof parsed.selectedSuperAgencyId === 'string' ? parsed.selectedSuperAgencyId : null,
       selectedAgencyId:
         typeof parsed.selectedAgencyId === 'string'
           ? parsed.selectedAgencyId
@@ -230,6 +309,6 @@ function safeParse(raw: string | null): {
         typeof parsed.selectedWorkspaceId === 'string' ? parsed.selectedWorkspaceId : null,
     };
   } catch {
-    return { selectedAgencyId: null, selectedWorkspaceId: null };
+    return { selectedSuperAgencyId: null, selectedAgencyId: null, selectedWorkspaceId: null };
   }
 }

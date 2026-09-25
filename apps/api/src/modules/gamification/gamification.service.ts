@@ -44,12 +44,17 @@ import {
   RoleScope,
   WorkspaceStatus,
 } from '@prisma/client';
-import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
+import type {
+  AgencyTenantContext,
+  SuperAgencyTenantContext,
+  WorkspaceTenantContext,
+} from '../../common/auth/auth.types';
 import { JwtTokenService } from '../../common/auth/jwt.service';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { safeWorkspaceTimezone } from '../../common/timezones';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { NotificationRouterService } from '../notifications/notification-router.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import {
@@ -139,6 +144,7 @@ const LEADERBOARD_TOP_LIMIT = 100;
 const POINT_RULE_MAX_XP = 1_000_000;
 const GLOBAL_SCORE_CALCULATION_VERSION = 'phase10.11.v1';
 const GLOBAL_SCORE_MIN_WORKSPACES = 2;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ApplyXpChangeInput {
   workspaceId: string;
@@ -200,7 +206,15 @@ export class GamificationService {
     private readonly tokens: JwtTokenService,
     @Optional() private readonly realtime: RealtimeService = missingRealtimeService,
     @Optional() private readonly notifications?: NotificationRouterService,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
+
+  private async assertGamificationFeatureAvailable(tenant: WorkspaceTenantContext) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'gamification.enabled',
+    );
+  }
 
   async getMyXpSummary(tenant: WorkspaceTenantContext) {
     const membershipId = requireWorkspaceMembership(tenant);
@@ -299,6 +313,7 @@ export class GamificationService {
   }
 
   async updateStreakConfig(tenant: WorkspaceTenantContext, dto: UpdateGamificationStreakConfigDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
     if (
       dto.enabled === undefined &&
       dto.dailyXpReward === undefined &&
@@ -373,6 +388,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: UpdateGamificationLeaderboardConfigDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     assertPermission(tenant, PermissionKeys.gamificationLeaderboardsManage);
     if (
       dto.enabled === undefined &&
@@ -428,6 +444,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: UpdateGamificationLeaderboardPreferenceDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const membershipId = requireWorkspaceMembership(tenant);
     const updated = await this.prisma.gamificationLeaderboardPreference.upsert({
       where: {
@@ -545,6 +562,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: UpsertGamificationCompletionPointRuleDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     await this.assertPointRuleManagementScope(tenant, dto.scopeType, dto.departmentId ?? null);
     validatePointCategory(dto.workType, dto.category);
     const data = normalizeCompletionPointRule(dto);
@@ -600,6 +618,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: RemoveGamificationPointRuleOverrideDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     await this.assertPointRuleManagementScope(
       tenant,
       GamificationPointScopeType.DEPARTMENT,
@@ -641,6 +660,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: UpsertGamificationCreationPointRuleDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     await this.assertPointRuleManagementScope(tenant, dto.scopeType, dto.departmentId ?? null);
     validatePointCategory(dto.workType, dto.category);
     const role = await this.assertWorkspaceRole(tenant.workspaceId, dto.roleId);
@@ -708,6 +728,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: RemoveGamificationPointRuleOverrideDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     await this.assertPointRuleManagementScope(
       tenant,
       GamificationPointScopeType.DEPARTMENT,
@@ -749,8 +770,9 @@ export class GamificationService {
     return { removed: Boolean(removed) };
   }
 
-  previewCompletionPoints(_tenant: WorkspaceTenantContext, dto: GamificationPointPreviewDto) {
-    assertAnyPermission(_tenant, [
+  async previewCompletionPoints(tenant: WorkspaceTenantContext, dto: GamificationPointPreviewDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
+    assertAnyPermission(tenant, [
       PermissionKeys.gamificationPointsView,
       PermissionKeys.gamificationPointsManageWorkspace,
       PermissionKeys.gamificationPointsManageDepartment,
@@ -895,6 +917,7 @@ export class GamificationService {
   }
 
   async adjustAdminBalance(tenant: WorkspaceTenantContext, dto: GamificationAdminAdjustmentDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
     assertPermission(tenant, PermissionKeys.gamificationAdjustmentsManage);
     const actorMembershipId = requireWorkspaceMembership(tenant);
     const amount = signedAdminAmount(dto);
@@ -989,6 +1012,7 @@ export class GamificationService {
     dto: GamificationAdminResetDto,
     refreshToken: string,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     assertPermission(tenant, PermissionKeys.gamificationReset);
     const actorMembershipId = requireWorkspaceMembership(tenant);
     if (dto.confirmation !== 'RESET') throw new BadRequestException('RESET_CONFIRMATION_INVALID');
@@ -1074,6 +1098,7 @@ export class GamificationService {
       };
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -1202,6 +1227,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: GamificationXpReconciliationPreviewDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     assertPermission(tenant, PermissionKeys.gamificationXpControlReconcile);
     const row = await this.xpControlRowForMembership(tenant.workspaceId, dto.targetMembershipId);
     if (row.memberStatus !== MembershipStatus.ACTIVE)
@@ -1213,6 +1239,7 @@ export class GamificationService {
     tenant: WorkspaceTenantContext,
     dto: GamificationXpReconciliationApplyDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     assertPermission(tenant, PermissionKeys.gamificationXpControlReconcile);
     const actorMembershipId = requireWorkspaceMembership(tenant);
     if (dto.confirmation !== 'RECONCILE')
@@ -1310,6 +1337,7 @@ export class GamificationService {
       });
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -1675,12 +1703,41 @@ export class GamificationService {
     });
   }
 
-  async getPlatformGlobalLeaderboard(
-    tenant: AgencyTenantContext,
-    tab: 'agencies' | 'subaccounts' | 'users',
+  async getSuperAgencyGlobalLeaderboardAgencies(
+    tenant: SuperAgencyTenantContext,
     query: GamificationGlobalLeaderboardQueryDto,
   ) {
-    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewPlatform);
+    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewSuperAgency);
+    return this.getSuperAgencyGlobalAgencies(tenant.superAgencyId, query);
+  }
+
+  async getSuperAgencyGlobalLeaderboardSubaccounts(
+    tenant: SuperAgencyTenantContext,
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewSuperAgency);
+    return this.getSuperAgencyGlobalSubaccounts(tenant.superAgencyId, query);
+  }
+
+  async getSuperAgencyGlobalLeaderboardUsers(
+    tenant: SuperAgencyTenantContext,
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    assertPermission(tenant, PermissionKeys.gamificationGlobalLeaderboardViewSuperAgency);
+    return this.getGlobalUserLeaderboard({
+      scope: 'SUPER_AGENCY_USERS',
+      superAgencyId: tenant.superAgencyId,
+      agencyId: query.agencyId,
+      workspaceId: query.workspaceId,
+      query,
+    });
+  }
+
+  async getPlatformGlobalLeaderboard(
+    tab: 'super-agencies' | 'agencies' | 'subaccounts' | 'users',
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    if (tab === 'super-agencies') return this.getPlatformGlobalSuperAgencies(query);
     if (tab === 'agencies') return this.getPlatformGlobalAgencies(query);
     if (tab === 'subaccounts') return this.getPlatformGlobalSubaccounts(query);
     return this.getGlobalUserLeaderboard({
@@ -2374,6 +2431,7 @@ export class GamificationService {
   }
 
   async createLevel(tenant: WorkspaceTenantContext, dto: CreateGamificationLevelDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeLevelCreateInput(dto);
     const created = await this.prisma.$transaction(async (tx) => {
       await lockWorkspace(tx, tenant.workspaceId);
@@ -2402,6 +2460,7 @@ export class GamificationService {
     levelId: string,
     dto: UpdateGamificationLevelDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeLevelUpdateInput(dto);
     if (Object.keys(input).length === 0) throw new BadRequestException('LEVEL_UPDATE_EMPTY');
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -2454,6 +2513,7 @@ export class GamificationService {
   }
 
   async createBadge(tenant: WorkspaceTenantContext, dto: CreateGamificationBadgeDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeBadgeCreateInput(dto);
     const created = await this.prisma.$transaction(async (tx) => {
       await lockWorkspace(tx, tenant.workspaceId);
@@ -2485,6 +2545,7 @@ export class GamificationService {
     badgeId: string,
     dto: UpdateGamificationBadgeDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeBadgeUpdateInput(dto);
     if (Object.keys(input).length === 0) throw new BadRequestException('BADGE_UPDATE_EMPTY');
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -2572,6 +2633,7 @@ export class GamificationService {
   }
 
   async createAchievement(tenant: WorkspaceTenantContext, dto: CreateGamificationAchievementDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeAchievementCreateInput(dto);
     const created = await this.prisma.$transaction(async (tx) => {
       await lockWorkspace(tx, tenant.workspaceId);
@@ -2603,6 +2665,7 @@ export class GamificationService {
     achievementId: string,
     dto: UpdateGamificationAchievementDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeAchievementUpdateInput(dto);
     if (Object.keys(input).length === 0) throw new BadRequestException('ACHIEVEMENT_UPDATE_EMPTY');
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -2659,6 +2722,7 @@ export class GamificationService {
   }
 
   async createReward(tenant: WorkspaceTenantContext, dto: CreateGamificationRewardDto) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeRewardCreateInput(dto);
     const created = await this.prisma.$transaction(async (tx) => {
       await lockWorkspace(tx, tenant.workspaceId);
@@ -2687,6 +2751,7 @@ export class GamificationService {
     rewardId: string,
     dto: UpdateGamificationRewardDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const input = normalizeRewardUpdateInput(dto);
     if (Object.keys(input).length === 0) throw new BadRequestException('REWARD_UPDATE_EMPTY');
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -2744,6 +2809,7 @@ export class GamificationService {
     rewardId: string,
     dto: RedeemGamificationRewardDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const membershipId = requireWorkspaceMembership(tenant);
     const idempotencyKey = requireBoundedText(
       dto.idempotencyKey,
@@ -2833,6 +2899,7 @@ export class GamificationService {
   }
 
   async fulfillRewardRedemption(tenant: WorkspaceTenantContext, redemptionId: string) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const actorMembershipId = requireWorkspaceMembership(tenant);
     return this.prisma.$transaction(async (tx) => {
       await lockMembership(tx, tenant.workspaceId, actorMembershipId);
@@ -2862,6 +2929,7 @@ export class GamificationService {
     redemptionId: string,
     dto: CancelGamificationRewardRedemptionDto,
   ) {
+    await this.assertGamificationFeatureAvailable(tenant);
     const actorMembershipId = requireWorkspaceMembership(tenant);
     const reason = normalizeBoundedText(
       dto.reason,
@@ -4869,6 +4937,133 @@ export class GamificationService {
     );
   }
 
+  private async getSuperAgencyGlobalAgencies(
+    superAgencyId: string,
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    const page = boundedPage(query.page);
+    const pageSize = boundedGlobalPageSize(query.pageSize);
+    const offset = (page - 1) * pageSize;
+    const search = normalizedSearch(query.search);
+    const searchFilter = search
+      ? Prisma.sql`AND a.name ILIKE ${`%${escapeLike(search)}%`}`
+      : Prisma.empty;
+    const agencyFilter = query.agencyId
+      ? Prisma.sql`AND a.id = ${query.agencyId}::uuid`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalAgencyLeaderboardSqlRow[]>(Prisma.sql`
+      WITH agency_scores AS (
+        SELECT
+          a.id AS agency_id,
+          a.name AS agency_name,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score,
+          COUNT(DISTINCT w.id)::int AS subaccounts,
+          COUNT(DISTINCT gse.recipient_membership_id)::int AS scored_users
+        FROM agencies a
+        JOIN workspaces w ON w.agency_id = a.id
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = w.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        WHERE a.super_agency_id = ${superAgencyId}::uuid
+          ${agencyFilter}
+          ${searchFilter}
+        GROUP BY a.id, a.name
+      ),
+      ranked AS (
+        SELECT
+          agency_id,
+          agency_name,
+          global_score,
+          subaccounts,
+          scored_users,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank,
+          COUNT(*) OVER ()::int AS total_count
+        FROM agency_scores
+      )
+      SELECT
+        agency_id AS "agencyId",
+        agency_name AS "agencyName",
+        global_score AS "globalScore",
+        subaccounts,
+        scored_users AS "scoredUsers",
+        rank::int AS rank,
+        total_count AS "totalCount"
+      FROM ranked
+      ORDER BY rank ASC, agency_name ASC, agency_id ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
+    return pagedGlobalLeaderboard(
+      'SUPER_AGENCY_AGENCIES',
+      page,
+      pageSize,
+      rows.map(globalAgencyRow),
+      totalFromRows(rows),
+    );
+  }
+
+  private async getPlatformGlobalSuperAgencies(query: GamificationGlobalLeaderboardQueryDto) {
+    const page = boundedPage(query.page);
+    const pageSize = boundedGlobalPageSize(query.pageSize);
+    const offset = (page - 1) * pageSize;
+    const search = normalizedSearch(query.search);
+    const searchFilter = search
+      ? Prisma.sql`AND sa.name ILIKE ${`%${escapeLike(search)}%`}`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalSuperAgencyLeaderboardSqlRow[]>(Prisma.sql`
+      WITH super_agency_scores AS (
+        SELECT
+          sa.id AS super_agency_id,
+          sa.name AS super_agency_name,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score,
+          COUNT(DISTINCT a.id)::int AS agencies,
+          COUNT(DISTINCT w.id)::int AS subaccounts,
+          COUNT(DISTINCT gse.recipient_membership_id)::int AS scored_users
+        FROM super_agencies sa
+        JOIN agencies a ON a.super_agency_id = sa.id
+        JOIN workspaces w ON w.agency_id = a.id
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = w.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        WHERE 1 = 1
+          ${searchFilter}
+        GROUP BY sa.id, sa.name
+      ),
+      ranked AS (
+        SELECT
+          super_agency_id,
+          super_agency_name,
+          global_score,
+          agencies,
+          subaccounts,
+          scored_users,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank,
+          COUNT(*) OVER ()::int AS total_count
+        FROM super_agency_scores
+      )
+      SELECT
+        super_agency_id AS "superAgencyId",
+        super_agency_name AS "superAgencyName",
+        global_score AS "globalScore",
+        agencies,
+        subaccounts,
+        scored_users AS "scoredUsers",
+        rank::int AS rank,
+        total_count AS "totalCount"
+      FROM ranked
+      ORDER BY rank ASC, super_agency_name ASC, super_agency_id ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
+    return pagedGlobalLeaderboard(
+      'PLATFORM_SUPER_AGENCIES',
+      page,
+      pageSize,
+      rows.map(globalSuperAgencyRow),
+      totalFromRows(rows),
+    );
+  }
+
   private async getPlatformGlobalSubaccounts(query: GamificationGlobalLeaderboardQueryDto) {
     const page = boundedPage(query.page);
     const pageSize = boundedGlobalPageSize(query.pageSize);
@@ -4934,8 +5129,81 @@ export class GamificationService {
     );
   }
 
+  private async getSuperAgencyGlobalSubaccounts(
+    superAgencyId: string,
+    query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    const page = boundedPage(query.page);
+    const pageSize = boundedGlobalPageSize(query.pageSize);
+    const offset = (page - 1) * pageSize;
+    const search = normalizedSearch(query.search);
+    const searchFilter = search
+      ? Prisma.sql`AND w.name ILIKE ${`%${escapeLike(search)}%`}`
+      : Prisma.empty;
+    const agencyFilter = query.agencyId
+      ? Prisma.sql`AND a.id = ${query.agencyId}::uuid`
+      : Prisma.empty;
+    const workspaceFilter = query.workspaceId
+      ? Prisma.sql`AND w.id = ${query.workspaceId}::uuid`
+      : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<GlobalSubaccountLeaderboardSqlRow[]>(Prisma.sql`
+      WITH workspace_scores AS (
+        SELECT
+          w.id AS workspace_id,
+          w.name AS workspace_name,
+          a.id AS agency_id,
+          a.name AS agency_name,
+          COALESCE(SUM(gse.normalized_score), 0)::int AS global_score,
+          COUNT(DISTINCT gse.recipient_membership_id)::int AS scored_users
+        FROM workspaces w
+        JOIN agencies a ON a.id = w.agency_id
+        JOIN gamification_global_score_events gse
+          ON gse.workspace_id = w.id
+         AND gse.status = 'APPLIED'
+         AND gse.normalized_score IS NOT NULL
+        WHERE a.super_agency_id = ${superAgencyId}::uuid
+          ${agencyFilter}
+          ${workspaceFilter}
+          ${searchFilter}
+        GROUP BY w.id, w.name, a.id, a.name
+      ),
+      ranked AS (
+        SELECT
+          workspace_id,
+          workspace_name,
+          agency_id,
+          agency_name,
+          global_score,
+          scored_users,
+          DENSE_RANK() OVER (ORDER BY global_score DESC) AS rank,
+          COUNT(*) OVER ()::int AS total_count
+        FROM workspace_scores
+      )
+      SELECT
+        workspace_id AS "workspaceId",
+        workspace_name AS "workspaceName",
+        agency_id AS "agencyId",
+        agency_name AS "agencyName",
+        global_score AS "globalScore",
+        scored_users AS "scoredUsers",
+        rank::int AS rank,
+        total_count AS "totalCount"
+      FROM ranked
+      ORDER BY rank ASC, workspace_name ASC, workspace_id ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `);
+    return pagedGlobalLeaderboard(
+      'SUPER_AGENCY_SUBACCOUNTS',
+      page,
+      pageSize,
+      rows.map(globalSubaccountRow),
+      totalFromRows(rows),
+    );
+  }
+
   private async getGlobalUserLeaderboard(input: {
-    scope: 'AGENCY_SUBACCOUNT_USERS' | 'PLATFORM_USERS';
+    scope: 'AGENCY_SUBACCOUNT_USERS' | 'SUPER_AGENCY_USERS' | 'PLATFORM_USERS';
+    superAgencyId?: string | null;
     agencyId?: string | null;
     workspaceId?: string | null;
     query: GamificationGlobalLeaderboardQueryDto;
@@ -4956,6 +5224,9 @@ export class GamificationService {
       : Prisma.empty;
     const agencyFilter = input.agencyId
       ? Prisma.sql`AND a.id = ${input.agencyId}::uuid`
+      : Prisma.empty;
+    const superAgencyFilter = input.superAgencyId
+      ? Prisma.sql`AND a.super_agency_id = ${input.superAgencyId}::uuid`
       : Prisma.empty;
     const workspaceFilter = input.workspaceId
       ? Prisma.sql`AND w.id = ${input.workspaceId}::uuid`
@@ -4989,6 +5260,7 @@ export class GamificationService {
          AND pref.membership_id = wm.id
         WHERE wm.status = 'ACTIVE'
           AND COALESCE(pref.privacy_mode, 'ANONYMOUS') <> 'OPT_OUT'
+          ${superAgencyFilter}
           ${agencyFilter}
           ${workspaceFilter}
           ${searchFilter}
@@ -5102,6 +5374,14 @@ interface GlobalAgencyLeaderboardSqlRow extends GlobalLeaderboardSqlBase {
   scoredUsers: number | bigint;
 }
 
+interface GlobalSuperAgencyLeaderboardSqlRow extends GlobalLeaderboardSqlBase {
+  superAgencyId: string;
+  superAgencyName: string;
+  agencies: number | bigint;
+  subaccounts: number | bigint;
+  scoredUsers: number | bigint;
+}
+
 interface GlobalSubaccountLeaderboardSqlRow extends GlobalLeaderboardSqlBase {
   workspaceId: string;
   workspaceName: string;
@@ -5145,6 +5425,18 @@ function globalAgencyRow(row: GlobalAgencyLeaderboardSqlRow) {
     agencyId: row.agencyId,
     agencyName: row.agencyName,
     globalScore: toNumber(row.globalScore),
+    subaccounts: toNumber(row.subaccounts),
+    scoredUsers: toNumber(row.scoredUsers),
+  };
+}
+
+function globalSuperAgencyRow(row: GlobalSuperAgencyLeaderboardSqlRow) {
+  return {
+    rank: toNumber(row.rank),
+    superAgencyId: row.superAgencyId,
+    superAgencyName: row.superAgencyName,
+    globalScore: toNumber(row.globalScore),
+    agencies: toNumber(row.agencies),
     subaccounts: toNumber(row.subaccounts),
     scoredUsers: toNumber(row.scoredUsers),
   };
@@ -7196,12 +7488,15 @@ function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
-function hasPermission(tenant: WorkspaceTenantContext | AgencyTenantContext, permission: string) {
+function hasPermission(
+  tenant: WorkspaceTenantContext | AgencyTenantContext | SuperAgencyTenantContext,
+  permission: string,
+) {
   return tenant.permissions.includes('*') || tenant.permissions.includes(permission);
 }
 
 function assertPermission(
-  tenant: WorkspaceTenantContext | AgencyTenantContext,
+  tenant: WorkspaceTenantContext | AgencyTenantContext | SuperAgencyTenantContext,
   permission: string,
 ) {
   if (!hasPermission(tenant, permission)) throw new ForbiddenException('PERMISSION_DENIED');
@@ -7312,5 +7607,5 @@ function rewardAuditMetadata(definition: SelectedGamificationReward): Prisma.Inp
 function metadataAssignedToMembershipId(metadata: Prisma.JsonValue) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const value = metadata.assignedToMembershipId;
-  return typeof value === 'string' ? value : null;
+  return typeof value === 'string' && uuidPattern.test(value) ? value : null;
 }

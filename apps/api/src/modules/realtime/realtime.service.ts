@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
-import { MembershipStatus, UserStatus, WorkspaceStatus } from '@prisma/client';
+import {
+  AgencyStatus,
+  MembershipStatus,
+  SuperAgencyStatus,
+  UserStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import { JwtTokenService } from '../../common/auth/jwt.service';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import {
@@ -66,13 +72,26 @@ export class RealtimeService {
       select: {
         id: true,
         status: true,
-        workspace: { select: { id: true, status: true } },
+        workspace: {
+          select: {
+            id: true,
+            status: true,
+            agency: {
+              select: {
+                status: true,
+                superAgency: { select: { status: true } },
+              },
+            },
+          },
+        },
       },
     });
     if (
       !membership ||
       membership.status !== MembershipStatus.ACTIVE ||
-      membership.workspace.status !== WorkspaceStatus.ACTIVE
+      membership.workspace.status !== WorkspaceStatus.ACTIVE ||
+      membership.workspace.agency.status !== AgencyStatus.ACTIVE ||
+      membership.workspace.agency.superAgency.status !== SuperAgencyStatus.ACTIVE
     ) {
       return null;
     }

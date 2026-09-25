@@ -904,7 +904,7 @@ describe('Phase 7.2 task creation experience', () => {
     expect(routerPush).toHaveBeenCalledWith('/workspace/projects/project-1');
   });
 
-  it('serves the minimal Ticket list/detail UI with workspace-scoped queries and permission actions', async () => {
+  it('serves the minimal Ticket list/detail UI with workspace-scoped queries and permission actions - list/create segment', async () => {
     const ticket = ticketFixture();
     listWorkspaceTickets.mockResolvedValue({ items: [ticket], page: 1, pageSize: 20, total: 1 });
     getWorkspaceTicket.mockResolvedValue(ticket);
@@ -1059,6 +1059,66 @@ describe('Phase 7.2 task creation experience', () => {
     );
     expect(screen.getByLabelText('Search Tickets')).toHaveValue('');
     listRender.unmount();
+  });
+
+  it('serves the minimal Ticket list/detail UI with workspace-scoped queries and permission actions - detail/action segment', async () => {
+    const ticket = ticketFixture();
+    getWorkspaceTicket.mockResolvedValue(ticket);
+    updateWorkspaceTicket.mockResolvedValue(ticketFixture({ subject: 'Login fixed' }));
+    updateWorkspaceTicketStatus.mockResolvedValue(
+      ticketFixture({ statusDefinitionId: 'status-review' }),
+    );
+    updateWorkspaceTicketRequester.mockResolvedValue(
+      ticketFixture({ requester: { id: 'requester-2', type: 'EXTERNAL', displayName: 'Uma' } }),
+    );
+    updateWorkspaceTicketAssignment.mockResolvedValue(
+      ticketFixture({
+        departmentId: 'department-1',
+        department: { id: 'department-1', name: 'Design', status: 'ACTIVE' },
+        assignedToMembershipId: 'membership-a',
+        assignedTo: {
+          id: 'membership-a',
+          status: 'ACTIVE',
+          departmentId: 'department-1',
+          user: { id: 'user-a', email: 'anya@zeaplay.test', name: 'Anya' },
+        },
+      }),
+    );
+    deleteWorkspaceTicket.mockResolvedValue({ id: ticket.id, deleted: true });
+    listWorkspaceTicketConversation.mockResolvedValue({
+      items: [
+        {
+          id: 'conversation-public-1',
+          workspaceId: 'workspace-1',
+          ticketId: ticket.id,
+          type: 'PUBLIC_REPLY',
+          body: '<script>alert("x")</script>\nPlain update',
+          author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+          createdAt: isoDate,
+        },
+        {
+          id: 'conversation-note-1',
+          workspaceId: 'workspace-1',
+          ticketId: ticket.id,
+          type: 'INTERNAL_NOTE',
+          body: 'Internal note body',
+          author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+          createdAt: isoDate,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    });
+    createWorkspaceTicketConversationEntry.mockResolvedValue({
+      id: 'conversation-public-2',
+      workspaceId: 'workspace-1',
+      ticketId: ticket.id,
+      type: 'PUBLIC_REPLY',
+      body: 'Follow up',
+      author: { membershipId: 'membership-a', displayName: 'Anya', inactive: false },
+      createdAt: isoDate,
+    });
 
     currentPathname = '/workspace/tickets/ticket-1';
     currentSearchParams = new URLSearchParams('tab=conversation');

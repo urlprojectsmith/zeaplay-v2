@@ -24,7 +24,7 @@ Errors use:
 
 Production responses must not expose stack traces. Every request receives `x-request-id` and `x-correlation-id`.
 
-## Phase 2 Auth And Tenancy
+## Auth And Tenancy
 
 Authentication endpoints:
 
@@ -33,27 +33,31 @@ Authentication endpoints:
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/auth/me`
 
-Login returns an access token, CSRF token, user profile, and active organizations.
-The refresh token is set only as an HttpOnly cookie. Refresh and logout use the
-cookie-backed refresh session and require `X-CSRF-Token`.
+Login returns an access token, CSRF token, user profile, and authorized tenant
+contexts. The refresh token is set only as an HttpOnly cookie. Refresh and
+logout use the cookie-backed refresh session and require `X-CSRF-Token`.
 
-Tenant-owned endpoints require `Authorization: Bearer <accessToken>` and
-`X-Organization-Id: <organization UUID>`. The API validates that the user has an
-active membership in that organization before authorizing permissions.
+Tenant-owned endpoints require `Authorization: Bearer <accessToken>` plus the
+explicit current scope:
 
-Organization endpoints:
+- Super Agency routes: `x-super-agency-id`
+- Agency routes: `x-agency-id`
+- Workspace routes: `x-agency-id` and `x-workspace-id`
 
-- `POST /api/v1/organizations`
-- `GET /api/v1/organizations`
-- `GET /api/v1/organizations/:id`
-- `PATCH /api/v1/organizations/:id`
+The API validates active membership and the effective Super Agency -> Agency ->
+Workspace status chain before authorizing permissions. `Organization` is legacy
+compatibility metadata only and is not a tenant root.
 
-Membership endpoints:
+Super Agency management endpoints:
 
-- `GET /api/v1/organizations/:organizationId/memberships`
-- `POST /api/v1/organizations/:organizationId/memberships`
-- `PATCH /api/v1/organizations/:organizationId/memberships/:id`
-- `DELETE /api/v1/organizations/:organizationId/memberships/:id`
+- `GET /api/v1/super-agencies/:superAgencyId`
+- `PATCH /api/v1/super-agencies/:superAgencyId`
+- `GET /api/v1/super-agencies/:superAgencyId/members`
+- `POST /api/v1/super-agencies/:superAgencyId/invitations`
+
+Agency and Workspace management endpoints are scoped by their parent tenant and
+derive parent IDs server-side. Parent management is not impersonation and does
+not create synthetic child memberships.
 
 Project endpoints:
 
@@ -77,6 +81,6 @@ Asset endpoints:
 - `GET /api/v1/projects/:projectId/assets/:assetId/download`
 - `DELETE /api/v1/projects/:projectId/assets/:assetId`
 
-Asset endpoints authorize by authenticated user, organization context, project,
-asset, and permission. Responses do not expose object-storage credentials,
-buckets, or object keys.
+Asset endpoints authorize by authenticated user, active Workspace membership,
+project, asset, and permission. Responses do not expose object-storage
+credentials, buckets, or object keys.

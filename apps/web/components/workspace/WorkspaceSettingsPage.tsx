@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Switch } from '@zea-play/ui';
 import { useLanguage } from '../../contexts/language-provider';
@@ -103,6 +103,7 @@ export function WorkspaceSettingsPage() {
   const { locale, t } = useLanguage();
   const queryClient = useQueryClient();
   const workspaceId = useSessionStore((state) => state.selectedWorkspaceId);
+  const previousWorkspaceId = useRef<string | null>(null);
   const selectedAgencyId = useSessionStore((state) => state.selectedAgencyId);
   const selectedWorkspace = useSessionStore((state) =>
     state.agencies
@@ -134,6 +135,8 @@ export function WorkspaceSettingsPage() {
     useState<IntegrationAuthType>('BEARER_TOKEN');
   const [integrationName, setIntegrationName] = useState('');
   const [integrationToken, setIntegrationToken] = useState('');
+  const [integrationUsername, setIntegrationUsername] = useState('');
+  const [integrationPassword, setIntegrationPassword] = useState('');
   const [integrationBaseUrl, setIntegrationBaseUrl] = useState('');
   const [integrationLocationId, setIntegrationLocationId] = useState('');
   const [integrationTestPath, setIntegrationTestPath] = useState('/');
@@ -243,6 +246,34 @@ export function WorkspaceSettingsPage() {
       ),
     [browserTimezone, selectedWorkspace?.timezone],
   );
+  useEffect(() => {
+    if (previousWorkspaceId.current === workspaceId) return;
+    previousWorkspaceId.current = workspaceId;
+    setApiKeyName('');
+    setApiKeyExpiry('');
+    setApiKeyScopes(['tasks.read']);
+    setCreatedApiKey(null);
+    setWebhookName('');
+    setWebhookUrl('');
+    setWebhookEventSelection(['task.created']);
+    setRevealedWebhookSecret(null);
+    setSelectedWebhookId(null);
+    setInboundWebhookName('');
+    setRevealedInboundWebhookSecret(null);
+    setSelectedInboundWebhookId(null);
+    setIntegrationProvider('GOHIGHLEVEL');
+    setIntegrationAuthType('BEARER_TOKEN');
+    setIntegrationName('');
+    setIntegrationToken('');
+    setIntegrationUsername('');
+    setIntegrationPassword('');
+    setIntegrationBaseUrl('');
+    setIntegrationLocationId('');
+    setIntegrationTestPath('/');
+    setIntegrationAction('');
+    setIntegrationActionInput('{}');
+    setIntegrationActionResult(null);
+  }, [workspaceId]);
   useEffect(() => {
     const settings = settingsQuery.data;
     if (!settings) return;
@@ -427,10 +458,12 @@ export function WorkspaceSettingsPage() {
         provider: integrationProvider,
         name: integrationName,
         authType: integrationAuthType,
-        credentials:
-          integrationAuthType === 'API_KEY'
-            ? { apiKey: integrationToken }
-            : { token: integrationToken },
+        credentials: buildIntegrationCredentials(
+          integrationAuthType,
+          integrationToken,
+          integrationUsername,
+          integrationPassword,
+        ),
         configuration: buildIntegrationConfiguration(
           integrationProvider,
           integrationBaseUrl,
@@ -441,6 +474,8 @@ export function WorkspaceSettingsPage() {
     onSuccess: () => {
       setIntegrationName('');
       setIntegrationToken('');
+      setIntegrationUsername('');
+      setIntegrationPassword('');
       setIntegrationBaseUrl('');
       setIntegrationLocationId('');
       setIntegrationTestPath('/');
@@ -1142,9 +1177,13 @@ export function WorkspaceSettingsPage() {
                 className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
                 disabled={!canCreateIntegrations}
                 value={integrationProvider}
-                onChange={(event) =>
-                  setIntegrationProvider(event.target.value as IntegrationProvider)
-                }
+                onChange={(event) => {
+                  setIntegrationProvider(event.target.value as IntegrationProvider);
+                  setIntegrationAuthType('BEARER_TOKEN');
+                  setIntegrationToken('');
+                  setIntegrationUsername('');
+                  setIntegrationPassword('');
+                }}
               >
                 {integrationProviders.map((provider) => (
                   <option key={provider} value={provider}>
@@ -1163,8 +1202,16 @@ export function WorkspaceSettingsPage() {
                   setIntegrationAuthType(event.target.value as IntegrationAuthType)
                 }
               >
+                {integrationProvider === 'GENERIC_REST' ? (
+                  <option value="NONE">{t(locale, 'integrations.noAuth')}</option>
+                ) : null}
                 <option value="BEARER_TOKEN">{t(locale, 'integrations.bearerToken')}</option>
-                <option value="API_KEY">{t(locale, 'integrations.apiKey')}</option>
+                {integrationProvider === 'GENERIC_REST' ? (
+                  <>
+                    <option value="API_KEY">{t(locale, 'integrations.apiKey')}</option>
+                    <option value="BASIC_AUTH">{t(locale, 'integrations.basicAuth')}</option>
+                  </>
+                ) : null}
               </select>
             </label>
           </div>
@@ -1178,16 +1225,40 @@ export function WorkspaceSettingsPage() {
               onChange={(event) => setIntegrationName(event.target.value)}
             />
           </label>
-          <label className="grid gap-2 text-sm font-medium">
-            {t(locale, 'integrations.credential')}
-            <input
-              className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
-              disabled={!canCreateIntegrations}
-              type="password"
-              value={integrationToken}
-              onChange={(event) => setIntegrationToken(event.target.value)}
-            />
-          </label>
+          {integrationAuthType === 'BASIC_AUTH' ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-medium">
+                {t(locale, 'integrations.username')}
+                <input
+                  className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                  disabled={!canCreateIntegrations}
+                  value={integrationUsername}
+                  onChange={(event) => setIntegrationUsername(event.target.value)}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                {t(locale, 'integrations.password')}
+                <input
+                  className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                  disabled={!canCreateIntegrations}
+                  type="password"
+                  value={integrationPassword}
+                  onChange={(event) => setIntegrationPassword(event.target.value)}
+                />
+              </label>
+            </div>
+          ) : integrationAuthType === 'NONE' ? null : (
+            <label className="grid gap-2 text-sm font-medium">
+              {t(locale, 'integrations.credential')}
+              <input
+                className="h-10 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-3 text-sm"
+                disabled={!canCreateIntegrations}
+                type="password"
+                value={integrationToken}
+                onChange={(event) => setIntegrationToken(event.target.value)}
+              />
+            </label>
+          )}
           {integrationProvider === 'GENERIC_REST' ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-medium">
@@ -1232,7 +1303,12 @@ export function WorkspaceSettingsPage() {
               disabled={
                 createIntegrationMutation.isPending ||
                 !integrationName.trim() ||
-                !integrationToken.trim() ||
+                !integrationCredentialsReady(
+                  integrationAuthType,
+                  integrationToken,
+                  integrationUsername,
+                  integrationPassword,
+                ) ||
                 !canCreateIntegrations
               }
               type="submit"
@@ -1535,6 +1611,29 @@ function buildIntegrationConfiguration(
   if (provider === 'GENERIC_REST') return { baseUrl, testPath };
   if (provider === 'GOHIGHLEVEL') return { locationId };
   return {};
+}
+
+function buildIntegrationCredentials(
+  authType: IntegrationAuthType,
+  token: string,
+  username: string,
+  password: string,
+) {
+  if (authType === 'NONE') return {};
+  if (authType === 'API_KEY') return { apiKey: token };
+  if (authType === 'BASIC_AUTH') return { username, password };
+  return { token };
+}
+
+function integrationCredentialsReady(
+  authType: IntegrationAuthType,
+  token: string,
+  username: string,
+  password: string,
+) {
+  if (authType === 'NONE') return true;
+  if (authType === 'BASIC_AUTH') return Boolean(username.trim() && password.trim());
+  return Boolean(token.trim());
 }
 
 function parseJsonInput(value: string) {

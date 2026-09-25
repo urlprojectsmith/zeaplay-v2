@@ -13,19 +13,30 @@ import {
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { validateEnvironment } from '@zea-play/config';
 import type { Request } from 'express';
-import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
+import type {
+  AgencyTenantContext,
+  SuperAgencyTenantContext,
+  WorkspaceTenantContext,
+} from '../../common/auth/auth.types';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { DeveloperDiagnosticsGuard } from '../../common/authorization/developer-diagnostics.guard';
+import { PlatformGlobalLeaderboardGuard } from '../../common/authorization/platform-global-leaderboard.guard';
 import { PermissionGuard } from '../../common/authorization/permission.guard';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
 import {
   AGENCY_HEADER,
   CurrentAgencyTenant,
+  CurrentSuperAgencyTenant,
   CurrentWorkspaceTenant,
+  SUPER_AGENCY_HEADER,
   WORKSPACE_HEADER,
 } from '../../common/tenant/tenant-context.decorator';
-import { AgencyTenantGuard, WorkspaceTenantGuard } from '../../common/tenant/tenant-context.guard';
+import {
+  AgencyTenantGuard,
+  SuperAgencyTenantGuard,
+  WorkspaceTenantGuard,
+} from '../../common/tenant/tenant-context.guard';
 import {
   GamificationAdminAdjustmentDto,
   GamificationAdminMemberQueryDto,
@@ -563,20 +574,53 @@ export class AgencyGlobalLeaderboardController {
 
 @ApiTags('gamification')
 @ApiBearerAuth()
-@ApiHeader({ name: AGENCY_HEADER, required: true })
-@UseGuards(JwtAuthGuard, AgencyTenantGuard, PermissionGuard)
+@ApiHeader({ name: SUPER_AGENCY_HEADER, required: true })
+@UseGuards(JwtAuthGuard, SuperAgencyTenantGuard, PermissionGuard)
+@Controller('super-agencies/:superAgencyId/gamification/global-leaderboard')
+export class SuperAgencyGlobalLeaderboardController {
+  constructor(private readonly gamification: GamificationService) {}
+
+  @Get('agencies')
+  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewSuperAgency)
+  getSuperAgencyAgencies(
+    @CurrentSuperAgencyTenant() tenant: SuperAgencyTenantContext,
+    @Query() query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    return this.gamification.getSuperAgencyGlobalLeaderboardAgencies(tenant, query);
+  }
+
+  @Get('subaccounts')
+  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewSuperAgency)
+  getSuperAgencySubaccounts(
+    @CurrentSuperAgencyTenant() tenant: SuperAgencyTenantContext,
+    @Query() query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    return this.gamification.getSuperAgencyGlobalLeaderboardSubaccounts(tenant, query);
+  }
+
+  @Get('users')
+  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewSuperAgency)
+  getSuperAgencyUsers(
+    @CurrentSuperAgencyTenant() tenant: SuperAgencyTenantContext,
+    @Query() query: GamificationGlobalLeaderboardQueryDto,
+  ) {
+    return this.gamification.getSuperAgencyGlobalLeaderboardUsers(tenant, query);
+  }
+}
+
+@ApiTags('gamification')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, PlatformGlobalLeaderboardGuard)
 @Controller('platform/gamification/global-leaderboard')
 export class PlatformGlobalLeaderboardController {
   constructor(private readonly gamification: GamificationService) {}
 
   @Get(':tab')
-  @RequirePermissions(PermissionKeys.gamificationGlobalLeaderboardViewPlatform)
   getPlatformLeaderboard(
-    @CurrentAgencyTenant() tenant: AgencyTenantContext,
     @Param() params: GamificationGlobalLeaderboardTabParamsDto,
     @Query() query: GamificationGlobalLeaderboardQueryDto,
   ) {
-    return this.gamification.getPlatformGlobalLeaderboard(tenant, params.tab, query);
+    return this.gamification.getPlatformGlobalLeaderboard(params.tab, query);
   }
 }
 

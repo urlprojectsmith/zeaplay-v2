@@ -4,6 +4,6 @@ Zea Play uses the Next.js App Router with Server Components by default. Client C
 
 `packages/ui` contains reusable primitives only. App-specific dashboard composition, navigation configuration, session-aware selectors, branding providers, and protected route boundaries live in `apps/web`.
 
-Session state remains in `apps/web/stores/session.ts`: access tokens stay in memory, refresh uses the HttpOnly cookie and CSRF cookie, and agency/workspace selections continue to drive `x-agency-id` and `x-workspace-id` through the centralized API client.
+Session state remains in `apps/web/stores/session.ts`: access tokens stay in memory, refresh uses the HttpOnly cookie and CSRF cookie, and selected Super Agency, Agency, and Workspace contexts drive `x-super-agency-id`, `x-agency-id`, and `x-workspace-id` through the centralized API client. Parent scope selection must not grant child-shell membership or Workspace operational authority.
 
 TanStack Query remains an app provider with conservative retry defaults: client errors such as 401, 403, 404, and validation failures are not aggressively retried.

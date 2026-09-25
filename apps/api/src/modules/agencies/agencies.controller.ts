@@ -1,13 +1,25 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
-import type { AgencyTenantContext, AuthenticatedUser } from '../../common/auth/auth.types';
+import type {
+  AgencyTenantContext,
+  AuthenticatedUser,
+  SuperAgencyTenantContext,
+} from '../../common/auth/auth.types';
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import { PermissionGuard } from '../../common/authorization/permission.guard';
 import { PermissionKeys } from '../../common/authorization/permissions';
 import { RequirePermissions } from '../../common/authorization/require-permissions.decorator';
-import { AGENCY_HEADER, CurrentAgencyTenant } from '../../common/tenant/tenant-context.decorator';
-import { AgencyTenantGuard } from '../../common/tenant/tenant-context.guard';
+import {
+  AGENCY_HEADER,
+  CurrentAgencyTenant,
+  CurrentSuperAgencyTenant,
+  SUPER_AGENCY_HEADER,
+} from '../../common/tenant/tenant-context.decorator';
+import {
+  AgencyTenantGuard,
+  SuperAgencyTenantGuard,
+} from '../../common/tenant/tenant-context.guard';
 import { AgenciesService } from './agencies.service';
 import { AgencyMembershipParamsDto } from './dto/agency-params.dto';
 import { CreateAgencyMembershipDto, UpdateAgencyMembershipDto } from './dto/agency-membership.dto';
@@ -22,8 +34,15 @@ export class AgenciesController {
   constructor(private readonly agencies: AgenciesService) {}
 
   @Post()
-  create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateAgencyDto) {
-    return this.agencies.create(user, dto);
+  @ApiHeader({ name: SUPER_AGENCY_HEADER, required: true })
+  @UseGuards(SuperAgencyTenantGuard, PermissionGuard)
+  @RequirePermissions(PermissionKeys.agencyCreate)
+  create(
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentSuperAgencyTenant() tenant: SuperAgencyTenantContext,
+    @Body() dto: CreateAgencyDto,
+  ) {
+    return this.agencies.create(user, dto, tenant);
   }
 
   @Get()

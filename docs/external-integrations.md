@@ -16,9 +16,12 @@ No other providers are registered in this phase.
 - Credentials are encrypted at rest with `CLOUD_DRIVE_TOKEN_ENCRYPTION_KEY`.
 - API responses never include plaintext credentials.
 - Integration actions require workspace RBAC permissions.
-- Generic REST connections validate their base URL through the existing SSRF guard.
-- Generic REST actions accept only relative paths and reject traversal, scheme-relative URLs, control characters, and restricted credential header names.
+- OAuth is not advertised for provider adapters in Phase 14.4; GHL, Slack, and Webex use bearer tokens, while Generic REST supports no auth, bearer token, API key, and basic auth.
+- Generic REST connections validate their base URL through the existing SSRF guard and bind the outbound connection to the validated DNS result.
+- Generic REST actions accept only relative paths and reject traversal, scheme-relative URLs, control characters, bounded-query violations, oversized JSON bodies, and restricted credential header names.
 - Provider HTTP calls use bounded timeouts, reject redirects, and enforce a response-size limit.
+- Mutation transport failures are recorded as ambiguous by the action service rather than blindly retried.
+- Management/action intent is recorded in `AuditLog` with bounded metadata and no credential material.
 
 ## Configuration
 
@@ -75,4 +78,4 @@ Generic REST:
 
 ## Operational Notes
 
-This phase implements the foundation and scoped action execution. Provider credentials were not live-verified against external services during local implementation. Background sync, arbitrary connector code, provider marketplace behavior, and additional providers are intentionally out of scope.
+This phase implements the foundation and scoped action execution. Provider credentials were not live-verified against external services during local implementation. Background sync, arbitrary connector code, OAuth exchange, provider marketplace behavior, and additional providers are intentionally out of scope.

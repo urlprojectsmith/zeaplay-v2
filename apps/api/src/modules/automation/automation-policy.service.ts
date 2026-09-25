@@ -91,7 +91,7 @@ export class AutomationPolicyService {
     fn: () => Promise<T>,
   ) {
     await tx.$executeRaw(
-      Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}), ${suffix})`,
+      Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}), ${Prisma.raw(String(suffix))})`,
     );
     return fn();
   }

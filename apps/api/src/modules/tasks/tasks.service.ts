@@ -65,6 +65,7 @@ import type { AutomationMutationContext } from '../automation/automation-action.
 import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { GamificationService } from '../gamification/gamification.service';
 import { NotificationReminderService } from '../notifications/notification-reminder.service';
 import { NotificationRouterService } from '../notifications/notification-router.service';
@@ -179,6 +180,8 @@ export class TasksService {
     private readonly notificationReminders: NotificationReminderService = missingNotificationReminderService,
     @Optional()
     private readonly realtime: RealtimeService = missingRealtimeService,
+    @Optional()
+    private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async create(
@@ -200,6 +203,10 @@ export class TasksService {
     parentTaskId: string | null,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     const automationInvocationKey = automation?.invocationKey ?? null;
     if (automationInvocationKey) {
       const existing = await this.prisma.task.findFirst({
@@ -526,6 +533,7 @@ export class TasksService {
         });
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -565,6 +573,7 @@ export class TasksService {
       );
       await tx.auditLog.create({
         data: {
+          superAgencyId: active.workspace.agency.superAgencyId,
           agencyId: active.workspace.agencyId,
           workspaceId: active.workspaceId,
           userId,
@@ -822,6 +831,7 @@ export class TasksService {
       }
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -2280,6 +2290,7 @@ export class TasksService {
         });
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -2373,6 +2384,7 @@ export class TasksService {
         }
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -2419,6 +2431,7 @@ export class TasksService {
       if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -2480,6 +2493,7 @@ export class TasksService {
       if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -2553,6 +2567,7 @@ export class TasksService {
       if (update.count !== changedTaskIds.length) throw new NotFoundException('Task not found.');
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -2600,6 +2615,7 @@ export class TasksService {
         });
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -2677,6 +2693,7 @@ export class TasksService {
         });
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -2779,6 +2796,7 @@ export class TasksService {
         if (create.count > 0) {
           await tx.auditLog.create({
             data: {
+              superAgencyId: tenant.superAgencyId,
               agencyId: tenant.agencyId,
               workspaceId: tenant.workspaceId,
               userId: tenant.userId,
@@ -2822,6 +2840,7 @@ export class TasksService {
       if (removed.count > 0) {
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -2893,6 +2912,7 @@ export class TasksService {
         if (create.count > 0) {
           await tx.auditLog.create({
             data: {
+              superAgencyId: tenant.superAgencyId,
               agencyId: tenant.agencyId,
               workspaceId: tenant.workspaceId,
               userId: tenant.userId,
@@ -2932,6 +2952,7 @@ export class TasksService {
       if (removed.count > 0) {
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -3029,6 +3050,7 @@ export class TasksService {
         });
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -3223,6 +3245,10 @@ export class TasksService {
     dto: UploadInitDto,
     correlationId: string,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     await this.assertTask(tenant.workspaceId, taskId);
     const uploadedByMembershipId = requireUploadMembership(tenant);
     const filename = sanitizeFilename(dto.filename);
@@ -3241,7 +3267,12 @@ export class TasksService {
     const uploadExpiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
     const sizeBytes = BigInt(dto.sizeBytes);
     const created = await this.prisma.$transaction(async (tx) => {
-      await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
+      const managed = await this.billingEntitlements?.assertWorkspaceStorageAvailableTx(
+        tx,
+        tenant.workspaceId,
+        sizeBytes,
+      );
+      if (!managed) await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
       const asset = await tx.asset.create({
         data: {
           id: assetId,
@@ -3387,6 +3418,10 @@ export class TasksService {
     taskId: string,
     dto: CreateTaskUrlAttachmentDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     await this.assertTask(tenant.workspaceId, taskId);
     const url = normalizeAttachmentUrl(dto.url);
     const displayName = normalizeAttachmentDisplayName(dto.displayName) ?? url;
@@ -3427,6 +3462,10 @@ export class TasksService {
   }
 
   async linkAttachments(tenant: WorkspaceTenantContext, taskId: string, dto: TaskAttachmentIdsDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     await this.assertTask(tenant.workspaceId, taskId);
     const attachmentIds = uniqueIds(dto.attachmentIds);
     const attachments = await this.prisma.attachment.findMany({
@@ -3541,6 +3580,10 @@ export class TasksService {
     dto: UpdateTaskDto,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     const changedFields = Object.entries(dto)
       .filter(([key, value]) => key !== 'recurrenceEditScope' && value !== undefined)
@@ -3763,6 +3806,10 @@ export class TasksService {
     reopenDueAtInput?: string | Date | null,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     const existing = await this.assertTask(tenant.workspaceId, taskId);
     if (existing.statusDefinitionId === statusDefinitionId) {
       return serializeTaskDetail(await this.findTask(tenant.workspaceId, taskId), tenant);
@@ -3880,6 +3927,10 @@ export class TasksService {
     dto: ReplaceTaskMembershipsDto,
     _automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tasks.enabled',
+    );
     await this.assertTask(tenant.workspaceId, taskId);
     const membershipIds = await this.activeMembershipIds(tenant.workspaceId, dto.membershipIds);
     const existingAssignees = await this.prisma.taskAssignee.findMany({
@@ -4074,6 +4125,7 @@ export class TasksService {
         });
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -4143,6 +4195,7 @@ export class TasksService {
         }
         await tx.auditLog.create({
           data: {
+            superAgencyId: tenant.superAgencyId,
             agencyId: tenant.agencyId,
             workspaceId: tenant.workspaceId,
             userId: tenant.userId,
@@ -4423,6 +4476,7 @@ export class TasksService {
       });
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -6246,7 +6300,9 @@ const timeEntrySelect = {
   deletedAt: true,
   createdAt: true,
   updatedAt: true,
-  workspace: { select: { id: true, name: true, agencyId: true } },
+  workspace: {
+    select: { id: true, name: true, agencyId: true, agency: { select: { superAgencyId: true } } },
+  },
   task: {
     select: {
       id: true,

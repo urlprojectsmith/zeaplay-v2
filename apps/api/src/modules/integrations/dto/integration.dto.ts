@@ -59,8 +59,9 @@ export class CreateIntegrationConnectionDto {
   @IsEnum(IntegrationAuthType)
   authType!: IntegrationAuthType;
 
+  @IsOptional()
   @IsObject()
-  credentials!: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
 
   @IsOptional()
   @IsObject()
@@ -77,6 +78,14 @@ export class UpdateIntegrationConnectionDto {
   @IsOptional()
   @IsObject()
   configuration?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsEnum(IntegrationAuthType)
+  authType?: IntegrationAuthType;
+
+  @IsOptional()
+  @IsObject()
+  credentials?: Record<string, unknown>;
 }
 
 export class ExecuteIntegrationActionDto {

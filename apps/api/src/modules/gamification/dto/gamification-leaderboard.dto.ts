@@ -64,8 +64,8 @@ export class GamificationGlobalLeaderboardQueryDto {
 }
 
 export class GamificationGlobalLeaderboardTabParamsDto {
-  @IsIn(['agencies', 'subaccounts', 'users'])
-  tab!: 'agencies' | 'subaccounts' | 'users';
+  @IsIn(['super-agencies', 'agencies', 'subaccounts', 'users'])
+  tab!: 'super-agencies' | 'agencies' | 'subaccounts' | 'users';
 }
 
 export class GamificationAgencyGlobalLeaderboardUsersParamsDto {

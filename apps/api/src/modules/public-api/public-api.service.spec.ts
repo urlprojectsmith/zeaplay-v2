@@ -1,7 +1,18 @@
-import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
-import { ApiKeyStatus, MembershipStatus } from '@prisma/client';
+import {
+  AgencyStatus,
+  ApiKeyStatus,
+  MembershipStatus,
+  SuperAgencyStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import { createHash } from 'crypto';
 import { ApiKeysService } from './api-keys.service';
 import { PublicApiRateLimitService } from './public-api-rate-limit.service';
@@ -86,6 +97,28 @@ describe('Phase 14.1 public API foundation', () => {
     expect(JSON.stringify(listed)).not.toContain(created.plaintextApiKey);
   });
 
+  it('requires direct Workspace membership for API key list, update, and revoke management', async () => {
+    const prisma = prismaMock();
+    const service = new ApiKeysService(prisma as never, auditMock() as never);
+    const parentTenant = {
+      ...tenant,
+      workspaceMembershipId: null,
+      accessSource: 'AGENCY_ADMINISTRATION' as const,
+    };
+
+    await expect(service.list(parentTenant, { page: 1, pageSize: 25 })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.update(parentTenant, 'api-key-1', { name: 'Name' })).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(service.revoke(parentTenant, 'api-key-1')).rejects.toThrow(BadRequestException);
+
+    expect(prisma.apiKey.findMany).not.toHaveBeenCalled();
+    expect(prisma.apiKey.findFirst).not.toHaveBeenCalled();
+    expect(prisma.apiKey.update).not.toHaveBeenCalled();
+  });
+
   it('authenticates valid bearer keys and generically rejects invalid, revoked, or expired keys', async () => {
     const prisma = prismaMock();
     const service = new ApiKeysService(prisma as never, auditMock() as never);
@@ -142,6 +175,52 @@ describe('Phase 14.1 public API foundation', () => {
     });
   });
 
+  it('rejects otherwise valid API keys when the parent hierarchy is suspended', async () => {
+    const prisma = prismaMock();
+    const service = new ApiKeysService(prisma as never, auditMock() as never);
+    const secret = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN';
+    prisma.apiKey.findUnique.mockResolvedValue(
+      authRecord(secret, {
+        workspace: {
+          id: tenant.workspaceId,
+          agencyId: tenant.agencyId,
+          status: WorkspaceStatus.ACTIVE,
+          agency: {
+            status: AgencyStatus.ACTIVE,
+            superAgency: { status: SuperAgencyStatus.SUSPENDED },
+          },
+        },
+      }),
+    );
+
+    await expect(service.authenticate(`Bearer zea_live_publicid01_${secret}`)).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it('rejects otherwise valid API keys when the Super Agency is archived', async () => {
+    const prisma = prismaMock();
+    const service = new ApiKeysService(prisma as never, auditMock() as never);
+    const secret = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN';
+    prisma.apiKey.findUnique.mockResolvedValue(
+      authRecord(secret, {
+        workspace: {
+          id: tenant.workspaceId,
+          agencyId: tenant.agencyId,
+          status: WorkspaceStatus.ACTIVE,
+          agency: {
+            status: AgencyStatus.ACTIVE,
+            superAgency: { status: SuperAgencyStatus.ARCHIVED },
+          },
+        },
+      }),
+    );
+
+    await expect(service.authenticate(`Bearer zea_live_publicid01_${secret}`)).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
   it('rejects persisted scopes outside the public allowlist', async () => {
     const prisma = prismaMock();
     const service = new ApiKeysService(prisma as never, auditMock() as never);
@@ -153,19 +232,23 @@ describe('Phase 14.1 public API foundation', () => {
     );
   });
 
-  it('enforces public scopes without wildcard bypass', () => {
+  it('enforces public scopes without wildcard bypass', async () => {
     const guard = new PublicApiScopeGuard({
       getAllAndOverride: () => ['projects.read'],
     } as unknown as Reflector);
 
-    expect(() => guard.canActivate(scopeContext({ scopes: ['tasks.read'] }))).toThrow(
+    await expect(guard.canActivate(scopeContext({ scopes: ['tasks.read'] }))).rejects.toThrow(
       ForbiddenException,
     );
-    expect(guard.canActivate(scopeContext({ scopes: ['projects.read'] }))).toBe(true);
-    expect(() => guard.canActivate(scopeContext({ scopes: ['*'] }))).toThrow(ForbiddenException);
+    await expect(guard.canActivate(scopeContext({ scopes: ['projects.read'] }))).resolves.toBe(
+      true,
+    );
+    await expect(guard.canActivate(scopeContext({ scopes: ['*'] }))).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
-  it('keeps read/write semantics resource-specific across public scopes', () => {
+  it('keeps read/write semantics resource-specific across public scopes', async () => {
     const projectReadGuard = new PublicApiScopeGuard({
       getAllAndOverride: () => ['projects.read', 'projects.write'],
     } as unknown as Reflector);
@@ -173,13 +256,49 @@ describe('Phase 14.1 public API foundation', () => {
       getAllAndOverride: () => ['tickets.write'],
     } as unknown as Reflector);
 
-    expect(projectReadGuard.canActivate(scopeContext({ scopes: ['projects.write'] }))).toBe(true);
-    expect(() => projectReadGuard.canActivate(scopeContext({ scopes: ['tasks.write'] }))).toThrow(
+    await expect(
+      projectReadGuard.canActivate(scopeContext({ scopes: ['projects.write'] })),
+    ).resolves.toBe(true);
+    await expect(
+      projectReadGuard.canActivate(scopeContext({ scopes: ['tasks.write'] })),
+    ).rejects.toThrow(ForbiddenException);
+    await expect(
+      ticketWriteGuard.canActivate(scopeContext({ scopes: ['projects.write'] })),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('does not consume commercial API quota for insufficient scopes', async () => {
+    const billing = { reservePublicApiRequestUsage: jest.fn() };
+    const guard = new PublicApiScopeGuard(
+      { getAllAndOverride: () => ['tasks.write'] } as unknown as Reflector,
+      undefined,
+      billing as never,
+    );
+
+    await expect(guard.canActivate(scopeContext({ scopes: ['tasks.read'] }))).rejects.toThrow(
       ForbiddenException,
     );
-    expect(() =>
-      ticketWriteGuard.canActivate(scopeContext({ scopes: ['projects.write'] })),
-    ).toThrow(ForbiddenException);
+
+    expect(billing.reservePublicApiRequestUsage).not.toHaveBeenCalled();
+  });
+
+  it('reserves commercial API quota after scope authorization for GET and write requests', async () => {
+    const billing = { reservePublicApiRequestUsage: jest.fn().mockResolvedValue(true) };
+    const guard = new PublicApiScopeGuard(
+      { getAllAndOverride: () => ['tasks.read'] } as unknown as Reflector,
+      undefined,
+      billing as never,
+    );
+
+    await expect(
+      guard.canActivate(scopeContext({ scopes: ['tasks.read'], method: 'GET' })),
+    ).resolves.toBe(true);
+    await expect(
+      guard.canActivate(scopeContext({ scopes: ['tasks.read'], method: 'POST' })),
+    ).resolves.toBe(true);
+
+    expect(billing.reservePublicApiRequestUsage).toHaveBeenCalledTimes(2);
+    expect(billing.reservePublicApiRequestUsage).toHaveBeenCalledWith(tenant.workspaceId);
   });
 
   it('registers public resource controllers under a non-conflicting route family', () => {
@@ -474,7 +593,15 @@ function authRecord(secret: string, overrides: Record<string, unknown> = {}) {
   return {
     ...apiKeyRecord({ scopes: ['tasks.read'] }),
     secretHash: createHash('sha256').update(secret).digest('hex'),
-    workspace: { id: tenant.workspaceId, agencyId: tenant.agencyId, status: 'ACTIVE' },
+    workspace: {
+      id: tenant.workspaceId,
+      agencyId: tenant.agencyId,
+      status: WorkspaceStatus.ACTIVE,
+      agency: {
+        status: AgencyStatus.ACTIVE,
+        superAgency: { status: SuperAgencyStatus.ACTIVE },
+      },
+    },
     createdByMembership: {
       id: tenant.workspaceMembershipId,
       userId: tenant.userId,
@@ -499,10 +626,13 @@ function publicPrincipal(apiKeyId = 'api-key-1') {
   };
 }
 
-function scopeContext(publicApi: { scopes: string[] }) {
+function scopeContext(publicApi: { scopes: string[]; method?: string }) {
+  const principal = { ...publicPrincipal(), scopes: publicApi.scopes };
   return {
     getHandler: () => null,
     getClass: () => null,
-    switchToHttp: () => ({ getRequest: () => ({ publicApi }) }),
+    switchToHttp: () => ({
+      getRequest: () => ({ publicApi: principal, method: publicApi.method }),
+    }),
   } as never;
 }

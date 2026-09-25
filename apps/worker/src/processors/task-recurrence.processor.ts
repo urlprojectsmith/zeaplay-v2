@@ -15,6 +15,7 @@ import type { Job } from 'bullmq';
 import { DateTime } from 'luxon';
 import { PrismaService } from '../infrastructure/database/prisma.service';
 import { TASK_RECURRENCE_DISPATCH_JOB_TYPE, TASK_RECURRENCE_QUEUE } from '../queue/queue.constants';
+import { WorkerHierarchyService } from './worker-hierarchy.service';
 
 const SCAN_LIMIT = 25;
 const CATCH_UP_LIMIT = 100;
@@ -25,7 +26,10 @@ const KANBAN_RANK_STEP = new Prisma.Decimal(1024);
 export class TaskRecurrenceProcessor extends WorkerHost {
   private readonly logger = new Logger(TaskRecurrenceProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly hierarchy: WorkerHierarchyService,
+  ) {
     super();
   }
 
@@ -68,6 +72,19 @@ export class TaskRecurrenceProcessor extends WorkerHost {
         select: recurrenceWorkerSeriesSelect,
       });
       if (!series || !series.nextOccurrenceAt) return 0;
+      const hierarchy = await this.hierarchy.effectiveWorkspaceStatus(series.workspaceId, tx);
+      if (!hierarchy.operational) {
+        await tx.taskRecurrenceSeries.update({
+          where: { id: series.id },
+          data: { status: TaskRecurrenceStatus.ERROR, lastErrorCode: hierarchy.code },
+        });
+        this.logger.warn({
+          workspaceId: series.workspaceId,
+          code: hierarchy.code,
+          message: 'Task recurrence generation blocked by effective tenant hierarchy status',
+        });
+        return 0;
+      }
       if (!(await referencesAreValid(tx, series))) {
         await tx.taskRecurrenceSeries.update({
           where: { id: series.id },

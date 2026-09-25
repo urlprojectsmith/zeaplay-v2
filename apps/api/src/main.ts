@@ -24,6 +24,13 @@ async function bootstrap() {
       limit: env.INBOUND_WEBHOOK_MAX_BODY_BYTES,
     }),
   );
+  app.use(
+    '/api/v1/billing/stripe/webhook',
+    raw({
+      type: 'application/json',
+      limit: env.STRIPE_WEBHOOK_MAX_BODY_BYTES,
+    }),
+  );
   app.use(json({ limit: env.REQUEST_BODY_LIMIT }));
   app.use(urlencoded({ extended: false, limit: env.REQUEST_BODY_LIMIT }));
   app.enableCors({ origin: parseCorsOrigins(env.CORS_ORIGINS), credentials: true });
@@ -43,6 +50,7 @@ async function bootstrap() {
     .setDescription('Phase 4 multi-tenant API foundation')
     .setVersion('1.0')
     .addBearerAuth()
+    .addApiKey({ type: 'apiKey', in: 'header', name: 'x-super-agency-id' }, 'super-agency')
     .addApiKey({ type: 'apiKey', in: 'header', name: 'x-agency-id' }, 'agency')
     .addApiKey({ type: 'apiKey', in: 'header', name: 'x-workspace-id' }, 'workspace')
     .build();

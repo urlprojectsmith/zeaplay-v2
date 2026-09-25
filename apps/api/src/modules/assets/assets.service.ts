@@ -8,6 +8,7 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnprocessableEntityException,
+  Optional,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import {
@@ -27,6 +28,7 @@ import type { StorageAdapter } from '../../infrastructure/storage/storage-adapte
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import {
   ASSET_PROCESSING_JOB_TYPE,
   ASSET_PROCESSING_QUEUE,
@@ -74,6 +76,7 @@ export class AssetsService {
     private readonly audit: AuditService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     @InjectQueue(ASSET_PROCESSING_QUEUE) private readonly queue: Queue,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async initUpload(
@@ -246,6 +249,7 @@ export class AssetsService {
     dto: WorkspaceFileCompleteDto,
     _correlationId: string,
   ) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const asset = await this.findWorkspaceFile(tenant.workspaceId, fileId);
     if (ACTIVE_STORAGE_STATUSES.includes(asset.status)) {
       return serializeAsset(asset);
@@ -313,6 +317,7 @@ export class AssetsService {
   }
 
   async listWorkspaceFiles(tenant: WorkspaceTenantContext, query: WorkspaceFileQueryDto) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const pageSize = Math.min(query.pageSize, 100);
     if (query.uploader) await this.assertWorkspaceUploader(tenant.workspaceId, query.uploader);
     const createdRange = parseCreatedRange(query.createdFrom, query.createdTo);
@@ -373,6 +378,7 @@ export class AssetsService {
   }
 
   async bulkWorkspaceFileAction(tenant: WorkspaceTenantContext, dto: WorkspaceFileBulkActionDto) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const uniqueIds = Array.from(new Set(dto.fileIds));
     if (!uniqueIds.length) throw new BadRequestException('BULK_FILE_IDS_REQUIRED');
     if (uniqueIds.length > 50) throw new BadRequestException('BULK_FILE_LIMIT_EXCEEDED');
@@ -407,10 +413,12 @@ export class AssetsService {
   }
 
   async getWorkspaceFile(tenant: WorkspaceTenantContext, fileId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     return serializeAsset(await this.findWorkspaceFile(tenant.workspaceId, fileId));
   }
 
   async createWorkspaceDownloadUrl(tenant: WorkspaceTenantContext, fileId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const asset = await this.findWorkspaceFile(tenant.workspaceId, fileId);
     if (!ACTIVE_STORAGE_STATUSES.includes(asset.status)) {
       throw new ConflictException('FILE_NOT_ACTIVE');
@@ -435,6 +443,7 @@ export class AssetsService {
   }
 
   async storageUsage(tenant: WorkspaceTenantContext) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const usage = await this.calculateUsage(tenant.workspaceId);
     const quotaBytes = await this.quotaBytes(tenant.workspaceId);
     const usedBytes = Number(usage.usedBytes);
@@ -451,6 +460,7 @@ export class AssetsService {
   }
 
   async getRetentionPolicy(tenant: WorkspaceTenantContext) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const policy = await this.prisma.storageRetentionPolicy.findUnique({
       where: { workspaceId: tenant.workspaceId },
       select: { workspaceId: true, deleteGraceDays: true, createdAt: true, updatedAt: true },
@@ -468,6 +478,7 @@ export class AssetsService {
     tenant: WorkspaceTenantContext,
     dto: StorageRetentionPolicyUpdateDto,
   ) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const policy = await this.prisma.storageRetentionPolicy.upsert({
       where: { workspaceId: tenant.workspaceId },
       update: { deleteGraceDays: dto.deleteGraceDays },
@@ -487,6 +498,7 @@ export class AssetsService {
   }
 
   async archiveWorkspaceFile(tenant: WorkspaceTenantContext, fileId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const asset = await this.findWorkspaceFile(tenant.workspaceId, fileId);
     this.assertLifecycleMutable(asset, 'archive');
     if (asset.lifecycle === AssetLifecycle.ARCHIVED) return serializeAsset(asset);
@@ -509,6 +521,7 @@ export class AssetsService {
   }
 
   async requestWorkspaceFileDelete(tenant: WorkspaceTenantContext, fileId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const asset = await this.findWorkspaceFile(tenant.workspaceId, fileId);
     if (asset.lifecycle === AssetLifecycle.PENDING_DELETE) return serializeAsset(asset);
     if (
@@ -545,6 +558,7 @@ export class AssetsService {
   }
 
   async restoreWorkspaceFile(tenant: WorkspaceTenantContext, fileId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const asset = await this.findWorkspaceFile(tenant.workspaceId, fileId);
     if (asset.lifecycle === AssetLifecycle.ACTIVE) return serializeAsset(asset);
     if (
@@ -649,6 +663,7 @@ export class AssetsService {
     dto: UploadCompleteDto,
     correlationId: string,
   ) {
+    await this.requireActiveWorkspaceMembership(tenant);
     await this.assertProject(tenant.workspaceId, projectId);
     const asset = await this.findAsset(tenant.workspaceId, projectId, assetId);
     if (asset.status === AssetStatus.DELETED) throw new NotFoundException('Asset not found.');
@@ -719,6 +734,7 @@ export class AssetsService {
   }
 
   async list(tenant: WorkspaceTenantContext, projectId: string, query: AssetQueryDto) {
+    await this.requireActiveWorkspaceMembership(tenant);
     await this.assertProject(tenant.workspaceId, projectId);
     const assetWhere: Prisma.AssetWhereInput = {
       workspaceId: tenant.workspaceId,
@@ -761,11 +777,13 @@ export class AssetsService {
   }
 
   async get(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     await this.assertProject(tenant.workspaceId, projectId);
     return serializeAsset(await this.findAsset(tenant.workspaceId, projectId, assetId));
   }
 
   async download(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     await this.assertProject(tenant.workspaceId, projectId);
     const asset = await this.findAsset(tenant.workspaceId, projectId, assetId);
     if (asset.status !== AssetStatus.READY) {
@@ -788,6 +806,7 @@ export class AssetsService {
   }
 
   async remove(tenant: WorkspaceTenantContext, projectId: string, assetId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     await this.assertProject(tenant.workspaceId, projectId);
     await this.findAsset(tenant.workspaceId, projectId, assetId);
     const now = new Date();
@@ -926,6 +945,15 @@ export class AssetsService {
     workspaceId: string,
     requestedBytes: bigint,
   ) {
+    if (
+      await this.billingEntitlements?.assertWorkspaceStorageAvailableTx(
+        tx,
+        workspaceId,
+        requestedBytes,
+      )
+    ) {
+      return;
+    }
     await tx.$queryRaw<Array<{ lock: string }>>`
       SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))::text AS lock
     `;

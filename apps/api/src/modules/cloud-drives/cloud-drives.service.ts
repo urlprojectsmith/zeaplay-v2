@@ -6,15 +6,20 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnprocessableEntityException,
+  Optional,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import {
   AssetLifecycle,
   AssetStatus,
+  AgencyStatus,
   CloudDriveConnectionStatus,
   CloudDriveProvider,
   MembershipStatus,
   Prisma,
+  SuperAgencyStatus,
+  UserStatus,
+  WorkspaceStatus,
 } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
@@ -23,6 +28,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 import type { StorageAdapter } from '../../infrastructure/storage/storage-adapter';
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { CloudDriveProviderRegistry } from './cloud-drive-provider.registry';
 import { CloudDriveTokenEncryptionService } from './cloud-drive-token-encryption.service';
 import type { CloudDriveFile } from './providers/cloud-drive-provider.interface';
@@ -59,6 +65,7 @@ export class CloudDrivesService {
     private readonly encryption: CloudDriveTokenEncryptionService,
     private readonly audit: AuditService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   providerStatuses() {
@@ -66,6 +73,7 @@ export class CloudDrivesService {
   }
 
   async listConnections(tenant: WorkspaceTenantContext) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const connections = await this.prisma.cloudDriveConnection.findMany({
       where: { workspaceId: tenant.workspaceId },
       orderBy: [{ provider: 'asc' }, { createdAt: 'desc' }],
@@ -130,15 +138,32 @@ export class CloudDrivesService {
           expiresAt: true,
           consumedAt: true,
           redirectPath: true,
-          workspace: { select: { agencyId: true } },
-          actorMembership: { select: { userId: true, status: true } },
+          workspace: {
+            select: {
+              agencyId: true,
+              status: true,
+              agency: {
+                select: {
+                  status: true,
+                  superAgency: { select: { status: true } },
+                },
+              },
+            },
+          },
+          actorMembership: {
+            select: {
+              userId: true,
+              status: true,
+              user: { select: { status: true } },
+            },
+          },
         },
       });
       if (
         !found ||
         found.consumedAt ||
         found.expiresAt <= new Date() ||
-        found.actorMembership.status !== MembershipStatus.ACTIVE
+        !isActiveOAuthCallbackContext(found)
       ) {
         throw new BadRequestException('CLOUD_OAUTH_STATE_INVALID');
       }
@@ -212,6 +237,7 @@ export class CloudDrivesService {
   }
 
   async disconnect(tenant: WorkspaceTenantContext, connectionId: string) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const connection = await this.findConnectionForOperation(
       tenant.workspaceId,
       connectionId,
@@ -261,6 +287,7 @@ export class CloudDrivesService {
       foldersOnly?: boolean;
     },
   ) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const { connection, accessToken } = await this.authorizedAccessToken(
       tenant.workspaceId,
       connectionId,
@@ -434,6 +461,7 @@ export class CloudDrivesService {
     connectionId: string,
     input: { assetId: string; destinationFolderId?: string | null; filename?: string },
   ) {
+    await this.requireActiveWorkspaceMembership(tenant);
     const { connection, accessToken } = await this.authorizedAccessToken(
       tenant.workspaceId,
       connectionId,
@@ -605,6 +633,15 @@ export class CloudDrivesService {
     workspaceId: string,
     requestedBytes: bigint,
   ) {
+    if (
+      await this.billingEntitlements?.assertWorkspaceStorageAvailableTx(
+        tx,
+        workspaceId,
+        requestedBytes,
+      )
+    ) {
+      return;
+    }
     await tx.$queryRaw<Array<{ lock: string }>>`
       SELECT pg_advisory_xact_lock(hashtext(${workspaceId}))::text AS lock
     `;
@@ -724,6 +761,22 @@ function serializeConnection(connection: SafeConnection) {
 
 function serializeAsset(asset: AssetSafe) {
   return { ...asset, sizeBytes: Number(asset.sizeBytes) };
+}
+
+function isActiveOAuthCallbackContext(state: {
+  workspace: {
+    status: WorkspaceStatus;
+    agency: { status: AgencyStatus; superAgency: { status: SuperAgencyStatus } };
+  };
+  actorMembership: { status: MembershipStatus; user: { status: UserStatus } };
+}) {
+  return (
+    state.actorMembership.status === MembershipStatus.ACTIVE &&
+    state.actorMembership.user.status === UserStatus.ACTIVE &&
+    state.workspace.status === WorkspaceStatus.ACTIVE &&
+    state.workspace.agency.status === AgencyStatus.ACTIVE &&
+    state.workspace.agency.superAgency.status === SuperAgencyStatus.ACTIVE
+  );
 }
 
 function normalizeCloudFile(connectionId: string, file: CloudDriveFile) {

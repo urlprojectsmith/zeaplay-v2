@@ -1,7 +1,13 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
-import { WebhookDeliveryStatus, WebhookSubscriptionStatus } from '@prisma/client';
+import {
+  AgencyStatus,
+  SuperAgencyStatus,
+  WebhookDeliveryStatus,
+  WebhookSubscriptionStatus,
+  WorkspaceStatus,
+} from '@prisma/client';
 import type { Job, Queue } from 'bullmq';
 import { createDecipheriv, createHash, createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
@@ -124,6 +130,17 @@ export class WebhookDeliveryProcessor extends WorkerHost {
             status: true,
             endpointUrl: true,
             encryptedSecret: true,
+            workspace: {
+              select: {
+                status: true,
+                agency: {
+                  select: {
+                    status: true,
+                    superAgency: { select: { status: true } },
+                  },
+                },
+              },
+            },
           },
         },
         event: {
@@ -146,6 +163,10 @@ export class WebhookDeliveryProcessor extends WorkerHost {
     }
     if (row.subscription.status !== WebhookSubscriptionStatus.ACTIVE) {
       await this.failPermanently(deliveryId, 'WEBHOOK_SUBSCRIPTION_DISABLED');
+      return { status: 'FAILED' as const };
+    }
+    if (!hasActiveHierarchy(row.subscription.workspace)) {
+      await this.failPermanently(deliveryId, 'TENANT_HIERARCHY_INACTIVE');
       return { status: 'FAILED' as const };
     }
 
@@ -477,5 +498,16 @@ function isBlockedIpv6(address: string) {
     lower.startsWith('fe80') ||
     lower.startsWith('ff') ||
     lower.startsWith('2001:db8')
+  );
+}
+
+function hasActiveHierarchy(workspace: {
+  status: WorkspaceStatus;
+  agency: { status: AgencyStatus; superAgency: { status: SuperAgencyStatus } };
+}) {
+  return (
+    workspace.status === WorkspaceStatus.ACTIVE &&
+    workspace.agency.status === AgencyStatus.ACTIVE &&
+    workspace.agency.superAgency.status === SuperAgencyStatus.ACTIVE
   );
 }

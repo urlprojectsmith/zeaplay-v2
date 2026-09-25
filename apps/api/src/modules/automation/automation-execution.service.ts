@@ -10,6 +10,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import {
+  AgencyStatus,
   AutomationActionType,
   AutomationConditionOperator,
   AutomationExecutionStatus,
@@ -21,11 +22,15 @@ import {
   AutomationWorkflowNodeType,
   MembershipStatus,
   Prisma,
+  SuperAgencyStatus,
+  SuperAgencySubscriptionStatus,
+  WorkspaceStatus,
 } from '@prisma/client';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { NotificationRouterService } from '../notifications/notification-router.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import {
@@ -88,6 +93,7 @@ export class AutomationExecutionService {
     @Optional() private readonly audit?: AuditService,
     @Optional() private readonly realtime?: RealtimeService,
     @Optional() private readonly notifications?: NotificationRouterService,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async createForTriggerMatch(
@@ -95,14 +101,22 @@ export class AutomationExecutionService {
     client: Tx | PrismaService = this.prisma,
   ): Promise<{ id: string } | null> {
     if (this.policy && client === this.prisma) {
-      const created = await this.prisma.$transaction(
-        (tx) => this.createForTriggerMatch(triggerMatchId, tx),
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        },
-      );
+      let created: { id: string } | null | undefined;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          created = await this.prisma.$transaction(
+            (tx) => this.createForTriggerMatch(triggerMatchId, tx),
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            },
+          );
+          break;
+        } catch (error) {
+          if (attempt === 1 || !isSerializableWriteConflict(error)) throw error;
+        }
+      }
       await this.publishExecutionRealtime(created?.id ?? null, 'AUTOMATION_EXECUTION_CREATED');
-      return created;
+      return created ?? null;
     }
     const match = await client.automationTriggerMatch.findUnique({
       where: { id: triggerMatchId },
@@ -148,6 +162,10 @@ export class AutomationExecutionService {
           client,
         );
       }
+      await this.billingEntitlements?.reserveAutomationExecutionUsageTx(
+        client as Tx,
+        match.workspaceId,
+      );
 
       const blockedDepth = match.domainEvent.automationDepth >= AUTOMATION_MAX_FUTURE_DEPTH;
       const plan = blockedDepth
@@ -423,6 +441,7 @@ export class AutomationExecutionService {
         tx,
       );
     }
+    await this.billingEntitlements?.reserveAutomationExecutionUsageTx(tx, tenant.workspaceId);
     const plan = planDeterministicRuntime(
       original.workflowVersion.nodesDefinition,
       original.workflowVersion.edgesDefinition,
@@ -575,6 +594,12 @@ export class AutomationExecutionService {
           } else {
             const claimedStep = await this.claimStep(step.id);
             if (!claimedStep) return;
+            const hierarchy = await this.assertEffectiveHierarchyOperational(
+              claimed.workspaceId,
+              executionId,
+              step.id,
+            );
+            if (!hierarchy.operational) return;
             try {
               const context = await this.variableContext(claimed);
               const resolvedConfig = new AutomationVariableResolver().resolveConfig(
@@ -583,7 +608,7 @@ export class AutomationExecutionService {
               );
               validateAutomationActionConfig(resolvedConfig, 'resolvedAction.config');
               const result = await this.actions.executeAction(
-                tenant,
+                { ...tenant, agencyId: hierarchy.agencyId },
                 {
                   workspaceId: claimed.workspaceId,
                   actionNodeId: next.nodeId,
@@ -937,6 +962,53 @@ export class AutomationExecutionService {
     await this.notifyAutomationFailure(executionId, exhausted);
   }
 
+  private async assertEffectiveHierarchyOperational(
+    workspaceId: string,
+    executionId: string,
+    stepId: string,
+  ) {
+    const hierarchy = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: {
+        id: true,
+        status: true,
+        agencyId: true,
+        agency: {
+          select: {
+            id: true,
+            status: true,
+            superAgencyId: true,
+            superAgency: {
+              select: {
+                id: true,
+                status: true,
+                subscriptions: {
+                  where: { isCurrent: true },
+                  select: { status: true, graceEndsAt: true },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const failure = classifyHierarchyFailure(hierarchy);
+    if (!failure) return { operational: true as const, agencyId: hierarchy!.agencyId };
+
+    await this.failExecution(executionId, stepId, failure.code, failure.message, 'NON_RETRYABLE');
+    this.logger.warn({
+      executionId,
+      workspaceId,
+      agencyId: hierarchy?.agencyId ?? null,
+      superAgencyId: hierarchy?.agency.superAgencyId ?? null,
+      code: failure.code,
+      message: 'Automation execution blocked by effective tenant hierarchy status',
+    });
+    return { operational: false as const };
+  }
+
   private async notifyAutomationFailure(executionId: string, deadLettered: boolean) {
     if (!this.notifications) return;
     try {
@@ -1223,6 +1295,10 @@ function countActionNodes(value: Prisma.JsonValue) {
   return parseNodes(value).filter((node) => node.type === AutomationWorkflowNodeType.ACTION).length;
 }
 
+function isSerializableWriteConflict(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
+}
+
 function countGroupItem(item: { _count?: true | { _all?: number } }) {
   return typeof item._count === 'object' ? (item._count._all ?? 0) : 0;
 }
@@ -1487,6 +1563,101 @@ function tenantFromExecution(execution: ExecutionRecord): WorkspaceTenantContext
     permissions: [],
     accessSource: 'WORKSPACE_MEMBERSHIP',
   };
+}
+
+type EffectiveHierarchy = Prisma.WorkspaceGetPayload<{
+  select: {
+    id: true;
+    status: true;
+    agencyId: true;
+    agency: {
+      select: {
+        id: true;
+        status: true;
+        superAgencyId: true;
+        superAgency: {
+          select: {
+            id: true;
+            status: true;
+            subscriptions: {
+              where: { isCurrent: true };
+              select: { status: true; graceEndsAt: true };
+              orderBy: { createdAt: 'desc' };
+              take: 1;
+            };
+          };
+        };
+      };
+    };
+  };
+}>;
+
+function classifyHierarchyFailure(hierarchy: EffectiveHierarchy | null): {
+  code: string;
+  message: string;
+} | null {
+  if (!hierarchy) {
+    return {
+      code: 'TENANT_INACTIVE',
+      message: 'Workspace is unavailable for automation execution.',
+    };
+  }
+  if (hierarchy.status === WorkspaceStatus.SUSPENDED) {
+    return {
+      code: 'TENANT_SUSPENDED',
+      message: 'Workspace is suspended for automation execution.',
+    };
+  }
+  if (hierarchy.status !== WorkspaceStatus.ACTIVE) {
+    return {
+      code: 'TENANT_INACTIVE',
+      message: 'Workspace is not active for automation execution.',
+    };
+  }
+  if (hierarchy.agency.status === AgencyStatus.SUSPENDED) {
+    return {
+      code: 'TENANT_SUSPENDED',
+      message: 'Agency is suspended for automation execution.',
+    };
+  }
+  if (hierarchy.agency.status !== AgencyStatus.ACTIVE) {
+    return {
+      code: 'TENANT_INACTIVE',
+      message: 'Agency is not active for automation execution.',
+    };
+  }
+  if (hierarchy.agency.superAgency.status === SuperAgencyStatus.SUSPENDED) {
+    return {
+      code: 'TENANT_SUSPENDED',
+      message: 'Super Agency is suspended for automation execution.',
+    };
+  }
+  if (hierarchy.agency.superAgency.status !== SuperAgencyStatus.ACTIVE) {
+    return {
+      code: 'TENANT_INACTIVE',
+      message: 'Super Agency is not active for automation execution.',
+    };
+  }
+  const subscription = hierarchy.agency.superAgency.subscriptions?.[0];
+  if (subscription && isCommerciallyRestricted(subscription.status, subscription.graceEndsAt)) {
+    return {
+      code: 'ACCOUNT_RESTRICTED',
+      message: 'Commercial account is restricted for automation execution.',
+    };
+  }
+  return null;
+}
+
+function isCommerciallyRestricted(status: SuperAgencySubscriptionStatus, graceEndsAt: Date | null) {
+  if (
+    status === SuperAgencySubscriptionStatus.RESTRICTED ||
+    status === SuperAgencySubscriptionStatus.SUSPENDED ||
+    status === SuperAgencySubscriptionStatus.CANCELED ||
+    status === SuperAgencySubscriptionStatus.EXPIRED
+  ) {
+    return true;
+  }
+  return (graceEndsAt?.getTime() ?? Number.POSITIVE_INFINITY) < Date.now();
 }
 
 function classifyError(error: unknown): { kind: ErrorKind; code: string; message: string } {

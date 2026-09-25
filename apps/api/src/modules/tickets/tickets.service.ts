@@ -52,6 +52,7 @@ import type { AutomationMutationContext } from '../automation/automation-action.
 import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
 import { UploadCompleteDto } from '../assets/dto/upload-complete.dto';
 import { UploadInitDto } from '../assets/dto/upload-init.dto';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { GamificationService } from '../gamification/gamification.service';
 import { NotificationReminderService } from '../notifications/notification-reminder.service';
 import { NotificationRouterService } from '../notifications/notification-router.service';
@@ -234,6 +235,8 @@ export class TicketsService {
     private readonly notificationReminders: NotificationReminderService = missingNotificationReminderService,
     @Optional()
     private readonly realtime: RealtimeService = missingRealtimeService,
+    @Optional()
+    private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async create(
@@ -241,6 +244,10 @@ export class TicketsService {
     dto: CreateTicketDto,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const subject = normalizeSubject(dto.subject);
     const description = normalizeDescription(dto.description);
     const status = await this.ticketStatus(tenant.workspaceId, dto.statusDefinitionId);
@@ -695,6 +702,10 @@ export class TicketsService {
   }
 
   async createSavedView(tenant: WorkspaceTenantContext, dto: TicketSavedViewDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const name = normalizeSavedViewName(dto.name);
     const scope = dto.scope;
     const ownerMembershipId =
@@ -745,6 +756,10 @@ export class TicketsService {
     viewId: string,
     dto: UpdateTicketSavedViewDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const existing = await this.readSavedViewForMutation(tenant, viewId);
     const data: Prisma.TicketSavedViewUpdateInput = {};
     const changed: string[] = [];
@@ -833,6 +848,10 @@ export class TicketsService {
     dto: UpdateTicketDto,
     automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const existing = await this.readTicket(tenant, id);
     const data: Prisma.TicketUncheckedUpdateManyInput = {};
     const changed: string[] = [];
@@ -1021,6 +1040,10 @@ export class TicketsService {
   }
 
   async updateRequester(tenant: WorkspaceTenantContext, id: string, dto: TicketRequesterDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const existing = await this.readTicket(tenant, id);
     const requester = await this.validRequester(tenant.workspaceId, dto);
     if (sameRequester(existing.requester, requester)) return serializeTicket(existing);
@@ -1067,6 +1090,10 @@ export class TicketsService {
     dto: UpdateTicketAssignmentDto,
     _automation?: AutomationMutationContext,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const existing = await this.readTicket(tenant, id);
     const assignment = await this.validAssignment(tenant.workspaceId, existing, dto);
     if (
@@ -1182,6 +1209,10 @@ export class TicketsService {
   }
 
   async claim(tenant: WorkspaceTenantContext, id: string) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     if (!hasPermission(tenant, PermissionKeys.ticketsClaim)) {
       throw new ForbiddenException('TICKET_CLAIM_PERMISSION_REQUIRED');
     }
@@ -1247,6 +1278,10 @@ export class TicketsService {
     id: string,
     dto: UpdateTicketEscalationDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     if (!hasPermission(tenant, PermissionKeys.ticketsEscalate)) {
       throw new ForbiddenException('TICKET_ESCALATE_PERMISSION_REQUIRED');
     }
@@ -1368,6 +1403,10 @@ export class TicketsService {
     ticketId: string,
     dto: CreateTicketConversationEntryDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     const body = normalizeConversationBody(dto.body);
     const requiredPermission =
       dto.type === TicketConversationEntryType.PUBLIC_REPLY
@@ -1436,6 +1475,7 @@ export class TicketsService {
       }
       await tx.auditLog.create({
         data: {
+          superAgencyId: tenant.superAgencyId,
           agencyId: tenant.agencyId,
           workspaceId: tenant.workspaceId,
           userId: tenant.userId,
@@ -1520,6 +1560,10 @@ export class TicketsService {
     dto: UploadInitDto,
     correlationId: string,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     this.assertPermission(tenant, PermissionKeys.ticketsAttachmentsAdd);
     await this.readTicket(tenant, ticketId);
     const uploadedByMembershipId = requireUploadMembership(tenant);
@@ -1544,7 +1588,12 @@ export class TicketsService {
         select: { id: true },
       });
       if (!ticket) throw new NotFoundException('TICKET_NOT_FOUND');
-      await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
+      const managed = await this.billingEntitlements?.assertWorkspaceStorageAvailableTx(
+        tx,
+        tenant.workspaceId,
+        sizeBytes,
+      );
+      if (!managed) await assertStorageQuotaAvailable(tx, tenant.workspaceId, sizeBytes);
       const asset = await tx.asset.create({
         data: {
           id: assetId,
@@ -1694,6 +1743,10 @@ export class TicketsService {
     ticketId: string,
     dto: CreateTicketUrlAttachmentDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     this.assertPermission(tenant, PermissionKeys.ticketsAttachmentsAdd);
     await this.readTicket(tenant, ticketId);
     const url = normalizeAttachmentUrl(dto.url);
@@ -1745,6 +1798,10 @@ export class TicketsService {
     ticketId: string,
     dto: TicketAttachmentIdsDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'tickets.enabled',
+    );
     this.assertPermission(tenant, PermissionKeys.ticketsAttachmentsAdd);
     await this.readTicket(tenant, ticketId);
     const attachmentIds = uniqueIds(dto.attachmentIds);

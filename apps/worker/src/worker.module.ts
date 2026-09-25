@@ -12,6 +12,8 @@ import { TaskRecurrenceProcessor } from './processors/task-recurrence.processor'
 import { TicketSlaProcessor } from './processors/ticket-sla.processor';
 import { WebhookDeliveryProcessor } from './processors/webhook-delivery.processor';
 import { InboundWebhookMaintenanceProcessor } from './processors/inbound-webhook-maintenance.processor';
+import { WorkerHierarchyService } from './processors/worker-hierarchy.service';
+import { BillingLifecycleProcessor } from './processors/billing-lifecycle.processor';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { InboundWebhookMaintenanceProcessor } from './processors/inbound-webhook
     StorageRetentionProcessor,
     WebhookDeliveryProcessor,
     InboundWebhookMaintenanceProcessor,
+    BillingLifecycleProcessor,
+    WorkerHierarchyService,
   ],
 })
 export class WorkerModule {}

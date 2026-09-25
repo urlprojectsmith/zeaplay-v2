@@ -1,9 +1,12 @@
 import {
+  AgencyStatus,
   AutomationActionType,
   AutomationExecutionStatus,
   AutomationStepExecutionStatus,
   AutomationTriggerType,
   AutomationWorkflowNodeType,
+  SuperAgencyStatus,
+  WorkspaceStatus,
 } from '@prisma/client';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import { AutomationExecutionService } from './automation-execution.service';
@@ -44,6 +47,33 @@ describe('AutomationExecutionService', () => {
       }),
     );
     expect(prisma.automationExecution.create.mock.calls[0][0].data).not.toHaveProperty('steps');
+  });
+
+  it('meters a canonical trigger execution exactly once across duplicate create attempts', async () => {
+    const prisma = prismaForMatch({
+      nodesDefinition: [triggerNode(), actionNode('action-1', AutomationActionType.CREATE_TASK)],
+      edgesDefinition: [{ sourceNodeId: 'trigger', targetNodeId: 'action-1' }],
+    });
+    prisma.automationExecution.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'execution-1' });
+    const billing = { reserveAutomationExecutionUsageTx: jest.fn().mockResolvedValue(true) };
+    const service = new AutomationExecutionService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      billing as never,
+    );
+
+    await expect(service.createForTriggerMatch('match-1')).resolves.toEqual({ id: 'execution-1' });
+    await expect(service.createForTriggerMatch('match-1')).resolves.toEqual({ id: 'execution-1' });
+
+    expect(billing.reserveAutomationExecutionUsageTx).toHaveBeenCalledTimes(1);
+    expect(prisma.automationExecution.create).toHaveBeenCalledTimes(1);
   });
 
   it('blocks unsupported runtime graphs without creating partial steps', async () => {
@@ -295,6 +325,130 @@ describe('AutomationExecutionService', () => {
     );
   });
 
+  it('blocks queued business actions when the Super Agency becomes suspended before worker execution', async () => {
+    const actions = { executeAction: jest.fn() };
+    const prisma = traversalPrisma(executionRecord(), {
+      hierarchy: hierarchyRecord({ superAgencyStatus: SuperAgencyStatus.SUSPENDED }),
+    });
+    const service = new AutomationExecutionService(prisma as never, actions as never);
+
+    await service.processExecution('execution-1');
+
+    expect(actions.executeAction).not.toHaveBeenCalled();
+    expect(prisma.automationStepExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'step-action-1' },
+        data: expect.objectContaining({
+          status: AutomationStepExecutionStatus.FAILED,
+          errorCode: 'TENANT_SUSPENDED',
+          finishedAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(prisma.automationExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'execution-1' },
+        data: expect.objectContaining({
+          status: AutomationExecutionStatus.FAILED,
+          failureCode: 'TENANT_SUSPENDED',
+          finishedAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('does not retry indefinitely when an Agency is archived before execution', async () => {
+    const actions = { executeAction: jest.fn() };
+    const prisma = traversalPrisma(executionRecord(), {
+      hierarchy: hierarchyRecord({ agencyStatus: AgencyStatus.ARCHIVED }),
+    });
+    const service = new AutomationExecutionService(prisma as never, actions as never);
+
+    await service.processExecution('execution-1');
+
+    expect(actions.executeAction).not.toHaveBeenCalled();
+    expect(prisma.automationExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: AutomationExecutionStatus.FAILED,
+          failureCode: 'TENANT_INACTIVE',
+          finishedAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it('preserves completed steps and blocks the next action when parent status changes mid-run', async () => {
+    const actions = {
+      executeAction: jest.fn().mockResolvedValue({
+        actionType: AutomationActionType.CREATE_TASK,
+        status: 'SUCCEEDED',
+        entityType: 'TASK',
+        entityId: 'task-created',
+        changed: true,
+        generatedDomainEventIds: [],
+      }),
+    };
+    const prisma = traversalPrisma(twoActionExecutionRecord(), {
+      hierarchies: [
+        hierarchyRecord(),
+        hierarchyRecord({ superAgencyStatus: SuperAgencyStatus.SUSPENDED }),
+      ],
+    });
+    const service = new AutomationExecutionService(prisma as never, actions as never);
+
+    await service.processExecution('execution-1');
+
+    expect(actions.executeAction).toHaveBeenCalledTimes(1);
+    expect(actions.executeAction.mock.calls[0][1].actionNodeId).toBe('action-1');
+    expect(prisma.automationStepExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'step-action-1' },
+        data: expect.objectContaining({
+          status: AutomationStepExecutionStatus.SUCCEEDED,
+          errorCode: null,
+        }),
+      }),
+    );
+    expect(prisma.automationStepExecution.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'step-action-2' },
+        data: expect.objectContaining({
+          status: AutomationStepExecutionStatus.FAILED,
+          errorCode: 'TENANT_SUSPENDED',
+        }),
+      }),
+    );
+  });
+
+  it('uses PostgreSQL hierarchy authority to populate canonical Agency context for actions', async () => {
+    const actions = {
+      executeAction: jest.fn().mockResolvedValue({
+        actionType: AutomationActionType.CREATE_TASK,
+        status: 'SUCCEEDED',
+        entityType: 'TASK',
+        entityId: 'task-created',
+        changed: true,
+        generatedDomainEventIds: [],
+      }),
+    };
+    const prisma = traversalPrisma(executionRecord(), {
+      hierarchy: hierarchyRecord({ agencyId: 'agency-from-db' }),
+    });
+    const service = new AutomationExecutionService(prisma as never, actions as never);
+
+    await service.processExecution('execution-1');
+
+    expect(actions.executeAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'workspace-1',
+        agencyId: 'agency-from-db',
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
   it('replays a failed execution by creating a new pending execution from stored context', async () => {
     const tx = replayTx(AutomationExecutionStatus.FAILED);
     const prisma = {
@@ -374,6 +528,68 @@ describe('AutomationExecutionService', () => {
 
     expect(tx.automationExecution.create).not.toHaveBeenCalled();
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  it('meters a new replay once and does not meter an idempotent replay response', async () => {
+    const tx = replayTx(AutomationExecutionStatus.FAILED);
+    const prisma = {
+      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+      automationExecution: {
+        findFirst: jest.fn().mockResolvedValue(replayDetail('replay-1')),
+      },
+    };
+    const billing = { reserveAutomationExecutionUsageTx: jest.fn().mockResolvedValue(true) };
+    const service = new AutomationExecutionService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      billing as never,
+    );
+
+    await service.replayExecution(tenantContext(), 'execution-1', {
+      reason: 'Operator approved replay',
+      confirmation: 'REPLAY',
+      idempotencyKey: 'replay-key-1',
+    });
+
+    const idempotentTx = replayTx(AutomationExecutionStatus.FAILED, {
+      idempotent: {
+        id: 'replay-1',
+        replayOfExecutionId: 'execution-1',
+        replayReason: 'Operator approved replay',
+      },
+    });
+    const idempotentService = new AutomationExecutionService(
+      {
+        $transaction: jest.fn(async (callback: (client: typeof idempotentTx) => Promise<unknown>) =>
+          callback(idempotentTx),
+        ),
+        automationExecution: {
+          findFirst: jest.fn().mockResolvedValue(replayDetail('replay-1')),
+        },
+      } as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      billing as never,
+    );
+
+    await idempotentService.replayExecution(tenantContext(), 'execution-1', {
+      reason: 'Operator approved replay',
+      confirmation: 'REPLAY',
+      idempotencyKey: 'replay-key-1',
+    });
+
+    expect(billing.reserveAutomationExecutionUsageTx).toHaveBeenCalledTimes(1);
   });
 
   it('rejects replay for succeeded executions', async () => {
@@ -646,6 +862,23 @@ function executionRecord() {
   };
 }
 
+function twoActionExecutionRecord() {
+  return {
+    ...executionRecord(),
+    workflowVersion: {
+      nodesDefinition: [
+        triggerNode(),
+        actionNode('action-1', AutomationActionType.CREATE_TASK),
+        actionNode('action-2', AutomationActionType.CREATE_TASK),
+      ],
+      edgesDefinition: [
+        { fromNodeId: 'trigger', toNodeId: 'action-1' },
+        { fromNodeId: 'action-1', toNodeId: 'action-2' },
+      ],
+    },
+  };
+}
+
 function conditionExecutionRecord() {
   return {
     ...executionRecord(),
@@ -673,9 +906,16 @@ function conditionExecutionRecord() {
   };
 }
 
-function traversalPrisma(record: Record<string, unknown>) {
+function traversalPrisma(
+  record: Record<string, unknown>,
+  options: {
+    hierarchy?: ReturnType<typeof hierarchyRecord>;
+    hierarchies?: Array<ReturnType<typeof hierarchyRecord>>;
+  } = {},
+) {
   let sequence = 0;
   const txStepUpdate = jest.fn().mockResolvedValue({ id: 'claimed-step' });
+  const hierarchyResponses = [...(options.hierarchies ?? [])];
   return {
     $transaction: jest.fn(async (input: unknown) => {
       if (typeof input === 'function') {
@@ -721,7 +961,38 @@ function traversalPrisma(record: Record<string, unknown>) {
       update: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue({ attemptCount: 1, maxAttempts: 3 }),
     },
+    workspace: {
+      findUnique: jest
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(hierarchyResponses.shift() ?? options.hierarchy ?? hierarchyRecord()),
+        ),
+    },
     task: { findFirst: jest.fn() },
+  };
+}
+
+function hierarchyRecord(
+  overrides: {
+    workspaceStatus?: WorkspaceStatus;
+    agencyId?: string;
+    agencyStatus?: AgencyStatus;
+    superAgencyStatus?: SuperAgencyStatus;
+  } = {},
+) {
+  return {
+    id: 'workspace-1',
+    status: overrides.workspaceStatus ?? WorkspaceStatus.ACTIVE,
+    agencyId: overrides.agencyId ?? 'agency-1',
+    agency: {
+      id: overrides.agencyId ?? 'agency-1',
+      status: overrides.agencyStatus ?? AgencyStatus.ACTIVE,
+      superAgencyId: 'super-agency-1',
+      superAgency: {
+        id: 'super-agency-1',
+        status: overrides.superAgencyStatus ?? SuperAgencyStatus.ACTIVE,
+      },
+    },
   };
 }
 

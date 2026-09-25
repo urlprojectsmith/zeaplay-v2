@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import {
@@ -20,6 +21,7 @@ import {
 } from '../../infrastructure/queue/queue.constants';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { CloudDriveTokenEncryptionService } from '../cloud-drives/cloud-drive-token-encryption.service';
 import {
   WEBHOOK_ACTIVE_SUBSCRIPTION_LIMIT,
@@ -87,9 +89,11 @@ export class WebhooksService {
     private readonly signing: WebhookSigningService,
     private readonly urls: WebhookUrlValidatorService,
     @InjectQueue(WEBHOOK_DELIVERY_QUEUE) private readonly deliveryQueue: Queue,
+    @Optional() private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async list(tenant: WorkspaceTenantContext, query: WebhookListQueryDto) {
+    this.requireActiveWorkspaceMembership(tenant);
     const where = {
       workspaceId: tenant.workspaceId,
     } satisfies Prisma.WebhookSubscriptionWhereInput;
@@ -112,6 +116,10 @@ export class WebhooksService {
   }
 
   async create(tenant: WorkspaceTenantContext, dto: CreateWebhookSubscriptionDto) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'webhooks.enabled',
+    );
     const membershipId = this.requireActiveWorkspaceMembership(tenant);
     const endpointUrl = await this.urls.assertSafeUrl(dto.endpointUrl, {
       allowLocalHttp: this.env.WEBHOOK_ALLOW_LOCAL_HTTP,
@@ -162,6 +170,11 @@ export class WebhooksService {
     webhookId: string,
     dto: UpdateWebhookSubscriptionDto,
   ) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'webhooks.enabled',
+    );
+    this.requireActiveWorkspaceMembership(tenant);
     const existing = await this.findSubscriptionOrThrow(tenant.workspaceId, webhookId);
     const endpointUrl =
       dto.endpointUrl === undefined
@@ -193,6 +206,7 @@ export class WebhooksService {
   }
 
   async disable(tenant: WorkspaceTenantContext, webhookId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     const existing = await this.findSubscriptionOrThrow(tenant.workspaceId, webhookId);
     if (existing.status === WebhookSubscriptionStatus.DISABLED)
       return serializeSubscription(existing);
@@ -214,6 +228,11 @@ export class WebhooksService {
   }
 
   async rotateSecret(tenant: WorkspaceTenantContext, webhookId: string) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'webhooks.enabled',
+    );
+    this.requireActiveWorkspaceMembership(tenant);
     const existing = await this.findSubscriptionOrThrow(tenant.workspaceId, webhookId);
     const plaintextSecret = this.signing.generateSecret();
     const updated = await this.prisma.webhookSubscription.update({
@@ -234,6 +253,11 @@ export class WebhooksService {
   }
 
   async sendTest(tenant: WorkspaceTenantContext, webhookId: string) {
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      tenant.workspaceId,
+      'webhooks.enabled',
+    );
+    this.requireActiveWorkspaceMembership(tenant);
     const subscription = await this.findSubscriptionOrThrow(tenant.workspaceId, webhookId);
     if (subscription.status !== WebhookSubscriptionStatus.ACTIVE)
       throw new BadRequestException('WEBHOOK_DISABLED');
@@ -296,6 +320,7 @@ export class WebhooksService {
     webhookId: string,
     query: WebhookDeliveryListQueryDto,
   ) {
+    this.requireActiveWorkspaceMembership(tenant);
     await this.findSubscriptionOrThrow(tenant.workspaceId, webhookId);
     const where = {
       workspaceId: tenant.workspaceId,
@@ -315,6 +340,7 @@ export class WebhooksService {
   }
 
   async getDelivery(tenant: WorkspaceTenantContext, deliveryId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     const delivery = await this.prisma.webhookDelivery.findFirst({
       where: { id: deliveryId, workspaceId: tenant.workspaceId },
       select: deliverySelect,
@@ -324,6 +350,7 @@ export class WebhooksService {
   }
 
   async retryDelivery(tenant: WorkspaceTenantContext, deliveryId: string) {
+    this.requireActiveWorkspaceMembership(tenant);
     const delivery = await this.prisma.webhookDelivery.findFirst({
       where: { id: deliveryId, workspaceId: tenant.workspaceId },
       select: { id: true, status: true, subscriptionId: true },

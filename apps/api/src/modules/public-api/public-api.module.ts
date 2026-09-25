@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BillingModule } from '../billing/billing.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { TicketsModule } from '../tickets/tickets.module';
@@ -15,7 +16,7 @@ import { PublicApiRateLimitGuard } from './guards/public-api-rate-limit.guard';
 import { PublicApiScopeGuard } from './guards/public-api-scope.guard';
 
 @Module({
-  imports: [TasksModule, ProjectsModule, TicketsModule],
+  imports: [BillingModule, TasksModule, ProjectsModule, TicketsModule],
   controllers: [
     ApiKeysController,
     PublicTasksController,

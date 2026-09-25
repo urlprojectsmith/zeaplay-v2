@@ -191,6 +191,64 @@ describe('NotificationsService', () => {
     });
   });
 
+  it('keeps same-user multi-workspace notification feeds and preferences isolated by membership', async () => {
+    const prisma = createPrisma();
+    const service = new NotificationsService(prisma as never);
+    const otherTenant: WorkspaceTenantContext = {
+      ...tenant,
+      agencyId: 'agency-2',
+      workspaceId: 'workspace-2',
+      workspaceMembershipId: 'member-2',
+      userId: 'user-1',
+    };
+
+    await service.listForMembership(otherTenant, { page: 1, pageSize: 25, state: 'all' });
+    await service.getUnreadCount(otherTenant);
+    await service.markAllRead(otherTenant);
+    await service.updatePreferences(otherTenant, {
+      preferences: [{ category: NotificationCategory.TASK, inAppEnabled: false }],
+    });
+
+    expect(prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workspaceId: 'workspace-2',
+          recipientMembershipId: 'member-2',
+        }),
+      }),
+    );
+    expect(prisma.notification.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workspaceId: 'workspace-2',
+          recipientMembershipId: 'member-2',
+        }),
+      }),
+    );
+    expect(prisma.notification.updateMany).toHaveBeenCalledWith({
+      where: {
+        workspaceId: 'workspace-2',
+        recipientMembershipId: 'member-2',
+        readAt: null,
+      },
+      data: { readAt: expect.any(Date) },
+    });
+    expect(prisma.notificationPreference.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          membershipId_category: {
+            membershipId: 'member-2',
+            category: NotificationCategory.TASK,
+          },
+        },
+        create: expect.objectContaining({
+          workspaceId: 'workspace-2',
+          membershipId: 'member-2',
+        }),
+      }),
+    );
+  });
+
   it('marks only owned notifications read and mark-all only affects current membership', async () => {
     const prisma = createPrisma();
     const service = new NotificationsService(prisma as never);

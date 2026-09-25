@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import { superAgencyHeaders } from './super-agencies';
 
 export interface GlobalLeaderboardPage<T> {
   scope: string;
@@ -23,6 +24,16 @@ export interface GlobalAgencyLeaderboardItem {
   agencyId: string;
   agencyName: string;
   globalScore: number;
+  subaccounts: number;
+  scoredUsers: number;
+}
+
+export interface GlobalSuperAgencyLeaderboardItem {
+  rank: number;
+  superAgencyId: string;
+  superAgencyName: string;
+  globalScore: number;
+  agencies: number;
   subaccounts: number;
   scoredUsers: number;
 }
@@ -66,8 +77,10 @@ export const globalGamificationKeys = {
     workspaceId: string | null,
     params: GlobalLeaderboardParams,
   ) => ['global-gamification', 'agency', agencyId, 'users', workspaceId, params] as const,
-  platform: (contextAgencyId: string | null, tab: string, params: GlobalLeaderboardParams) =>
-    ['global-gamification', 'platform', contextAgencyId, tab, params] as const,
+  superAgency: (superAgencyId: string | null, tab: string, params: GlobalLeaderboardParams) =>
+    ['global-gamification', 'super-agency', superAgencyId, tab, params] as const,
+  platform: (tab: string, params: GlobalLeaderboardParams) =>
+    ['global-gamification', 'platform', tab, params] as const,
 };
 
 export async function getAgencyGlobalSubaccounts(agencyId: string, search = '') {
@@ -96,6 +109,50 @@ export async function getPlatformGlobalAgencies(params: GlobalLeaderboardParams)
   const suffix = globalLeaderboardSearch(params);
   const response = await apiClient.request<GlobalLeaderboardPage<GlobalAgencyLeaderboardItem>>(
     `/platform/gamification/global-leaderboard/agencies${suffix}`,
+  );
+  return response.data;
+}
+
+export async function getPlatformGlobalSuperAgencies(params: GlobalLeaderboardParams) {
+  const suffix = globalLeaderboardSearch(params);
+  const response = await apiClient.request<GlobalLeaderboardPage<GlobalSuperAgencyLeaderboardItem>>(
+    `/platform/gamification/global-leaderboard/super-agencies${suffix}`,
+  );
+  return response.data;
+}
+
+export async function getSuperAgencyGlobalAgencies(
+  superAgencyId: string,
+  params: GlobalLeaderboardParams,
+) {
+  const suffix = globalLeaderboardSearch(params);
+  const response = await apiClient.request<GlobalLeaderboardPage<GlobalAgencyLeaderboardItem>>(
+    `/super-agencies/${superAgencyId}/gamification/global-leaderboard/agencies${suffix}`,
+    { headers: superAgencyHeaders(superAgencyId), skipTenantContext: true },
+  );
+  return response.data;
+}
+
+export async function getSuperAgencyGlobalSubaccounts(
+  superAgencyId: string,
+  params: GlobalLeaderboardParams,
+) {
+  const suffix = globalLeaderboardSearch(params);
+  const response = await apiClient.request<GlobalLeaderboardPage<GlobalSubaccountLeaderboardItem>>(
+    `/super-agencies/${superAgencyId}/gamification/global-leaderboard/subaccounts${suffix}`,
+    { headers: superAgencyHeaders(superAgencyId), skipTenantContext: true },
+  );
+  return response.data;
+}
+
+export async function getSuperAgencyGlobalUsers(
+  superAgencyId: string,
+  params: GlobalLeaderboardParams,
+) {
+  const suffix = globalLeaderboardSearch(params);
+  const response = await apiClient.request<GlobalLeaderboardPage<GlobalUserLeaderboardItem>>(
+    `/super-agencies/${superAgencyId}/gamification/global-leaderboard/users${suffix}`,
+    { headers: superAgencyHeaders(superAgencyId), skipTenantContext: true },
   );
   return response.data;
 }

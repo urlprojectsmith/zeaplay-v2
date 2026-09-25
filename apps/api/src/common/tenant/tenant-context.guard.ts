@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import type { RequestWithAuth } from '../auth/auth.types';
-import { AGENCY_HEADER, WORKSPACE_HEADER } from './tenant-context.decorator';
+import { AGENCY_HEADER, SUPER_AGENCY_HEADER, WORKSPACE_HEADER } from './tenant-context.decorator';
 import { TenantContextService } from './tenant-context.service';
 
 @Injectable()
@@ -45,6 +45,31 @@ export class AgencyTenantGuard implements CanActivate {
     if (!agencyId) throw new UnauthorizedException('Agency context required.');
     request.agencyTenant = await this.tenantContext.resolveAgency(request.user.id, agencyId);
     if (request.params?.agencyId && request.params.agencyId !== request.agencyTenant.agencyId) {
+      throw new ForbiddenException('Tenant context does not match the requested resource.');
+    }
+    return true;
+  }
+}
+
+@Injectable()
+export class SuperAgencyTenantGuard implements CanActivate {
+  constructor(private readonly tenantContext: TenantContextService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<Request & RequestWithAuth>();
+    if (!request.user) throw new UnauthorizedException('Authentication required.');
+    const superAgencyId =
+      firstValue(request.params?.superAgencyId) ?? request.header(SUPER_AGENCY_HEADER);
+    if (!superAgencyId) throw new UnauthorizedException('Super Agency context required.');
+    request.superAgencyTenant = await this.tenantContext.resolveSuperAgency(
+      request.user.id,
+      superAgencyId,
+    );
+    request.tenant = undefined;
+    if (
+      request.params?.superAgencyId &&
+      request.params.superAgencyId !== request.superAgencyTenant.superAgencyId
+    ) {
       throw new ForbiddenException('Tenant context does not match the requested resource.');
     }
     return true;

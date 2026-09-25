@@ -55,4 +55,35 @@ describe('ApiClient', () => {
       'http://localhost:4000/api/v1/assets',
     ]);
   });
+
+  it('can skip global tenant context for explicitly scoped requests', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestHeaders = new Headers();
+    globalThis.fetch = ((input: URL | RequestInfo, init?: RequestInit) => {
+      requestHeaders = new Headers(init?.headers);
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: { ok: true }, requestId: 'req_1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const client = new ApiClient({
+        baseUrl: 'http://localhost:4000/api/v1',
+        getTenantContext: () => ({ agencyId: 'agency-1', workspaceId: 'workspace-1' }),
+      });
+      await client.request('/super-agencies/super-1', {
+        skipTenantContext: true,
+        headers: { 'x-super-agency-id': 'super-1' },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requestHeaders.get('x-super-agency-id')).toBe('super-1');
+    expect(requestHeaders.has('x-agency-id')).toBe(false);
+    expect(requestHeaders.has('x-workspace-id')).toBe(false);
+  });
 });

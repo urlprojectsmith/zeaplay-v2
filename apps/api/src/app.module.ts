@@ -5,6 +5,7 @@ import { CorrelationMiddleware } from './common/middleware/correlation.middlewar
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AgenciesModule } from './modules/agencies/agencies.module';
+import { SuperAgenciesModule } from './modules/super-agencies/super-agencies.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
@@ -33,6 +34,9 @@ import { CloudDrivesModule } from './modules/cloud-drives/cloud-drives.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
 import { InboundWebhooksModule } from './modules/inbound-webhooks/inbound-webhooks.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { ParentOversightModule } from './modules/parent-oversight/parent-oversight.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { DocsModule } from './modules/docs/docs.module';
 
 @Module({
   imports: [
@@ -59,7 +63,11 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
     PublicApiModule,
     InboundWebhooksModule,
     IntegrationsModule,
+    ParentOversightModule,
+    BillingModule,
+    DocsModule,
     TagsModule,
+    SuperAgenciesModule,
     AgenciesModule,
     WorkspacesModule,
     UsersModule,

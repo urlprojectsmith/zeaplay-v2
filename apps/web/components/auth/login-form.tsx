@@ -9,7 +9,7 @@ export function LoginForm() {
   const router = useRouter();
   const login = useSessionStore((state) => state.login);
   const [email, setEmail] = useState('owner@zeaplay.test');
-  const [password, setPassword] = useState('Password123!');
+  const [password, setPassword] = useState('DevelopmentPassword123!');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -19,9 +19,16 @@ export function LoginForm() {
     setIsSubmitting(true);
     try {
       await login(email, password);
-      const { selectedWorkspaceId, selectedAgencyId } = useSessionStore.getState();
+      const { selectedSuperAgencyId, selectedWorkspaceId, selectedAgencyId } =
+        useSessionStore.getState();
       router.replace(
-        selectedWorkspaceId ? '/workspace/dashboard' : selectedAgencyId ? '/agency/dashboard' : '/',
+        selectedSuperAgencyId
+          ? '/super-agency'
+          : selectedWorkspaceId
+            ? '/workspace/dashboard'
+            : selectedAgencyId
+              ? '/agency/dashboard'
+              : '/',
       );
     } catch {
       setError('Unable to sign in with those credentials.');

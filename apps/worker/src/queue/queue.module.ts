@@ -6,6 +6,6 @@ import { QueueHealthService } from './queue-health.service';
 @Module({
   imports: FOUNDATION_QUEUES.map((name) => BullModule.registerQueue({ name })),
   providers: [QueueHealthService],
-  exports: [QueueHealthService],
+  exports: [BullModule, QueueHealthService],
 })
 export class QueueModule {}

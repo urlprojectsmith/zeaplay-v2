@@ -4,12 +4,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { MembershipStatus, Prisma, RoleScope } from '@prisma/client';
-import type { AgencyTenantContext, WorkspaceTenantContext } from '../../common/auth/auth.types';
+import { AgencyStatus, MembershipStatus, Prisma, RoleScope } from '@prisma/client';
+import type {
+  AgencyTenantContext,
+  SuperAgencyTenantContext,
+  WorkspaceTenantContext,
+} from '../../common/auth/auth.types';
+import { TenantHierarchyService } from '../../common/tenant/tenant-hierarchy.service';
 import { normalizeIanaTimezone } from '../../common/timezones';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BillingEntitlementService } from '../billing/billing-entitlement.service';
 import { initializeDefaultStatuses } from '../statuses/status-templates';
+import { WorkspaceManagementListQueryDto } from '../agencies/dto/agency-management.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import {
@@ -22,21 +29,27 @@ export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly hierarchy: TenantHierarchyService,
+    private readonly billingEntitlements?: BillingEntitlementService,
   ) {}
 
   async create(tenant: AgencyTenantContext, dto: CreateWorkspaceDto) {
+    const agencyParent = await this.getActiveAgencyParent(tenant);
     const ownerRole = await this.role('OWNER', RoleScope.WORKSPACE);
-    const workspace = await this.prisma.workspace
-      .create({
-        data: {
-          agencyId: tenant.agencyId,
-          name: dto.name.trim(),
-          slug: dto.slug.trim().toLowerCase(),
-          timezone: normalizeIanaTimezone(dto.timezone, 'Workspace timezone'),
-          createdById: tenant.userId,
-          memberships: { create: { userId: tenant.userId, roleId: ownerRole.id } },
-        },
-        select: workspaceSelect,
+    const workspace = await this.prisma
+      .$transaction(async (tx) => {
+        await this.billingEntitlements?.assertWorkspaceCreationAvailableTx(tx, tenant.agencyId);
+        return tx.workspace.create({
+          data: {
+            agencyId: tenant.agencyId,
+            name: dto.name.trim(),
+            slug: dto.slug.trim().toLowerCase(),
+            timezone: normalizeIanaTimezone(dto.timezone, 'Workspace timezone'),
+            createdById: tenant.userId,
+            memberships: { create: { userId: tenant.userId, roleId: ownerRole.id } },
+          },
+          select: workspaceSelect,
+        });
       })
       .catch((error: unknown) => {
         if (isUniqueConflict(error))
@@ -44,6 +57,7 @@ export class WorkspacesService {
         throw error;
       });
     await this.audit.record({
+      superAgencyId: agencyParent.superAgencyId,
       agencyId: tenant.agencyId,
       workspaceId: workspace.id,
       userId: tenant.userId,
@@ -56,12 +70,23 @@ export class WorkspacesService {
   }
 
   async listForAgency(tenant: AgencyTenantContext) {
-    const workspaces = await this.prisma.workspace.findMany({
-      where: { agencyId: tenant.agencyId },
-      select: workspaceSelect,
-      orderBy: { createdAt: 'asc' },
-    });
-    return workspaces.map(serializeWorkspace);
+    return this.listAgencyWorkspaces(tenant.agencyId, {});
+  }
+
+  async listForAgencyPaginated(
+    tenant: AgencyTenantContext,
+    query: WorkspaceManagementListQueryDto,
+  ) {
+    return this.listAgencyWorkspaces(tenant.agencyId, query);
+  }
+
+  async listForSuperAgencyAgency(
+    tenant: SuperAgencyTenantContext,
+    agencyId: string,
+    query: WorkspaceManagementListQueryDto,
+  ) {
+    await this.hierarchy.assertAgencyBelongsToSuperAgency(agencyId, tenant.superAgencyId);
+    return this.listAgencyWorkspaces(agencyId, query);
   }
 
   async get(tenant: WorkspaceTenantContext) {
@@ -87,6 +112,7 @@ export class WorkspacesService {
       select: workspaceSelect,
     });
     await this.audit.record({
+      superAgencyId: tenant.superAgencyId,
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
       userId: tenant.userId,
@@ -115,13 +141,26 @@ export class WorkspacesService {
       this.role(dto.role, RoleScope.WORKSPACE),
     ]);
     if (!user) throw new NotFoundException('User not found.');
-    const membership = await this.prisma.workspaceMembership.upsert({
-      where: { userId_workspaceId: { userId: user.id, workspaceId: tenant.workspaceId } },
-      update: { roleId: role.id, status: MembershipStatus.ACTIVE },
-      create: { userId: user.id, workspaceId: tenant.workspaceId, roleId: role.id },
-      select: workspaceMembershipSelect,
+    const membership = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.workspaceMembership.findUnique({
+        where: { userId_workspaceId: { userId: user.id, workspaceId: tenant.workspaceId } },
+        select: { id: true, status: true },
+      });
+      if (!existing || existing.status !== MembershipStatus.ACTIVE) {
+        await this.billingEntitlements?.assertWorkspaceMembershipAvailableTx(
+          tx,
+          tenant.workspaceId,
+        );
+      }
+      return tx.workspaceMembership.upsert({
+        where: { userId_workspaceId: { userId: user.id, workspaceId: tenant.workspaceId } },
+        update: { roleId: role.id, status: MembershipStatus.ACTIVE },
+        create: { userId: user.id, workspaceId: tenant.workspaceId, roleId: role.id },
+        select: workspaceMembershipSelect,
+      });
     });
     await this.audit.record({
+      superAgencyId: tenant.superAgencyId,
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
       userId: tenant.userId,
@@ -139,7 +178,7 @@ export class WorkspacesService {
   ) {
     const existing = await this.prisma.workspaceMembership.findFirst({
       where: { id: membershipId, workspaceId: tenant.workspaceId },
-      select: { id: true, userId: true, role: { select: { key: true } } },
+      select: { id: true, userId: true, status: true, role: { select: { key: true } } },
     });
     if (!existing) throw new NotFoundException('Membership not found.');
     if (existing.role.key === 'OWNER')
@@ -151,12 +190,21 @@ export class WorkspacesService {
       dto.role || dto.roleId
         ? await this.workspaceRoleForAssignment(tenant.workspaceId, dto.role, dto.roleId)
         : null;
-    const membership = await this.prisma.workspaceMembership.update({
-      where: { id: membershipId },
-      data: { roleId: role?.id, status: dto.status },
-      select: workspaceMembershipSelect,
+    const membership = await this.prisma.$transaction(async (tx) => {
+      if (dto.status === MembershipStatus.ACTIVE && existing.status !== MembershipStatus.ACTIVE) {
+        await this.billingEntitlements?.assertWorkspaceMembershipAvailableTx(
+          tx,
+          tenant.workspaceId,
+        );
+      }
+      return tx.workspaceMembership.update({
+        where: { id: membershipId },
+        data: { roleId: role?.id, status: dto.status },
+        select: workspaceMembershipSelect,
+      });
     });
     await this.audit.record({
+      superAgencyId: tenant.superAgencyId,
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
       userId: tenant.userId,
@@ -178,6 +226,55 @@ export class WorkspacesService {
     const role = await this.prisma.role.findFirst({ where: { key, scope }, select: { id: true } });
     if (!role) throw new NotFoundException('Role not found.');
     return role;
+  }
+
+  private async getActiveAgencyParent(tenant: AgencyTenantContext) {
+    const agency = tenant.superAgencyId
+      ? await this.prisma.agency.findFirst({
+          where: { id: tenant.agencyId, superAgencyId: tenant.superAgencyId },
+          select: { id: true, superAgencyId: true, status: true },
+        })
+      : await this.prisma.agency.findUnique({
+          where: { id: tenant.agencyId },
+          select: { id: true, superAgencyId: true, status: true },
+        });
+    if (!agency) throw new NotFoundException('Agency not found.');
+    if (agency.status !== AgencyStatus.ACTIVE) {
+      throw new ForbiddenException('Agency is not active.');
+    }
+    return agency;
+  }
+
+  private async listAgencyWorkspaces(
+    agencyId: string,
+    query: Partial<WorkspaceManagementListQueryDto>,
+  ) {
+    const page = Math.max(1, query.page ?? 1);
+    const pageSize = Math.min(Math.max(1, query.pageSize ?? 25), 100);
+    const where: Prisma.WorkspaceWhereInput = {
+      agencyId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.search?.trim()
+        ? { name: { contains: query.search.trim(), mode: 'insensitive' } }
+        : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.workspace.findMany({
+        where,
+        select: workspaceMetadataSelect,
+        orderBy: workspaceOrderBy(query.sort ?? 'NEWEST'),
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.workspace.count({ where }),
+    ]);
+    return {
+      items: items.map(serializeWorkspaceMetadata),
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
   }
 
   private async workspaceRoleForAssignment(workspaceId: string, key?: string, roleId?: string) {
@@ -208,6 +305,20 @@ const workspaceSelect = {
   updatedAt: true,
 } satisfies Prisma.WorkspaceSelect;
 
+const workspaceMetadataSelect = {
+  id: true,
+  agencyId: true,
+  name: true,
+  slug: true,
+  timezone: true,
+  status: true,
+  createdById: true,
+  createdAt: true,
+  updatedAt: true,
+  agency: { select: { id: true, name: true, slug: true, superAgencyId: true } },
+  _count: { select: { memberships: true } },
+} satisfies Prisma.WorkspaceSelect;
+
 const workspaceMembershipSelect = {
   id: true,
   userId: true,
@@ -229,6 +340,40 @@ function serializeWorkspace(workspace: WorkspaceRecord) {
   };
 }
 
+type WorkspaceMetadataRecord = Prisma.WorkspaceGetPayload<{
+  select: typeof workspaceMetadataSelect;
+}>;
+
+function serializeWorkspaceMetadata(workspace: WorkspaceMetadataRecord) {
+  return {
+    id: workspace.id,
+    agencyId: workspace.agencyId,
+    name: workspace.name,
+    slug: workspace.slug,
+    timezone: workspace.timezone,
+    status: workspace.status,
+    createdById: workspace.createdById,
+    createdAt: workspace.createdAt,
+    updatedAt: workspace.updatedAt,
+    agency: workspace.agency,
+    counts: { members: workspace._count.memberships },
+  };
+}
+
 function isUniqueConflict(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+function workspaceOrderBy(sort: WorkspaceManagementListQueryDto['sort']) {
+  switch (sort) {
+    case 'OLDEST':
+      return { createdAt: 'asc' } satisfies Prisma.WorkspaceOrderByWithRelationInput;
+    case 'NAME_ASC':
+      return { name: 'asc' } satisfies Prisma.WorkspaceOrderByWithRelationInput;
+    case 'NAME_DESC':
+      return { name: 'desc' } satisfies Prisma.WorkspaceOrderByWithRelationInput;
+    case 'NEWEST':
+    default:
+      return { createdAt: 'desc' } satisfies Prisma.WorkspaceOrderByWithRelationInput;
+  }
 }
