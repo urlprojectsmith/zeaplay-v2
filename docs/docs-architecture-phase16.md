@@ -1,6 +1,6 @@
 # Phase 16.1 Docs Architecture
 
-Status: Main implementation gate remediated; final certification is deferred to Prompt 2.
+Status: Phase 16.1 final certification COMPLETE / PASS.
 
 ## Ownership
 
@@ -125,6 +125,31 @@ Dedicated Docs frontend tests cover the Workspace Docs route, list/tree selectio
 
 Google-Docs-style simultaneous character-level editing is deferred. Phase 16.1 does not implement WebSocket CRDT, Yjs, Operational Transform, live cursors, or presence.
 
+## Final Certification Evidence
+
+Phase 16.1 final verification passed:
+
+- `pnpm prisma:generate`
+- `pnpm prisma:validate`
+- `pnpm format`
+- `pnpm lint`, 17 tasks
+- `pnpm typecheck`, 17 tasks
+- Focused Docs/backend Phase 15 regression: 6 suites / 169 tests
+- Focused Docs/frontend parent-shell regression: 6 files / 31 tests
+- Root `pnpm test`: 17 tasks; API 58 suites / 579 tests, worker 8 suites / 28 tests, web 22 files / 195 tests
+- `pnpm phase14:6:13:migration-compat`: 81 migrations through `0081_phase16_1_docs_foundation`; clean install, legacy upgrade, populated Phase 15.2 upgrade, zero-agency, one-agency, and many-agency scratch cases
+- Full isolated `pnpm test:integration` on direct PostgreSQL scratch database `zea_play_phase14613_clean`: API 6 suites / 109 tests; worker 8 suites / 28 tests
+- `pnpm test:e2e`: 21 tests
+- Fresh full web suite: 22 files / 195 tests
+- `pnpm build`: 11 tasks
+- `pnpm audit --audit-level high`
+- `git diff --check`
+- Final security/source search
+
+Clean migration certification required moving the Phase 16.1 self-referential composite foreign keys for folders, docs, and comments to post-index `ALTER TABLE` constraints. No `0082` migration was created.
+
+Shared development database was checked read-only and still has `0081_phase16_1_docs_foundation` pending. No shared-dev migration was applied.
+
 ## Deferred
 
-Forms, Goals, and final certification were not started. Prompt 2 owns clean migration verification, legacy/current upgrade verification, full integration, worker integration, E2E, build, audit, final git diff certification, and complete Phase 1-15 regression certification.
+Forms and Goals were not started. Phase 16.2 is not started.

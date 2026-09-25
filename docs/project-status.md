@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING main implementation PASS; final verification READY but NOT STARTED.
-Next: Phase 16.1 Prompt 2 final verification. Phase 16.2 is NOT STARTED; do not start it without explicit request.
+Current: Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING COMPLETE / PASS.
+Next: Phase 16.2 is NOT STARTED; do not start it without explicit request.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -13,13 +13,13 @@ Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING
 
 Main Implementation: PASS
 
-Final Verification: READY
+Final Verification: PASS
 
-Phase 16.1: NOT COMPLETE
+Phase 16.1: COMPLETE / PASS
 
 Phase 16.2: NOT STARTED
 
-Phase 16.1 main implementation gate state:
+Phase 16.1 final certification state:
 
 - Migration count is 81.
 - Latest migration is `0081_phase16_1_docs_foundation`.
@@ -35,16 +35,27 @@ Phase 16.1 main implementation gate state:
 - `pnpm format`: PASS.
 - `pnpm lint`: PASS, 17 tasks.
 - `pnpm typecheck`: PASS, 17 tasks.
+- `pnpm phase14:6:13:migration-compat`: PASS through 81 migrations; clean install, legacy upgrade, populated Phase 15.2 upgrade, and zero/one/many Agency edge cases passed.
+- Full isolated `pnpm test:integration` on `zea_play_phase14613_clean` with direct PostgreSQL: PASS, 8 tasks; API PASS, 6 suites / 109 tests; worker PASS, 8 suites / 28 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- Fresh full web stability run: PASS, 22 files / 195 tests.
+- `pnpm build`: PASS, 11 tasks with the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high`: PASS; two moderate advisories remain below high threshold.
+- `git diff --check`: PASS.
+- Security/source search: PASS after review; hits were expected deferred collaboration text, future-phase status text, safe public HTML sanitizer/link handling, public-share token/password hashes, and authorized signed URL issuance.
 - Activity Log decision: NOT APPLICABLE / DEFERRED TO EXISTING ACTIVITY ARCHITECTURE. Docs uses AuditLog for sensitive/admin events and does not invent a second ActivityLog system.
 - Docs commercial entitlement decision: no new Docs commercial feature key in 16.1; published Phase 15 PlanVersions were not silently changed. Existing restricted-mode, Files, and storage controls remain authoritative.
 - Agency and Super Agency parent Docs oversight UI routes are `/agency/docs` and `/super-agency/docs`.
-- Shared development database was not migrated in this main-gate remediation and remains treated as read-only for this task.
+- Clean migration certification required a Phase 16.1 migration SQL ordering fix for self-referential composite foreign keys. The final harness passed after moving the folder, doc, and comment self-FKs to post-index `ALTER TABLE` constraints.
+- Shared development database was checked read-only and reports `0081_phase16_1_docs_foundation` pending. It was not migrated.
 
 Warnings:
 
-- Phase 16.1 final verification is not complete. Clean migration, legacy migration, full API integration, worker integration, E2E, build, audit, and final git diff certification are deferred to Phase 16.1 Prompt 2.
 - Phase 16.2 was not started.
-- Shared development database was not migrated during this pass.
+- Forms and Goals were not started.
+- Google-Docs-style realtime collaboration remains deferred; no WebSocket CRDT, Yjs, Operational Transform, live cursors, or presence was implemented.
+- Shared development database remains read-only and pending `0081_phase16_1_docs_foundation`; no shared-dev migration was applied.
+- Existing accepted warnings remain: Next.js ESLint plugin warning during build, `NO_COLOR` / `FORCE_COLOR` Playwright warning, and two moderate audit advisories below the high threshold.
 
 Phase 15 - Plans, Billing, Trials & Payments is COMPLETE / CERTIFIED.
 
