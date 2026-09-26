@@ -61,6 +61,20 @@ enum RoleScope {
   WORKSPACE
 }
 
+enum AnalyticsScopeType {
+  WORKSPACE
+  AGENCY
+  SUPER_AGENCY
+  PLATFORM
+}
+
+enum AnalyticsBucket {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+}
+
 enum ProjectStatus {
   DRAFT
   ACTIVE
@@ -636,6 +650,8 @@ enum AutomationTriggerType {
   TICKET_CREATED
   TICKET_STATUS_CHANGED
   TICKET_RESOLVED
+  FORM_SUBMITTED
+  GOAL_COMPLETED
 }
 
 enum AutomationActionType {
@@ -649,6 +665,7 @@ enum AutomationActionType {
   ASSIGN_TICKET
   CHANGE_TICKET_STATUS
   ADD_TICKET_TAG
+  GOAL_PROGRESS_UPDATE
 }
 
 enum AutomationConditionOperator {
@@ -664,6 +681,94 @@ enum AutomationDomainEventEntityType {
   TASK
   PROJECT
   TICKET
+  FORM_SUBMISSION
+  GOAL
+}
+
+enum FormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum FormType {
+  FORM
+  TEMPLATE
+}
+
+enum FormVisibility {
+  INTERNAL
+  PUBLIC
+}
+
+enum FormVersionState {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum FormSubmissionSource {
+  INTERNAL
+  PUBLIC
+}
+
+enum FormSubmissionStatus {
+  RECEIVED
+}
+
+enum FormSubmissionAutomationStatus {
+  PENDING
+  QUEUED
+  SKIPPED
+  FAILED
+}
+
+enum FormSubmissionAssetKind {
+  FILE
+  SIGNATURE
+}
+
+enum GoalOwnerType {
+  USER
+  DEPARTMENT
+  WORKSPACE
+}
+
+enum GoalMetricType {
+  TASKS_COMPLETED
+  PROJECTS_COMPLETED
+  TICKETS_RESOLVED
+  XP_EARNED
+  GLOBAL_SCORE
+  CUSTOM_NUMERIC
+  MANUAL_NUMERIC
+}
+
+enum GoalPeriodType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  ARCHIVED
+}
+
+enum GoalProgressSourceType {
+  TASK
+  PROJECT
+  TICKET
+  XP
+  GLOBAL_SCORE
+  CUSTOM
+  MANUAL
+  RECONCILIATION
 }
 
 enum AutomationTriggerMatchStatus {
@@ -1005,6 +1110,7 @@ model Workspace {
   gamificationWorkXpEvents            GamificationWorkXpEvent[]            @relation("GamificationWorkXpEventWorkspace")
   gamificationXpReconciliations       GamificationXpReconciliation[]       @relation("GamificationXpReconciliationWorkspace")
   gamificationGlobalScoreEvents       GamificationGlobalScoreEvent[]       @relation("GamificationGlobalScoreEventWorkspace")
+  analyticsRollups                    AnalyticsRollup[]                    @relation("AnalyticsRollupWorkspace")
   tasks                               Task[]
   taskRecurrenceSeries                TaskRecurrenceSeries[]
   taskTemplates                       TaskTemplate[]
@@ -1070,6 +1176,12 @@ model Workspace {
   docFavorites                        DocFavorite[]
   docShares                           DocShare[]
   docAttachments                      DocAttachment[]
+  forms                               Form[]
+  formVersions                        FormVersion[]
+  formSubmissions                     FormSubmission[]
+  formSubmissionAssets                FormSubmissionAsset[]
+  goals                               Goal[]
+  goalProgressEvents                  GoalProgressEvent[]
 
   @@unique([agencyId, slug])
   @@unique([id, agencyId])
@@ -1150,6 +1262,7 @@ model Department {
   taskTemplates                  TaskTemplate[]
   gamificationPointRules         GamificationPointRule[]         @relation("GamificationPointRuleDepartment")
   gamificationCreationPointRules GamificationCreationPointRule[] @relation("GamificationCreationPointRuleDepartment")
+  goals                           Goal[]                          @relation("GoalDepartmentOwner")
 
   @@unique([workspaceId, name])
   @@unique([id, workspaceId])
@@ -1348,6 +1461,15 @@ model WorkspaceMembership {
   docFavorites                       DocFavorite[]
   docSharesCreated                   DocShare[]                         @relation("DocShareCreator")
   docAttachmentsLinked               DocAttachment[]                    @relation("DocAttachmentLinkedBy")
+  formsCreated                       Form[]                             @relation("FormCreator")
+  formsUpdated                       Form[]                             @relation("FormUpdater")
+  formsArchived                      Form[]                             @relation("FormArchiver")
+  formVersionsCreated                FormVersion[]                      @relation("FormVersionCreator")
+  formVersionsPublished              FormVersion[]                      @relation("FormVersionPublisher")
+  formSubmissionsSubmitted           FormSubmission[]                   @relation("FormSubmissionSubmitter")
+  goalsOwned                         Goal[]                             @relation("GoalMembershipOwner")
+  goalsCreated                       Goal[]                             @relation("GoalCreator")
+  goalProgressEventsActed            GoalProgressEvent[]                @relation("GoalProgressActor")
 
   @@unique([userId, workspaceId])
   @@unique([id, workspaceId])
@@ -3254,6 +3376,7 @@ model Asset {
   uploadedByMembership WorkspaceMembership?      @relation("AssetUploadedByMembership", fields: [uploadedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   attachments          Attachment[]
   docAttachments       DocAttachment[]
+  formSubmissionAssets FormSubmissionAsset[]
   processingJobs       ProcessingJob[]
   uploadReservation    StorageUploadReservation?
   sourceConnection     CloudDriveConnection?     @relation("CloudDriveImportedAssets", fields: [sourceConnectionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
@@ -3489,6 +3612,188 @@ model DocAttachment {
   @@unique([docId, assetId])
   @@index([workspaceId, assetId])
   @@map("doc_attachments")
+}
+
+model Form {
+  id                     String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId            String         @map("workspace_id") @db.Uuid
+  publicId               String         @unique @map("public_id") @db.VarChar(48)
+  title                  String         @db.VarChar(220)
+  description            String?        @db.VarChar(1000)
+  status                 FormStatus     @default(DRAFT)
+  type                   FormType       @default(FORM)
+  visibility             FormVisibility @default(INTERNAL)
+  publicEnabled          Boolean        @default(false) @map("public_enabled")
+  publishedVersionNumber Int?           @map("published_version_number")
+  createdByMembershipId  String         @map("created_by_membership_id") @db.Uuid
+  updatedByMembershipId  String?        @map("updated_by_membership_id") @db.Uuid
+  archivedByMembershipId String?        @map("archived_by_membership_id") @db.Uuid
+  archivedAt             DateTime?      @map("archived_at") @db.Timestamptz(6)
+  createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace            Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdByMembership  WorkspaceMembership  @relation("FormCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  updatedByMembership  WorkspaceMembership? @relation("FormUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  archivedByMembership WorkspaceMembership? @relation("FormArchiver", fields: [archivedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  versions             FormVersion[]
+  submissions          FormSubmission[]
+  submissionAssets     FormSubmissionAsset[]
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status, type, updatedAt])
+  @@index([workspaceId, visibility, status])
+  @@index([workspaceId, publicEnabled, status])
+  @@map("forms")
+}
+
+model FormVersion {
+  id                      String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  formId                  String           @map("form_id") @db.Uuid
+  workspaceId             String           @map("workspace_id") @db.Uuid
+  versionNumber           Int              @map("version_number")
+  state                   FormVersionState @default(DRAFT)
+  titleSnapshot           String           @map("title_snapshot") @db.VarChar(220)
+  descriptionSnapshot     String?          @map("description_snapshot") @db.VarChar(1000)
+  schema                  Json
+  settings                Json?
+  createdByMembershipId   String           @map("created_by_membership_id") @db.Uuid
+  publishedByMembershipId String?          @map("published_by_membership_id") @db.Uuid
+  publishedAt             DateTime?        @map("published_at") @db.Timestamptz(6)
+  archivedAt              DateTime?        @map("archived_at") @db.Timestamptz(6)
+  createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace             Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  form                  Form                 @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  createdByMembership   WorkspaceMembership  @relation("FormVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  publishedByMembership WorkspaceMembership? @relation("FormVersionPublisher", fields: [publishedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  submissions           FormSubmission[]
+  submissionAssets      FormSubmissionAsset[]
+
+  @@unique([id, workspaceId])
+  @@unique([formId, versionNumber])
+  @@index([workspaceId, formId, state, versionNumber])
+  @@index([workspaceId, state, publishedAt])
+  @@map("form_versions")
+}
+
+model FormSubmission {
+  id                      String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  formId                  String                         @map("form_id") @db.Uuid
+  formVersionId           String                         @map("form_version_id") @db.Uuid
+  workspaceId             String                         @map("workspace_id") @db.Uuid
+  source                  FormSubmissionSource
+  status                  FormSubmissionStatus           @default(RECEIVED)
+  submittedByMembershipId String?                        @map("submitted_by_membership_id") @db.Uuid
+  idempotencyKeyHash      String?                        @map("idempotency_key_hash") @db.VarChar(128)
+  publicClientHash        String?                        @map("public_client_hash") @db.VarChar(128)
+  answers                 Json
+  answerSummary           Json?                          @map("answer_summary")
+  automationStatus        FormSubmissionAutomationStatus @default(PENDING) @map("automation_status")
+  automationErrorCode     String?                        @map("automation_error_code") @db.VarChar(120)
+  submittedAt             DateTime                       @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  createdAt               DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace             Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  form                  Form                 @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  formVersion           FormVersion          @relation(fields: [formVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  submittedByMembership WorkspaceMembership? @relation("FormSubmissionSubmitter", fields: [submittedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  assets                FormSubmissionAsset[]
+
+  @@unique([id, workspaceId])
+  @@unique([workspaceId, formId, idempotencyKeyHash])
+  @@index([workspaceId, formId, submittedAt])
+  @@index([workspaceId, formVersionId, submittedAt])
+  @@index([workspaceId, submittedByMembershipId, submittedAt])
+  @@map("form_submissions")
+}
+
+model FormSubmissionAsset {
+  id               String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId      String                  @map("workspace_id") @db.Uuid
+  formSubmissionId String                  @map("form_submission_id") @db.Uuid
+  formId           String                  @map("form_id") @db.Uuid
+  formVersionId    String                  @map("form_version_id") @db.Uuid
+  assetId          String                  @map("asset_id") @db.Uuid
+  fieldId          String                  @map("field_id") @db.VarChar(80)
+  kind             FormSubmissionAssetKind
+  createdAt        DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  formSubmission FormSubmission @relation(fields: [formSubmissionId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  form           Form           @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  formVersion    FormVersion    @relation(fields: [formVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  asset          Asset          @relation(fields: [assetId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([formSubmissionId, assetId, fieldId])
+  @@index([workspaceId, assetId])
+  @@index([workspaceId, formId, fieldId])
+  @@map("form_submission_assets")
+}
+
+model Goal {
+  id                    String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId           String         @map("workspace_id") @db.Uuid
+  ownerType             GoalOwnerType  @map("owner_type")
+  ownerMembershipId     String?        @map("owner_membership_id") @db.Uuid
+  departmentId          String?        @map("department_id") @db.Uuid
+  metricType            GoalMetricType @map("metric_type")
+  periodType            GoalPeriodType @map("period_type")
+  title                 String         @db.VarChar(180)
+  description           String?        @db.VarChar(1000)
+  targetValue           Int            @map("target_value")
+  currentProgress       Int            @default(0) @map("current_progress")
+  status                GoalStatus     @default(ACTIVE)
+  periodStart           DateTime       @map("period_start") @db.Timestamptz(6)
+  periodEnd             DateTime       @map("period_end") @db.Timestamptz(6)
+  completedAt           DateTime?      @map("completed_at") @db.Timestamptz(6)
+  expiredAt             DateTime?      @map("expired_at") @db.Timestamptz(6)
+  archivedAt            DateTime?      @map("archived_at") @db.Timestamptz(6)
+  createdByMembershipId String         @map("created_by_membership_id") @db.Uuid
+  metadata              Json?
+  createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace           Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ownerMembership     WorkspaceMembership?  @relation("GoalMembershipOwner", fields: [ownerMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  department          Department?           @relation("GoalDepartmentOwner", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership WorkspaceMembership   @relation("GoalCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  progressEvents      GoalProgressEvent[]
+
+  @@unique([id, workspaceId])
+  @@index([workspaceId, status, periodEnd])
+  @@index([workspaceId, ownerType, status])
+  @@index([workspaceId, ownerMembershipId, status])
+  @@index([workspaceId, departmentId, status])
+  @@index([workspaceId, metricType, periodStart, periodEnd])
+  @@map("goals")
+}
+
+model GoalProgressEvent {
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String                 @map("workspace_id") @db.Uuid
+  goalId            String                 @map("goal_id") @db.Uuid
+  sourceType        GoalProgressSourceType @map("source_type")
+  sourceId          String?                @map("source_id") @db.Uuid
+  idempotencyKey    String                 @map("idempotency_key") @db.VarChar(220)
+  delta             Int
+  valueAfter        Int                    @map("value_after")
+  occurredAt        DateTime               @map("occurred_at") @db.Timestamptz(6)
+  actorMembershipId String?                @map("actor_membership_id") @db.Uuid
+  note              String?                @db.VarChar(500)
+  metadata          Json?
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace       Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  goal            Goal                 @relation(fields: [goalId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  actorMembership WorkspaceMembership? @relation("GoalProgressActor", fields: [actorMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+
+  @@unique([id, workspaceId])
+  @@unique([goalId, idempotencyKey])
+  @@index([workspaceId, goalId, occurredAt])
+  @@index([workspaceId, sourceType, sourceId])
+  @@index([workspaceId, actorMembershipId, occurredAt])
+  @@map("goal_progress_events")
 }
 
 model StorageRetentionPolicy {
@@ -4558,6 +4863,33 @@ model BillingHistory {
   @@index([subscriptionId, createdAt])
   @@index([eventType, createdAt])
   @@map("billing_history")
+}
+
+model AnalyticsRollup {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType      AnalyticsScopeType @map("scope_type")
+  scopeId        String             @map("scope_id") @db.Uuid
+  workspaceId    String?            @map("workspace_id") @db.Uuid
+  metricKey      String             @map("metric_key") @db.VarChar(120)
+  bucket         AnalyticsBucket
+  bucketStart    DateTime           @map("bucket_start") @db.Timestamptz(6)
+  bucketEnd      DateTime           @map("bucket_end") @db.Timestamptz(6)
+  dimensionKey   String?            @map("dimension_key") @db.VarChar(80)
+  dimensionValue String?            @map("dimension_value") @db.VarChar(160)
+  value          Decimal            @db.Decimal(30, 6)
+  version        Int                @default(1)
+  sourceHash     String?            @map("source_hash") @db.VarChar(96)
+  rebuiltAt      DateTime           @default(now()) @map("rebuilt_at") @db.Timestamptz(6)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace? @relation("AnalyticsRollupWorkspace", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([scopeType, scopeId, metricKey, bucket, bucketStart, dimensionKey, dimensionValue, version], map: "analytics_rollups_scope_metric_bucket_dimension_key")
+  @@index([scopeType, scopeId, metricKey, bucketStart], map: "analytics_rollups_scope_metric_start_idx")
+  @@index([workspaceId, metricKey, bucketStart], map: "analytics_rollups_workspace_metric_start_idx")
+  @@index([metricKey, bucket, bucketStart], map: "analytics_rollups_metric_bucket_start_idx")
+  @@map("analytics_rollups")
 }
 
 model AuditLog {

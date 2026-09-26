@@ -37,6 +37,9 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { ParentOversightModule } from './modules/parent-oversight/parent-oversight.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { DocsModule } from './modules/docs/docs.module';
+import { FormsModule } from './modules/forms/forms.module';
+import { GoalsModule } from './modules/goals/goals.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -66,6 +69,9 @@ import { DocsModule } from './modules/docs/docs.module';
     ParentOversightModule,
     BillingModule,
     DocsModule,
+    FormsModule,
+    GoalsModule,
+    AnalyticsModule,
     TagsModule,
     SuperAgenciesModule,
     AgenciesModule,

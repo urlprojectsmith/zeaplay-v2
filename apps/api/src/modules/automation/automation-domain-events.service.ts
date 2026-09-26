@@ -359,6 +359,16 @@ async function assertDomainEventEntityWorkspace(
       where: { ...where, deletedAt: null },
       select: { id: true },
     });
+  } else if (input.entityType === AutomationDomainEventEntityType.FORM_SUBMISSION) {
+    record = await client.formSubmission.findFirst({
+      where,
+      select: { id: true },
+    });
+  } else if (input.entityType === AutomationDomainEventEntityType.GOAL) {
+    record = await client.goal.findFirst({
+      where,
+      select: { id: true },
+    });
   }
   if (!record) {
     throw new BadRequestException('AUTOMATION_DOMAIN_EVENT_WORKSPACE_MISMATCH');

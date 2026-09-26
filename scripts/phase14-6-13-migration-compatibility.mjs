@@ -35,8 +35,11 @@ const zeroAgencyDb = `${dbPrefix}_zero`;
 const oneAgencyDb = `${dbPrefix}_one`;
 const manyAgencyDb = `${dbPrefix}_many`;
 const phase15Db = `${dbPrefix}_phase15`;
-const expectedMigrationCount = 81;
-const expectedLatestMigration = '0081_phase16_1_docs_foundation';
+const phase154Db = `${dbPrefix}_phase154`;
+const phase161Db = `${dbPrefix}_phase161`;
+const phase162Db = `${dbPrefix}_phase162`;
+const expectedMigrationCount = 84;
+const expectedLatestMigration = '0084_phase17_1_analytics_foundation';
 const allowedLocalHosts = new Set(['localhost', '127.0.0.1', '::1', 'host.docker.internal']);
 
 const fixture = {
@@ -130,7 +133,9 @@ function sqlLiteralList(value) {
 
 function assertScratchName(dbName) {
   if (
-    !/^zea_play_phase14613[a-z0-9_]*_(clean|legacy|zero|one|many|phase15)$/.test(dbName) ||
+    !/^zea_play_phase14613[a-z0-9_]*_(clean|legacy|zero|one|many|phase15|phase154|phase161|phase162)$/.test(
+      dbName,
+    ) ||
     /prod|production|shared/i.test(dbName) ||
     ['zea_play', 'postgres', 'template0', 'template1'].includes(dbName)
   ) {
@@ -163,7 +168,17 @@ function assertHarnessSafety() {
     }
   }
 
-  for (const dbName of [cleanDb, legacyDb, zeroAgencyDb, oneAgencyDb, manyAgencyDb, phase15Db]) {
+  for (const dbName of [
+    cleanDb,
+    legacyDb,
+    zeroAgencyDb,
+    oneAgencyDb,
+    manyAgencyDb,
+    phase15Db,
+    phase154Db,
+    phase161Db,
+    phase162Db,
+  ]) {
     assertScratchName(dbName);
   }
 }
@@ -176,7 +191,10 @@ function redact(value) {
     .replaceAll(databaseUrl(zeroAgencyDb), '<redacted-zero-database-url>')
     .replaceAll(databaseUrl(oneAgencyDb), '<redacted-one-database-url>')
     .replaceAll(databaseUrl(manyAgencyDb), '<redacted-many-database-url>')
-    .replaceAll(databaseUrl(phase15Db), '<redacted-phase15-database-url>');
+    .replaceAll(databaseUrl(phase15Db), '<redacted-phase15-database-url>')
+    .replaceAll(databaseUrl(phase154Db), '<redacted-phase154-database-url>')
+    .replaceAll(databaseUrl(phase161Db), '<redacted-phase161-database-url>')
+    .replaceAll(databaseUrl(phase162Db), '<redacted-phase162-database-url>');
 }
 
 function quoteWindowsArg(value) {
@@ -327,6 +345,18 @@ function buildLegacyPrismaDir() {
 
 function buildPhase152PrismaDir() {
   return buildPrismaDirThrough('0078_phase15_2_stripe_subscription_lifecycle', '0078');
+}
+
+function buildPhase154PrismaDir() {
+  return buildPrismaDirThrough('0080_phase15_4_invoice_projection', '0080');
+}
+
+function buildPhase161PrismaDir() {
+  return buildPrismaDirThrough('0081_phase16_1_docs_foundation', '0081');
+}
+
+function buildPhase162PrismaDir() {
+  return buildPrismaDirThrough('0082_phase16_2_forms_foundation', '0082');
 }
 
 function assertEqual(label, actual, expected) {
@@ -782,6 +812,90 @@ VALUES ('${ids.workflowVersion}', '${ids.workflow}', '${ids.workspace}', 1, 'DRA
 
 INSERT INTO gamification_xp_entries (id, workspace_id, membership_id, amount, entry_type, source_type, source_event, idempotency_key, created_at)
 VALUES ('${ids.xpEntry}', '${ids.workspace}', '${ids.workspaceMembership}', 25, 'EARN', 'SYSTEM', 'phase152-upgrade', 'phase152-upgrade-xp', '2026-09-01T00:00:00Z');
+
+COMMIT;
+`;
+}
+
+function phase16DocsFixtureSql() {
+  const ids = {
+    workspace: uuid('9503', 1),
+    workspaceMembership: uuid('9506', 1),
+    asset: uuid('9512', 1),
+    folder: uuid('9520', 1),
+    doc: uuid('9521', 1),
+    access: uuid('9522', 1),
+    version: uuid('9523', 1),
+    comment: uuid('9524', 1),
+    mention: uuid('9525', 1),
+    favorite: uuid('9526', 1),
+    share: uuid('9527', 1),
+    attachment: uuid('9528', 1),
+  };
+
+  return `
+BEGIN;
+
+INSERT INTO doc_folders (id, workspace_id, name, sort_order, created_by_membership_id, created_at, updated_at)
+VALUES ('${ids.folder}', '${ids.workspace}', 'Phase 16 Docs Upgrade Folder', 10, '${ids.workspaceMembership}', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z');
+
+INSERT INTO docs (id, workspace_id, folder_id, title, content, content_revision, visibility, type, status, sort_order, created_by_membership_id, updated_by_membership_id, last_snapshot_at, created_at, updated_at)
+VALUES ('${ids.doc}', '${ids.workspace}', '${ids.folder}', 'Phase 16 Docs Upgrade Page', '{"type":"doc","content":[{"type":"paragraph","text":"phase16 docs upgrade"}]}'::jsonb, 2, 'SELECTED_MEMBERS', 'PAGE', 'ACTIVE', 20, '${ids.workspaceMembership}', '${ids.workspaceMembership}', '2026-09-02T00:05:00Z', '2026-09-02T00:01:00Z', '2026-09-02T00:06:00Z');
+
+INSERT INTO doc_access (id, doc_id, workspace_id, membership_id, role, granted_by_membership_id, created_at, updated_at)
+VALUES ('${ids.access}', '${ids.doc}', '${ids.workspace}', '${ids.workspaceMembership}', 'EDITOR', '${ids.workspaceMembership}', '2026-09-02T00:02:00Z', '2026-09-02T00:02:00Z');
+
+INSERT INTO doc_versions (id, doc_id, workspace_id, revision, title_snapshot, content_snapshot, source, created_by_membership_id, created_at)
+VALUES ('${ids.version}', '${ids.doc}', '${ids.workspace}', 2, 'Phase 16 Docs Upgrade Page', '{"type":"doc","content":[{"type":"paragraph","text":"phase16 docs upgrade snapshot"}]}'::jsonb, 'SNAPSHOT', '${ids.workspaceMembership}', '2026-09-02T00:05:00Z');
+
+INSERT INTO doc_comments (id, doc_id, workspace_id, body, anchor, status, created_by_membership_id, updated_by_membership_id, created_at, updated_at)
+VALUES ('${ids.comment}', '${ids.doc}', '${ids.workspace}', 'Preserved docs comment', '{"pos":1}'::jsonb, 'ACTIVE', '${ids.workspaceMembership}', '${ids.workspaceMembership}', '2026-09-02T00:07:00Z', '2026-09-02T00:07:00Z');
+
+INSERT INTO doc_mentions (id, doc_id, workspace_id, comment_id, target_membership_id, created_by_membership_id, source, dedupe_key, created_at)
+VALUES ('${ids.mention}', '${ids.doc}', '${ids.workspace}', '${ids.comment}', '${ids.workspaceMembership}', '${ids.workspaceMembership}', 'COMMENT', 'phase16-docs-upgrade-mention', '2026-09-02T00:08:00Z');
+
+INSERT INTO doc_favorites (id, doc_id, workspace_id, membership_id, created_at)
+VALUES ('${ids.favorite}', '${ids.doc}', '${ids.workspace}', '${ids.workspaceMembership}', '2026-09-02T00:09:00Z');
+
+INSERT INTO doc_shares (id, doc_id, workspace_id, token_hash, status, expires_at, password_hash, created_by_membership_id, created_at, updated_at)
+VALUES ('${ids.share}', '${ids.doc}', '${ids.workspace}', 'phase16-docs-upgrade-share-token-hash', 'ACTIVE', '2026-10-02T00:00:00Z', 'hash:phase16-docs-upgrade', '${ids.workspaceMembership}', '2026-09-02T00:10:00Z', '2026-09-02T00:10:00Z');
+
+INSERT INTO doc_attachments (id, doc_id, workspace_id, asset_id, linked_by_membership_id, created_at)
+VALUES ('${ids.attachment}', '${ids.doc}', '${ids.workspace}', '${ids.asset}', '${ids.workspaceMembership}', '2026-09-02T00:11:00Z');
+
+COMMIT;
+`;
+}
+
+function phase16FormsFixtureSql() {
+  const ids = {
+    user: uuid('9500', 1),
+    workspace: uuid('9503', 1),
+    workspaceMembership: uuid('9506', 1),
+    form: uuid('9530', 1),
+    formVersion: uuid('9531', 1),
+    submission: uuid('9532', 1),
+    asset: uuid('9533', 1),
+    submissionAsset: uuid('9534', 1),
+  };
+
+  return `
+BEGIN;
+
+INSERT INTO forms (id, workspace_id, public_id, title, description, status, type, visibility, public_enabled, published_version_number, created_by_membership_id, updated_by_membership_id, created_at, updated_at)
+VALUES ('${ids.form}', '${ids.workspace}', 'phase16-form-upgrade', 'Phase 16 Forms Upgrade', 'Public form fixture before 0083', 'PUBLISHED', 'FORM', 'PUBLIC', true, 1, '${ids.workspaceMembership}', '${ids.workspaceMembership}', '2026-09-03T00:00:00Z', '2026-09-03T00:01:00Z');
+
+INSERT INTO form_versions (id, form_id, workspace_id, version_number, state, title_snapshot, description_snapshot, schema, settings, created_by_membership_id, published_by_membership_id, published_at, created_at)
+VALUES ('${ids.formVersion}', '${ids.form}', '${ids.workspace}', 1, 'PUBLISHED', 'Phase 16 Forms Upgrade', 'Public form fixture before 0083', '{"fields":[{"id":"name","type":"text","label":"Name"},{"id":"upload","type":"file","label":"Upload"}]}'::jsonb, '{"allowPublic":true,"submitLimit":1}'::jsonb, '${ids.workspaceMembership}', '${ids.workspaceMembership}', '2026-09-03T00:01:00Z', '2026-09-03T00:00:00Z');
+
+INSERT INTO form_submissions (id, form_id, form_version_id, workspace_id, source, status, submitted_by_membership_id, idempotency_key_hash, public_client_hash, answers, answer_summary, automation_status, submitted_at, created_at)
+VALUES ('${ids.submission}', '${ids.form}', '${ids.formVersion}', '${ids.workspace}', 'PUBLIC', 'RECEIVED', NULL, 'phase16-form-upgrade-idempotency', 'phase16-public-client', '{"name":"Phase 16 Submitter","upload":"phase16-form-upload.txt"}'::jsonb, '{"name":"Phase 16 Submitter"}'::jsonb, 'QUEUED', '2026-09-03T00:02:00Z', '2026-09-03T00:02:00Z');
+
+INSERT INTO assets (id, workspace_id, created_by_id, uploaded_by_membership_id, original_filename, display_name, storage_bucket, storage_provider, storage_key, mime_type, extension, size_bytes, status, lifecycle, source_module, source_entity_type, source_entity_id, metadata, upload_expires_at, created_at, updated_at)
+VALUES ('${ids.asset}', '${ids.workspace}', '${ids.user}', '${ids.workspaceMembership}', 'phase16-form-upload.txt', 'phase16-form-upload.txt', 'phase16-bucket', 'MINIO', 'phase16/forms/upload.txt', 'text/plain', 'txt', 32, 'READY', 'ACTIVE', 'FORM', 'FORM_SUBMISSION', '${ids.submission}', '{"publicFormUpload":true,"fieldId":"upload"}'::jsonb, '2026-10-03T00:00:00Z', '2026-09-03T00:03:00Z', '2026-09-03T00:03:00Z');
+
+INSERT INTO form_submission_assets (id, workspace_id, form_submission_id, form_id, form_version_id, asset_id, field_id, kind, created_at)
+VALUES ('${ids.submissionAsset}', '${ids.workspace}', '${ids.submission}', '${ids.form}', '${ids.formVersion}', '${ids.asset}', 'upload', 'FILE', '2026-09-03T00:04:00Z');
 
 COMMIT;
 `;
@@ -1362,6 +1476,276 @@ function runPhase152Upgrade() {
   }
 }
 
+function runPhase154Upgrade() {
+  const phase154 = buildPhase154PrismaDir();
+  try {
+    resetDatabase(phase154Db);
+    migrateDeploy(phase154Db, phase154.schemaPath);
+    psql(phase154Db, phase152UpgradeFixtureSql());
+
+    const preUpgrade = {
+      superAgencies: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM super_agencies WHERE slug = 'phase152-upgrade-super-agency';`,
+      ),
+      agencies: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM agencies WHERE slug = 'phase152-upgrade-agency';`,
+      ),
+      workspaces: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM workspaces WHERE slug = 'phase152-upgrade-workspace';`,
+      ),
+      subscriptions: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM super_agency_subscriptions WHERE stripe_subscription_id = 'sub_phase152_upgrade';`,
+      ),
+      prices: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM billing_prices WHERE external_price_id = 'price_phase152_upgrade';`,
+      ),
+      entitlements: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM plan_entitlements WHERE plan_version_id = '${uuid('9508', 1)}';`,
+      ),
+      memberships: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM workspace_memberships WHERE id = '${uuid('9506', 1)}';`,
+      ),
+      assets: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM assets WHERE storage_key = 'phase152/object.txt';`,
+      ),
+      apiKeys: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM api_keys WHERE public_identifier = 'phase152upgradeapikey00000001';`,
+      ),
+      automationWorkflows: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM automation_workflows WHERE id = '${uuid('9514', 1)}';`,
+      ),
+      xpSum: psqlScalar(
+        phase154Db,
+        `SELECT COALESCE(SUM(amount), 0) FROM gamification_xp_entries WHERE id = '${uuid('9516', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase154Db, currentSchema);
+    const status = migrateStatus(phase154Db, currentSchema);
+
+    assertEqual('phase15.4 upgrade super agency preserved', preUpgrade.superAgencies, '1');
+    assertEqual('phase15.4 upgrade agency preserved', preUpgrade.agencies, '1');
+    assertEqual('phase15.4 upgrade workspace preserved', preUpgrade.workspaces, '1');
+    assertEqual('phase15.4 upgrade subscription preserved', preUpgrade.subscriptions, '1');
+    assertEqual('phase15.4 upgrade billing price preserved', preUpgrade.prices, '1');
+    assertEqual('phase15.4 upgrade entitlements preserved', preUpgrade.entitlements, '2');
+    assertEqual('phase15.4 upgrade workspace membership preserved', preUpgrade.memberships, '1');
+    assertEqual('phase15.4 upgrade asset preserved', preUpgrade.assets, '1');
+    assertEqual('phase15.4 upgrade API key preserved', preUpgrade.apiKeys, '1');
+    assertEqual(
+      'phase15.4 upgrade automation workflow preserved',
+      preUpgrade.automationWorkflows,
+      '1',
+    );
+    assertEqual('phase15.4 upgrade XP preserved', preUpgrade.xpSum, '25');
+    assertZero(phase154Db, 'phase15.4 upgrade automatic docs', `SELECT COUNT(*) FROM docs;`);
+    assertZero(phase154Db, 'phase15.4 upgrade automatic forms', `SELECT COUNT(*) FROM forms;`);
+    assertZero(phase154Db, 'phase15.4 upgrade automatic goals', `SELECT COUNT(*) FROM goals;`);
+    assertZero(
+      phase154Db,
+      'phase15.4 upgrade automatic agency allocations',
+      `SELECT COUNT(*) FROM agency_resource_allocations;`,
+    );
+    assertZero(
+      phase154Db,
+      'phase15.4 upgrade automatic workspace allocations',
+      `SELECT COUNT(*) FROM workspace_resource_allocations;`,
+    );
+    assertZero(
+      phase154Db,
+      'phase15.4 upgrade automatic usage counters',
+      `SELECT COUNT(*) FROM billing_usage_counters;`,
+    );
+    assertZero(
+      phase154Db,
+      'phase15.4 upgrade automatic invoice projections',
+      `SELECT COUNT(*) FROM billing_invoices;`,
+    );
+
+    return {
+      database: phase154Db,
+      migrations: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      automaticDocs: psqlScalar(phase154Db, `SELECT COUNT(*) FROM docs;`),
+      automaticForms: psqlScalar(phase154Db, `SELECT COUNT(*) FROM forms;`),
+      automaticGoals: psqlScalar(phase154Db, `SELECT COUNT(*) FROM goals;`),
+      automaticAgencyAllocations: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM agency_resource_allocations;`,
+      ),
+      automaticWorkspaceAllocations: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM workspace_resource_allocations;`,
+      ),
+      automaticUsageCounters: psqlScalar(
+        phase154Db,
+        `SELECT COUNT(*) FROM billing_usage_counters;`,
+      ),
+      automaticInvoiceProjections: psqlScalar(phase154Db, `SELECT COUNT(*) FROM billing_invoices;`),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase154.tempRoot) &&
+      phase154.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase154.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function runPhase161Upgrade() {
+  const phase161 = buildPhase161PrismaDir();
+  try {
+    resetDatabase(phase161Db);
+    migrateDeploy(phase161Db, phase161.schemaPath);
+    psql(phase161Db, phase152UpgradeFixtureSql());
+    psql(phase161Db, phase16DocsFixtureSql());
+
+    const preUpgrade = {
+      docs: psqlScalar(phase161Db, `SELECT COUNT(*) FROM docs WHERE id = '${uuid('9521', 1)}';`),
+      folders: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM doc_folders WHERE id = '${uuid('9520', 1)}';`,
+      ),
+      access: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM doc_access WHERE id = '${uuid('9522', 1)}';`,
+      ),
+      versions: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM doc_versions WHERE id = '${uuid('9523', 1)}';`,
+      ),
+      comments: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM doc_comments WHERE id = '${uuid('9524', 1)}';`,
+      ),
+      shares: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM doc_shares WHERE id = '${uuid('9527', 1)}';`,
+      ),
+      attachments: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM doc_attachments WHERE id = '${uuid('9528', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase161Db, currentSchema);
+    const status = migrateStatus(phase161Db, currentSchema);
+
+    assertEqual('phase16.1 upgrade doc preserved', preUpgrade.docs, '1');
+    assertEqual('phase16.1 upgrade folder preserved', preUpgrade.folders, '1');
+    assertEqual('phase16.1 upgrade access preserved', preUpgrade.access, '1');
+    assertEqual('phase16.1 upgrade version preserved', preUpgrade.versions, '1');
+    assertEqual('phase16.1 upgrade comment preserved', preUpgrade.comments, '1');
+    assertEqual('phase16.1 upgrade share preserved', preUpgrade.shares, '1');
+    assertEqual('phase16.1 upgrade attachment preserved', preUpgrade.attachments, '1');
+    assertZero(phase161Db, 'phase16.1 upgrade automatic forms', `SELECT COUNT(*) FROM forms;`);
+    assertZero(phase161Db, 'phase16.1 upgrade automatic goals', `SELECT COUNT(*) FROM goals;`);
+
+    return {
+      database: phase161Db,
+      migrations: psqlScalar(
+        phase161Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      docsAfterUpgrade: psqlScalar(phase161Db, `SELECT COUNT(*) FROM docs;`),
+      formsAfterUpgrade: psqlScalar(phase161Db, `SELECT COUNT(*) FROM forms;`),
+      goalsAfterUpgrade: psqlScalar(phase161Db, `SELECT COUNT(*) FROM goals;`),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase161.tempRoot) &&
+      phase161.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase161.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function runPhase162Upgrade() {
+  const phase162 = buildPhase162PrismaDir();
+  try {
+    resetDatabase(phase162Db);
+    migrateDeploy(phase162Db, phase162.schemaPath);
+    psql(phase162Db, phase152UpgradeFixtureSql());
+    psql(phase162Db, phase16DocsFixtureSql());
+    psql(phase162Db, phase16FormsFixtureSql());
+
+    const preUpgrade = {
+      docs: psqlScalar(phase162Db, `SELECT COUNT(*) FROM docs WHERE id = '${uuid('9521', 1)}';`),
+      forms: psqlScalar(phase162Db, `SELECT COUNT(*) FROM forms WHERE id = '${uuid('9530', 1)}';`),
+      formVersions: psqlScalar(
+        phase162Db,
+        `SELECT COUNT(*) FROM form_versions WHERE id = '${uuid('9531', 1)}';`,
+      ),
+      submissions: psqlScalar(
+        phase162Db,
+        `SELECT COUNT(*) FROM form_submissions WHERE id = '${uuid('9532', 1)}';`,
+      ),
+      formAssets: psqlScalar(
+        phase162Db,
+        `SELECT COUNT(*) FROM form_submission_assets WHERE id = '${uuid('9534', 1)}';`,
+      ),
+      publicUploadAssets: psqlScalar(
+        phase162Db,
+        `SELECT COUNT(*) FROM assets WHERE id = '${uuid('9533', 1)}' AND source_module = 'FORM';`,
+      ),
+    };
+
+    migrateDeploy(phase162Db, currentSchema);
+    const status = migrateStatus(phase162Db, currentSchema);
+
+    assertEqual('phase16.2 upgrade doc preserved', preUpgrade.docs, '1');
+    assertEqual('phase16.2 upgrade form preserved', preUpgrade.forms, '1');
+    assertEqual('phase16.2 upgrade form version preserved', preUpgrade.formVersions, '1');
+    assertEqual('phase16.2 upgrade submission preserved', preUpgrade.submissions, '1');
+    assertEqual('phase16.2 upgrade form asset link preserved', preUpgrade.formAssets, '1');
+    assertEqual(
+      'phase16.2 upgrade public upload asset preserved',
+      preUpgrade.publicUploadAssets,
+      '1',
+    );
+    assertZero(phase162Db, 'phase16.2 upgrade automatic goals', `SELECT COUNT(*) FROM goals;`);
+
+    return {
+      database: phase162Db,
+      migrations: psqlScalar(
+        phase162Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      docsAfterUpgrade: psqlScalar(phase162Db, `SELECT COUNT(*) FROM docs;`),
+      formsAfterUpgrade: psqlScalar(phase162Db, `SELECT COUNT(*) FROM forms;`),
+      submissionsAfterUpgrade: psqlScalar(phase162Db, `SELECT COUNT(*) FROM form_submissions;`),
+      goalsAfterUpgrade: psqlScalar(phase162Db, `SELECT COUNT(*) FROM goals;`),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase162.tempRoot) &&
+      phase162.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase162.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
 const migrations = migrationDirectories();
 assertHarnessSafety();
 validateMigrationInventory(migrations);
@@ -1390,10 +1774,22 @@ if (!migrations.includes('0080_phase15_4_invoice_projection')) {
 if (!migrations.includes('0081_phase16_1_docs_foundation')) {
   throw new Error('Missing migration 0081_phase16_1_docs_foundation');
 }
+if (!migrations.includes('0082_phase16_2_forms_foundation')) {
+  throw new Error('Missing migration 0082_phase16_2_forms_foundation');
+}
+if (!migrations.includes('0083_phase16_3_goals_foundation')) {
+  throw new Error('Missing migration 0083_phase16_3_goals_foundation');
+}
+if (!migrations.includes('0084_phase17_1_analytics_foundation')) {
+  throw new Error('Missing migration 0084_phase17_1_analytics_foundation');
+}
 
 const clean = runCleanInstall();
 const legacy = runLegacyUpgrade();
 const phase152Upgrade = runPhase152Upgrade();
+const phase154Upgrade = runPhase154Upgrade();
+const phase161Upgrade = runPhase161Upgrade();
+const phase162Upgrade = runPhase162Upgrade();
 const zeroAgency = runLegacyEdgeScenario(zeroAgencyDb, 0, 'zero');
 const oneAgency = runLegacyEdgeScenario(oneAgencyDb, 1, 'one');
 const manyAgency = runLegacyEdgeScenario(manyAgencyDb, 25, 'many');
@@ -1409,6 +1805,9 @@ console.log(
         oneAgencyDb,
         manyAgencyDb,
         phase15Db,
+        phase154Db,
+        phase161Db,
+        phase162Db,
         host: dbHost,
         port: dbPort,
         container,
@@ -1421,6 +1820,9 @@ console.log(
       cleanInstall: clean,
       legacyUpgrade: legacy,
       phase152Upgrade,
+      phase154Upgrade,
+      phase161Upgrade,
+      phase162Upgrade,
       edgeCases: {
         zeroAgency,
         oneAgency,

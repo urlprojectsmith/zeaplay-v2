@@ -340,6 +340,16 @@ describe('DocsService Phase 16.1 main gate', () => {
       service.attachAsset(tenant, 'doc-1', { assetId: 'asset-foreign' }),
     ).rejects.toBeInstanceOf(NotFoundException);
 
+    prisma.asset.findFirst.mockResolvedValueOnce({
+      id: 'asset-form',
+      sourceModule: 'FORM',
+      _count: { formSubmissionAssets: 1 },
+    });
+    await expect(
+      service.attachAsset(tenant, 'doc-1', { assetId: 'asset-form' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.docAttachment.upsert).not.toHaveBeenCalled();
+
     prisma.doc.findMany.mockResolvedValueOnce([
       {
         id: 'doc-1',

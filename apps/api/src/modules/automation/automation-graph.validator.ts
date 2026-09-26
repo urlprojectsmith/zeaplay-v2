@@ -52,6 +52,7 @@ type ActionFieldType =
   | 'long-string'
   | 'uuid'
   | 'uuid-array'
+  | 'integer'
   | 'date'
   | 'priority'
   | 'project-visibility'
@@ -176,6 +177,16 @@ const actionSchemas: Record<AutomationActionType, ActionSchema> = {
     allowedKeys: ['actionType', 'ticketId', 'tagIds'],
     requiredKeys: ['ticketId', 'tagIds'],
     fields: { ticketId: 'uuid', tagIds: 'uuid-array' },
+  },
+  [AutomationActionType.GOAL_PROGRESS_UPDATE]: {
+    allowedKeys: ['actionType', 'goalId', 'delta', 'idempotencyKey', 'note'],
+    requiredKeys: ['goalId', 'delta'],
+    fields: {
+      goalId: 'uuid',
+      delta: 'integer',
+      idempotencyKey: 'short-string',
+      note: 'long-string',
+    },
   },
 };
 const unavailableActionTypes = new Set<AutomationActionType>([AutomationActionType.ADD_TICKET_TAG]);
@@ -577,6 +588,11 @@ function validateActionField(value: unknown, fieldType: ActionFieldType, path: s
   }
   if (fieldType === 'date') {
     validateDateOrReference(value, path);
+    return;
+  }
+  if (fieldType === 'integer') {
+    if (isVariableReference(value)) return;
+    if (!Number.isInteger(value)) throw new BadRequestException(`${path} must be an integer.`);
     return;
   }
   validateBoundedStringOrReference(value, path, fieldType === 'short-string' ? 160 : 1000);

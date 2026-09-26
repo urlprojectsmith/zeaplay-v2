@@ -11,6 +11,7 @@ import {
   TICKET_SLA_QUEUE,
   WEBHOOK_DELIVERY_QUEUE,
   INBOUND_WEBHOOK_MAINTENANCE_QUEUE,
+  ANALYTICS_ROLLUP_QUEUE,
 } from './queue.constants';
 
 const env = validateEnvironment(process.env);
@@ -42,6 +43,7 @@ const env = validateEnvironment(process.env);
     BullModule.registerQueue({ name: STORAGE_RETENTION_QUEUE }),
     BullModule.registerQueue({ name: WEBHOOK_DELIVERY_QUEUE }),
     BullModule.registerQueue({ name: INBOUND_WEBHOOK_MAINTENANCE_QUEUE }),
+    BullModule.registerQueue({ name: ANALYTICS_ROLLUP_QUEUE }),
   ],
   exports: [BullModule],
 })

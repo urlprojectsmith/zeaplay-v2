@@ -17,3 +17,5 @@ export const WEBHOOK_DELIVERY_DISPATCH_JOB_TYPE = 'webhook.delivery.dispatch';
 export const WEBHOOK_DELIVERY_RECOVERY_JOB_TYPE = 'webhook.delivery.recovery';
 export const INBOUND_WEBHOOK_MAINTENANCE_QUEUE = 'inbound-webhook-maintenance';
 export const INBOUND_WEBHOOK_CLEANUP_JOB_TYPE = 'inbound-webhook.cleanup';
+export const ANALYTICS_ROLLUP_QUEUE = 'analytics-rollup';
+export const ANALYTICS_ROLLUP_SCAN_JOB_TYPE = 'analytics.rollup.scan';

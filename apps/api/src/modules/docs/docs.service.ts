@@ -581,9 +581,16 @@ export class DocsService {
         status: AssetStatus.READY,
         lifecycle: { in: [AssetLifecycle.ACTIVE, AssetLifecycle.ARCHIVED] },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        sourceModule: true,
+        _count: { select: { formSubmissionAssets: true } },
+      },
     });
     if (!asset) throw new NotFoundException('DOC_ATTACHMENT_NOT_FOUND');
+    if (asset.sourceModule === 'FORM' || asset._count.formSubmissionAssets > 0) {
+      throw new NotFoundException('DOC_ATTACHMENT_NOT_FOUND');
+    }
     return this.prisma.docAttachment.upsert({
       where: { docId_assetId: { docId, assetId: dto.assetId } },
       create: {

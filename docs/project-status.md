@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING COMPLETE / PASS.
-Next: Phase 16.2 is NOT STARTED; do not start it without explicit request.
+Current: PHASE 17.1 - ANALYTICS FOUNDATION + METRIC REGISTRY + AGGREGATION ENGINE MAIN IMPLEMENTATION PASS / FINAL VERIFICATION READY.
+Next: Phase 17.1 final certification is READY when explicitly requested. Phase 17.2 Reports, Phase 17.3 Search, Phase 17.4 Custom Dashboards, and Phase 17.5 final certification are NOT STARTED.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -9,15 +9,150 @@ Do not implement Phase 6 from this document alone. Use it to avoid rescanning co
 
 ## Current Certification Gate
 
-Phase 16.1 - DOCS FOUNDATION + EDITOR + COLLABORATION + SHARING
+Phase 17.1 - ANALYTICS FOUNDATION + METRIC REGISTRY + AGGREGATION ENGINE
 
 Main Implementation: PASS
 
-Final Verification: PASS
+Final Verification: READY / NOT RUN
+
+Phase 17.1: NOT COMPLETE until final certification prompt passes.
+
+Phase 17.2: NOT STARTED
+
+Phase 17.3: NOT STARTED
+
+Phase 17.4: NOT STARTED
+
+Phase 17.5: NOT STARTED
+
+- Migration count is 84.
+- Latest migration is `0084_phase17_1_analytics_foundation`.
+- `0084` adds `analytics_rollups`, `AnalyticsScopeType`, and `AnalyticsBucket`; no data backfill was added.
+- Analytics architecture is documented in `docs/analytics-architecture-phase17.md`.
+- Code-owned metric registry is implemented in `apps/api/src/modules/analytics/analytics.registry.ts`.
+- Arbitrary metric keys, unsupported scopes, unsupported dimensions, unsupported filters, invalid ranges, and ranges over 366 days are rejected before query execution.
+- Analytics routes were added for Workspace, Agency, Super Agency, Super Agency rollup rebuild, Platform, and the authenticated registry.
+- Workspace analytics use `analytics.view`; Agency/Super Agency parent analytics use `analytics.parent.read`; Platform analytics use `analytics.platform.read`; rollup rebuild uses `analytics.rebuild`.
+- Workspace owns operational analytics. Agency and Super Agency operational analytics are parent aggregates over descendant Workspaces. Platform analytics are global aggregates.
+- Workspace and Agency cannot request financial billing metrics. Super Agency and Platform can request only `billing.active_subscriptions`.
+- MRR, ARR, invoice amount, tax, overage, payment-method, card analytics, reports, search, custom dashboards, custom formulas, and user-editable metric definitions are NOT implemented.
+- PostgreSQL remains authoritative. Redis is used only for short-lived cache and advisory-lock coordination.
+- Analytics rollups include explicit `scopeType + scopeId` to prevent same-ID collisions across hierarchy levels.
+- Worker rollup queue `analytics-rollup` registers repeatable `analytics.rollup.scan` jobs and rebuilds recent daily Workspace `api.requests` rollups idempotently.
+- Frontend routes were added for `/workspace/analytics`, `/agency/analytics`, `/super-agency/analytics`, and `/super-admin/analytics`.
+- Frontend query keys include scope type and scope ID. Workspace and Agency analytics pages omit billing metrics.
+- Phase 16 migration gate tests were updated to retain the 0081/0082/0083 Phase 16 sequence while allowing the new 0084 Phase 17.1 migration tail.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm typecheck`: PASS, 17 tasks.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm format`: PASS.
+- Focused API analytics/gate regression: PASS, 3 suites / 22 tests.
+- Focused worker analytics rollup regression: PASS, 1 suite / 3 tests.
+- Focused web analytics regression: PASS via web suite, 25 files / 208 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 64 suites / 614 tests; worker PASS, 9 suites / 31 tests; web PASS, 25 files / 208 tests.
+- Security/source search: PASS after review. Hits were expected `billing.active_subscriptions`, documentation explicitly deferring MRR/ARR/reports/search/custom dashboards, and allowed analytics query/cache code. No Phase 17.2 report engine, Phase 17.3 search engine, Phase 17.4 custom dashboard model, MRR/ARR implementation, or duplicate billing/gamification/source-of-truth engine was found.
+- Shared development database remains read-only and was not migrated.
+- Live/provider billing behavior remains NOT EXTERNALLY VERIFIED; no Stripe credentials or live Customer Portal verification were used.
+- Build, integration, E2E, audit, isolated migration-compatibility, and final certification remain deferred to the Phase 17.1 final certification prompt.
+
+## Previous Certification Baseline
+
+Phase 16 - DOCS, FORMS & GOALS FINAL CERTIFICATION
+
+Main Integration/Security Audit: PASS
+
+Final Verification: COMPLETE / CERTIFIED
+
+Phase 16: COMPLETE / PASS
+
+Phase 17 at time of Phase 16 certification: NOT STARTED
+
+- Migration count is 83.
+- Latest migration is `0083_phase16_3_goals_foundation`.
+- `0084` decision: NOT CREATED.
+- `0084` reason: no schema-level security, integrity, tenant-isolation, or constraint defect required a forward-only migration.
+- Phase 16 integration/security matrix: `docs/phase16-integration-security-matrix.md`.
+- Phase 16 final certification handoff: `docs/phase16-certification.md`.
+- Security matrix row count: 36.
+- Unknown/partial security rows: 0.
+- Docs, Forms, and Goals remain Workspace-owned operational entities. No Agency-owned, SuperAgency-owned, Organization-owned, Platform-owned, or Phase 17 ownership model was added.
+- Agency and Super Agency oversight remains read-only and privacy-shaped: Docs show eligible Workspace-visible Docs, Forms show metadata/counts only, and Goals show aggregates only.
+- Phase 16.4 hardened cross-module Asset isolation: Docs reject Form/submission Assets, and Forms reject Doc-attached Assets plus public Form upload Assets outside their bound public submission flow.
+- Docs and Forms continue to use the single canonical Asset, MinIO, `StorageUploadReservation`, and Workspace storage quota system.
+- Forms duplicate idempotency race handling now returns the existing submission as `duplicate: true` without recording Automation or AuditLog again.
+- Forms, Goals, and Docs continue to use one Automation architecture. No `FormActionRunner`, `GoalAutomationEngine`, or `DocAutomationEngine` was added.
+- Goals continue to read canonical Automation/Gamification ledgers and do not directly write XP, badges, achievements, streaks, rewards, leaderboards, global score, or normalized score.
+- No mandatory Phase 15.3 commercial feature keys were added for Docs, Forms, or Goals; no `docs.enabled`, `forms.enabled`, or `goals.enabled` plan key was inserted into already-published plans.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- `pnpm phase14:6:13:migration-compat`: PASS, 83 migrations, latest `0083_phase16_3_goals_foundation`; clean install with seed twice, legacy upgrade, populated 0078/0080/0081/0082 upgrade paths, and zero/one/many legacy Agency edge cases passed.
+- Focused Docs/Forms/Goals/Phase 16.4 backend integration-security regression: PASS, 6 suites / 44 tests.
+- Real Phase 16 API integration regression: PASS, 1 suite / 4 tests.
+- Focused Phase 15/Gamification/Automation/Asset regression: PASS, 6 suites / 170 tests.
+- Focused Phase 16.4 matrix-only regression: PASS, 1 suite / 8 tests.
+- Full `pnpm test:integration` on isolated migrated PostgreSQL: PASS, 8 tasks; API PASS, 7 suites / 113 tests; worker PASS, 8 suites / 28 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 63 suites / 608 tests; worker PASS, 8 suites / 28 tests; web PASS, 24 files / 204 tests.
+- Fresh full web stability run: PASS, 24 files / 204 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks with the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high`: PASS; two moderate advisories remain below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Security/source search: PASS after review. Hits were expected docs/tests, safe JavaScript URL sanitizer/rejection code, Phase 16.4 negative assertions, Workspace UI fields, and existing project/gamification ownership fields. No Agency/Super Agency/Organization-owned Doc/Form/Goal model, duplicate Asset/Automation/Notification/Gamification engine, unauthorized parent answer/signature/manual-note exposure, direct Goal XP/reward write, Phase 17+ implementation, or silent Docs/Forms/Goals commercial feature key was found.
+- Worker tests emitted expected processor warning logs from negative/retry test cases.
+- Playwright emitted expected `NO_COLOR` ignored because `FORCE_COLOR` is set warnings.
+- Shared development database remains read-only and was not migrated.
+- Shared development database read-only status reports pending `0081_phase16_1_docs_foundation`, `0082_phase16_2_forms_foundation`, and `0083_phase16_3_goals_foundation`.
+
+Phase 16.3: COMPLETE / PASS
+
+Phase 16.2: COMPLETE / PASS
+
+Phase 16.2 final certification state:
+
+- Migration count is 82.
+- Latest migration is `0082_phase16_2_forms_foundation`.
+- `0082` was created for Workspace Forms, FormVersions, FormSubmissions, FormSubmissionAsset links, and automation enum extensions.
+- No `0083` migration was created.
+- Forms architecture is documented in `docs/forms-architecture-phase16.md`.
+- Workspace Forms route is `/workspace/forms`.
+- Public Forms route is `/forms/:publicId` and is noindex.
+- Public upload routes are `/forms/:publicId/uploads/authorize` and `/forms/:publicId/uploads/complete`.
+- Agency and Super Agency Forms oversight routes are `/agency/forms` and `/super-agency/forms`.
+- Forms are Workspace-owned. Agency and Super Agency receive metadata-only oversight. Organization remains legacy metadata only.
+- Forms reuse the existing Asset storage model for file/signature answer links and the existing Automation domain event pipeline for `FORM_SUBMITTED`.
+- Public file/signature uploads reuse the existing Asset, MinIO presigned upload, `StorageUploadReservation`, quota, expiry, and storage-retention cleanup architecture. No second Asset system, storage system, quota authority, object-key authority, or generic anonymous Workspace upload API was added.
+- Public upload authorization is derived from the published public Form and binds Workspace, Form, FormVersion, field, Asset ID, MIME, size, count, client fingerprint hash, and a short-lived hashed upload token server-side.
+- Public submission asset linking rejects arbitrary Asset IDs, cross-Workspace assets, cross-Form assets, cross-field assets, expired uploads, consumed uploads, duplicate Asset relations, and wrong-version public uploads.
+- Signature answers are stored as bounded image Asset references through the same upload flow, not base64/data URLs.
+- Public parent privacy remains metadata-only; public errors do not expose internal billing or storage details.
+- No Phase 15.3 commercial Forms feature key was added; restricted-mode write blocking, Files quotas, and Automation quotas remain authoritative.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Focused Forms backend/public upload/Phase 15.3 matrix: PASS, 2 suites / 11 tests.
+- Focused Docs, Phase 15, and gamification API regression: PASS, 9 suites / 188 tests.
+- Focused Forms frontend/web stability: PASS, 23 files / 199 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 59 suites / 586 tests; worker PASS, 8 suites / 28 tests; web PASS, 23 files / 199 tests.
+- Full `pnpm test:integration`: PASS, 8 tasks; API PASS, 6 suites / 109 tests; worker PASS, 8 suites / 28 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm phase14:6:13:migration-compat`: PASS through 82 migrations; clean install, legacy upgrade, populated Phase 15.2 upgrade, and zero/one/many Agency edge cases passed.
+- `pnpm build`: PASS, 11 tasks with the existing Next.js ESLint plugin warning.
+- `pnpm audit --audit-level high`: PASS; two moderate advisories remain below high threshold.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Security/source search: PASS after review; hits were expected docs/history text, safe Docs sanitizer checks, existing storage signed URL internals, public upload token handling with server-side token hashing, public upload frontend token transport, and tests/docs. No second Asset system, public normal Workspace upload API, raw answer logging, CAPTCHA token logging, public upload token logging, parent answer/PII exposure, Forms commercial feature key, direct Task/Ticket/Project bypass, Form submission XP, or Phase 16.3 implementation was found.
+- Migration compatibility harness was updated to the Phase 16.2 inventory expectation of 82 migrations and latest `0082_phase16_2_forms_foundation`.
+- Live CAPTCHA provider wiring remains NOT EXTERNALLY VERIFIED; required CAPTCHA still fails closed at final public submission if configured.
+- Malware scanning remains NOT IMPLEMENTED / NOT CLAIMED.
+- Shared development database remains read-only and was not migrated.
+- Shared development database read-only status reports pending `0081_phase16_1_docs_foundation` and `0082_phase16_2_forms_foundation`.
 
 Phase 16.1: COMPLETE / PASS
-
-Phase 16.2: NOT STARTED
 
 Phase 16.1 final certification state:
 

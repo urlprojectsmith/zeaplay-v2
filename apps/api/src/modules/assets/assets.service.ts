@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   GoneException,
   Inject,
   Injectable,
@@ -21,7 +22,7 @@ import {
   ProjectStatus,
 } from '@prisma/client';
 import type { Queue } from 'bullmq';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
 import type { WorkspaceTenantContext } from '../../common/auth/auth.types';
 import type { StorageAdapter } from '../../infrastructure/storage/storage-adapter';
@@ -61,6 +62,41 @@ const DOWNLOADABLE_LIFECYCLES: AssetLifecycle[] = [AssetLifecycle.ACTIVE, AssetL
 const PURGE_BATCH_SIZE = 100;
 const MAX_PURGE_ATTEMPTS = 3;
 const PURGE_RETRIES_EXHAUSTED = 'PURGE_RETRIES_EXHAUSTED';
+const PUBLIC_FORM_UPLOAD_TOKEN_BYTES = 32;
+const PUBLIC_FORM_UPLOAD_SIGNATURE_MIME_TYPES = new Set(['image/png', 'image/webp']);
+
+export interface PublicFormUploadAuthorizeInput {
+  workspaceId: string;
+  formId: string;
+  formPublicId: string;
+  formVersionId: string;
+  formVersionNumber: number;
+  fieldId: string;
+  fieldType: 'FILE_UPLOAD' | 'SIGNATURE';
+  filename: string;
+  displayName?: string;
+  mimeType: string;
+  sizeBytes: number;
+  maxSizeBytes: number;
+  maxFiles: number;
+  allowedMimeTypes: string[];
+  ownerUserId: string;
+  ownerMembershipId: string;
+  publicClientHash: string;
+}
+
+export interface PublicFormUploadCompleteInput {
+  publicId: string;
+  workspaceId: string;
+  formId: string;
+  formVersionId: string;
+  formVersionNumber: number;
+  fieldId: string;
+  assetId: string;
+  uploadToken: string;
+  sizeBytes: number;
+  checksum?: string;
+}
 
 @Injectable()
 export class AssetsService {
@@ -314,6 +350,196 @@ export class AssetsService {
       metadata: { sizeBytes: dto.sizeBytes },
     });
     return serializeAsset(updated);
+  }
+
+  async authorizePublicFormUpload(input: PublicFormUploadAuthorizeInput) {
+    const filename = sanitizeFilename(input.filename);
+    const displayName = sanitizeFilename(input.displayName ?? filename);
+    const mimeType = sanitizeMimeType(input.mimeType);
+    const allowedMimeTypes = normalizeAllowedMimeTypes(input.allowedMimeTypes, input.fieldType);
+    if (!allowedMimeTypes.has(mimeType) || !this.allowedMimeTypes.has(mimeType)) {
+      throw new UnprocessableEntityException('FORM_UPLOAD_TYPE_NOT_ALLOWED');
+    }
+    const maxSizeBytes = Math.min(input.maxSizeBytes, this.env.MAX_UPLOAD_BYTES);
+    if (input.sizeBytes > maxSizeBytes) {
+      throw new PayloadTooLargeException('FORM_UPLOAD_TOO_LARGE');
+    }
+    await this.billingEntitlements?.assertWorkspaceFeatureAvailable(
+      input.workspaceId,
+      'files.enabled',
+    );
+
+    const now = new Date();
+    await this.assertPublicFormFieldCapacity(input, now);
+    const assetId = randomUUID();
+    const uploadToken = randomBytes(PUBLIC_FORM_UPLOAD_TOKEN_BYTES).toString('base64url');
+    const uploadTokenHash = hashPublicUploadToken(uploadToken);
+    const uploadExpiresAt = new Date(Date.now() + this.env.UPLOAD_URL_TTL_SECONDS * 1000);
+    const sizeBytes = BigInt(input.sizeBytes);
+    const storageKey = buildPublicFormStorageKey(
+      input.workspaceId,
+      input.formId,
+      input.fieldId,
+      assetId,
+    );
+    const extension = extractExtension(filename);
+
+    const asset = await this.prisma.$transaction(async (tx) => {
+      await this.assertQuotaAvailable(tx, input.workspaceId, sizeBytes);
+      const created = await tx.asset.create({
+        data: {
+          id: assetId,
+          workspaceId: input.workspaceId,
+          projectId: null,
+          createdById: input.ownerUserId,
+          uploadedByMembershipId: input.ownerMembershipId,
+          originalFilename: filename,
+          displayName,
+          storageBucket: this.env.MINIO_BUCKET,
+          storageProvider: STORAGE_PROVIDER_MINIO,
+          storageKey,
+          mimeType,
+          extension,
+          sizeBytes,
+          status: AssetStatus.UPLOADING,
+          lifecycle: AssetLifecycle.ACTIVE,
+          uploadExpiresAt,
+          sourceModule: 'FORM',
+          sourceEntityType: 'FORM',
+          sourceEntityId: input.formId,
+          metadata: {
+            publicFormUpload: {
+              formPublicId: input.formPublicId,
+              formVersionId: input.formVersionId,
+              formVersionNumber: input.formVersionNumber,
+              fieldId: input.fieldId,
+              fieldType: input.fieldType,
+              maxFiles: input.maxFiles,
+              maxSizeBytes,
+              allowedMimeTypes: [...allowedMimeTypes],
+              uploadTokenHash,
+              publicClientHash: input.publicClientHash,
+              expiresAt: uploadExpiresAt.toISOString(),
+              consumedAt: null,
+            },
+          },
+        },
+        select: assetSelect,
+      });
+      await tx.storageUploadReservation.create({
+        data: {
+          workspaceId: input.workspaceId,
+          fileId: created.id,
+          membershipId: input.ownerMembershipId,
+          reservedBytes: sizeBytes,
+          expiresAt: uploadExpiresAt,
+        },
+      });
+      return created;
+    });
+
+    const uploadUrl = await this.storage.createPresignedUploadUrl(
+      storageKey,
+      this.env.UPLOAD_URL_TTL_SECONDS,
+    );
+    return {
+      assetId: asset.id,
+      uploadToken,
+      uploadUrl,
+      expiresAt: uploadExpiresAt,
+      constraints: {
+        fieldId: input.fieldId,
+        formVersionNumber: input.formVersionNumber,
+        mimeType,
+        maxSizeBytes,
+      },
+    };
+  }
+
+  async completePublicFormUpload(input: PublicFormUploadCompleteInput) {
+    const asset = await this.prisma.asset.findFirst({
+      where: { id: input.assetId, workspaceId: input.workspaceId, deletedAt: null },
+      select: assetSelect,
+    });
+    if (!asset || asset.status === AssetStatus.DELETED)
+      throw new NotFoundException('FORM_UPLOAD_NOT_FOUND');
+    const metadata = publicFormUploadMetadata(asset.metadata);
+    if (!metadata) throw new ForbiddenException('FORM_UPLOAD_INVALID');
+    if (
+      asset.sourceModule !== 'FORM' ||
+      asset.sourceEntityId !== input.formId ||
+      metadata.formPublicId !== input.publicId ||
+      metadata.formVersionId !== input.formVersionId ||
+      metadata.formVersionNumber !== input.formVersionNumber ||
+      metadata.fieldId !== input.fieldId ||
+      metadata.uploadTokenHash !== hashPublicUploadToken(input.uploadToken)
+    ) {
+      throw new ForbiddenException('FORM_UPLOAD_INVALID');
+    }
+    if (metadata.consumedAt) throw new ConflictException('FORM_UPLOAD_ALREADY_CONSUMED');
+    const metadataExpiresAtMs = metadata.expiresAt
+      ? new Date(metadata.expiresAt).getTime()
+      : Number.NaN;
+    if (
+      !asset.uploadExpiresAt ||
+      asset.uploadExpiresAt <= new Date() ||
+      metadataExpiresAtMs <= Date.now()
+    ) {
+      await this.releaseExpiredReservation(input.assetId);
+      throw new GoneException('FORM_UPLOAD_EXPIRED');
+    }
+    if (asset.status === AssetStatus.READY) return publicFormUploadAssetPayload(asset);
+    if (asset.status !== AssetStatus.UPLOADING)
+      throw new ConflictException('FORM_UPLOAD_STATE_INVALID');
+
+    const object = await this.statOwnedObject(asset).catch(() => {
+      throw new ServiceUnavailableException('FORM_UPLOAD_OBJECT_MISSING');
+    });
+    if (object.size !== input.sizeBytes || BigInt(object.size) !== asset.sizeBytes) {
+      throw new BadRequestException('FORM_UPLOAD_SIZE_MISMATCH');
+    }
+    if (
+      object.contentType &&
+      sanitizeMimeType(object.contentType) !== asset.mimeType &&
+      object.contentType !== 'application/octet-stream'
+    ) {
+      throw new UnprocessableEntityException('FORM_UPLOAD_TYPE_MISMATCH');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const reservation = await tx.storageUploadReservation.findUnique({
+        where: { fileId: input.assetId },
+        select: { id: true, expiresAt: true, consumedAt: true, releasedAt: true },
+      });
+      if (!reservation || reservation.releasedAt || reservation.expiresAt <= new Date()) {
+        throw new GoneException('FORM_UPLOAD_EXPIRED');
+      }
+      if (!reservation.consumedAt) {
+        await tx.storageUploadReservation.update({
+          where: { id: reservation.id },
+          data: { consumedAt: new Date() },
+        });
+      }
+      return tx.asset.update({
+        where: { id_workspaceId: { id: input.assetId, workspaceId: input.workspaceId } },
+        data: {
+          status: AssetStatus.READY,
+          checksum: input.checksum,
+          metadata: {
+            ...withoutUndefined({
+              ...(isRecord(asset.metadata) ? asset.metadata : {}),
+              publicFormUpload: {
+                ...metadata,
+                uploadedContentType: object.contentType,
+                etag: object.etag,
+              },
+            }),
+          },
+        },
+        select: assetSelect,
+      });
+    });
+    return publicFormUploadAssetPayload(updated);
   }
 
   async listWorkspaceFiles(tenant: WorkspaceTenantContext, query: WorkspaceFileQueryDto) {
@@ -842,6 +1068,40 @@ export class AssetsService {
     return serializeAsset(updated);
   }
 
+  private async assertPublicFormFieldCapacity(input: PublicFormUploadAuthorizeInput, now: Date) {
+    const activeUploads = await this.prisma.asset.count({
+      where: {
+        workspaceId: input.workspaceId,
+        sourceModule: 'FORM',
+        sourceEntityId: input.formId,
+        deletedAt: null,
+        status: { in: [AssetStatus.UPLOADING, AssetStatus.READY] },
+        uploadExpiresAt: { gt: now },
+        AND: [
+          { metadata: { path: ['publicFormUpload', 'formPublicId'], equals: input.formPublicId } },
+          {
+            metadata: { path: ['publicFormUpload', 'formVersionId'], equals: input.formVersionId },
+          },
+          {
+            metadata: {
+              path: ['publicFormUpload', 'formVersionNumber'],
+              equals: input.formVersionNumber,
+            },
+          },
+          { metadata: { path: ['publicFormUpload', 'fieldId'], equals: input.fieldId } },
+          {
+            metadata: {
+              path: ['publicFormUpload', 'publicClientHash'],
+              equals: input.publicClientHash,
+            },
+          },
+          { metadata: { path: ['publicFormUpload', 'consumedAt'], equals: Prisma.JsonNull } },
+        ],
+      },
+    });
+    if (activeUploads >= input.maxFiles) throw new ConflictException('FORM_UPLOAD_COUNT_EXCEEDED');
+  }
+
   private validateUploadInput(dto: UploadInitDto | WorkspaceFileUploadInitDto) {
     const filename = sanitizeFilename(dto.filename);
     const displayName = sanitizeFilename(dto.displayName ?? filename);
@@ -1309,8 +1569,90 @@ function buildWorkspaceFileStorageKey(workspaceId: string, fileId: string) {
   return `workspaces/${workspaceId}/files/${fileId}/original`;
 }
 
-function isRecord(value: Prisma.JsonValue): value is Prisma.JsonObject {
+function buildPublicFormStorageKey(
+  workspaceId: string,
+  formId: string,
+  fieldId: string,
+  assetId: string,
+) {
+  return `workspaces/${workspaceId}/forms/${formId}/fields/${fieldId}/assets/${assetId}/original`;
+}
+
+function hashPublicUploadToken(token: string) {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function normalizeAllowedMimeTypes(
+  allowedMimeTypes: string[],
+  fieldType: 'FILE_UPLOAD' | 'SIGNATURE',
+) {
+  const requested = new Set(
+    allowedMimeTypes.map((mimeType) => sanitizeMimeType(mimeType)).filter(Boolean),
+  );
+  if (fieldType === 'SIGNATURE') {
+    return new Set(
+      [...requested].filter((mimeType) => PUBLIC_FORM_UPLOAD_SIGNATURE_MIME_TYPES.has(mimeType)),
+    );
+  }
+  return requested;
+}
+
+function publicFormUploadMetadata(value: Prisma.JsonValue | undefined) {
+  if (!isRecord(value)) return null;
+  const metadata = value.publicFormUpload;
+  if (!isRecord(metadata)) return null;
+  const result = {
+    formPublicId: stringValue(metadata.formPublicId),
+    formVersionId: stringValue(metadata.formVersionId),
+    formVersionNumber: numberValue(metadata.formVersionNumber),
+    fieldId: stringValue(metadata.fieldId),
+    fieldType: stringValue(metadata.fieldType),
+    maxFiles: numberValue(metadata.maxFiles),
+    maxSizeBytes: numberValue(metadata.maxSizeBytes),
+    allowedMimeTypes: Array.isArray(metadata.allowedMimeTypes)
+      ? metadata.allowedMimeTypes.filter((item): item is string => typeof item === 'string')
+      : [],
+    uploadTokenHash: stringValue(metadata.uploadTokenHash),
+    publicClientHash: stringValue(metadata.publicClientHash),
+    expiresAt: stringValue(metadata.expiresAt),
+    consumedAt: typeof metadata.consumedAt === 'string' ? metadata.consumedAt : null,
+  };
+  if (
+    !result.formPublicId ||
+    !result.formVersionId ||
+    !result.formVersionNumber ||
+    !result.fieldId ||
+    !result.fieldType ||
+    !result.maxFiles ||
+    !result.maxSizeBytes ||
+    !result.uploadTokenHash ||
+    !result.publicClientHash ||
+    !result.expiresAt
+  ) {
+    return null;
+  }
+  return result;
+}
+
+function publicFormUploadAssetPayload(asset: AssetRecord) {
+  return {
+    assetId: asset.id,
+    mimeType: asset.mimeType,
+    sizeBytes: Number(asset.sizeBytes),
+    status: asset.status,
+  };
+}
+
+function isRecord(value: unknown): value is Prisma.JsonObject {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' ? value : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function hasControlCharacters(value: string) {

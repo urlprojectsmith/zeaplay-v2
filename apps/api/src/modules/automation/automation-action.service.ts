@@ -12,6 +12,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { ProjectsService } from '../projects/projects.service';
 import { TasksService } from '../tasks/tasks.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { GoalsService } from '../goals/goals.service';
 import { AUTOMATION_MAX_FUTURE_DEPTH } from './automation.constants';
 import { validateAutomationActionConfig } from './automation-graph.validator';
 import type {
@@ -65,6 +66,8 @@ export class AutomationActionService {
         return this.changeTicketStatus(tenant, config, mutation);
       case AutomationActionType.ADD_TICKET_TAG:
         throw new BadRequestException('AUTOMATION_ACTION_UNSUPPORTED_CANONICAL_SERVICE');
+      case AutomationActionType.GOAL_PROGRESS_UPDATE:
+        return this.goalProgressUpdate(tenant, config, context);
       default:
         throw new BadRequestException('AUTOMATION_ACTION_UNSUPPORTED');
     }
@@ -298,6 +301,33 @@ export class AutomationActionService {
     );
   }
 
+  private async goalProgressUpdate(
+    tenant: WorkspaceTenantContext,
+    config: ActionConfig,
+    context: AutomationActionExecutionContext,
+  ) {
+    const goalId = asString(config.goalId);
+    const delta = asInteger(config.delta);
+    const updated = await this.requireGoals().recordCustomProgress({
+      tenant,
+      goalId,
+      delta,
+      actorMembershipId: tenant.workspaceMembershipId,
+      sourceId: context.mutation.causationId,
+      idempotencyKey:
+        optionalString(config.idempotencyKey) ??
+        `automation-goal-progress:${context.mutation.invocationKey ?? context.actionNodeId}`,
+      note: optionalString(config.note),
+      metadata: {
+        workflowId: context.mutation.workflowId,
+        workflowVersionId: context.mutation.workflowVersionId,
+        triggerDomainEventId: context.mutation.triggerDomainEventId,
+        triggerMatchId: context.mutation.triggerMatchId,
+      },
+    });
+    return result(config.actionType, AutomationDomainEventEntityType.GOAL, entityId(updated), true);
+  }
+
   private requireTasks() {
     const service = this.tasks ?? this.moduleRef?.get(TasksService, { strict: false });
     if (!service) throw new ServiceUnavailableException('AUTOMATION_TASK_ACTIONS_UNAVAILABLE');
@@ -313,6 +343,12 @@ export class AutomationActionService {
   private requireTickets() {
     const service = this.tickets ?? this.moduleRef?.get(TicketsService, { strict: false });
     if (!service) throw new ServiceUnavailableException('AUTOMATION_TICKET_ACTIONS_UNAVAILABLE');
+    return service;
+  }
+
+  private requireGoals() {
+    const service = this.moduleRef?.get(GoalsService, { strict: false });
+    if (!service) throw new ServiceUnavailableException('AUTOMATION_GOAL_ACTIONS_UNAVAILABLE');
     return service;
   }
 
@@ -409,6 +445,11 @@ function asString(value: unknown) {
 
 function optionalString(value: unknown) {
   return value === undefined || value === null ? undefined : asString(value);
+}
+
+function asInteger(value: unknown) {
+  if (!Number.isInteger(value)) throw new BadRequestException('AUTOMATION_ACTION_CONFIG_INVALID');
+  return value as number;
 }
 
 function nullableString(value: unknown) {

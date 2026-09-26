@@ -9,5 +9,6 @@ import { WorkspaceFilesController } from './workspace-files.controller';
   imports: [BillingModule],
   controllers: [AssetsController, WorkspaceFilesController],
   providers: [AssetsService, StorageRetentionSchedulerService],
+  exports: [AssetsService],
 })
 export class AssetsModule {}

@@ -10,6 +10,8 @@ import {
   CloudDrivesController,
 } from '../cloud-drives/cloud-drives.controller';
 import { GamificationController } from '../gamification/gamification.controller';
+import { PublicFormsController, WorkspaceFormsController } from '../forms/forms.controller';
+import { WorkspaceGoalsController } from '../goals/goals.controller';
 import { IntegrationsController } from '../integrations/integrations.controller';
 import { ApiKeysController } from '../public-api/api-keys.controller';
 import { PublicProjectsController } from '../public-api/public-projects.controller';
@@ -52,6 +54,9 @@ const CONTROLLED_CONTROLLERS: ControllerClass[] = [
   CloudDrivesController,
   CloudDriveOAuthController,
   GamificationController,
+  WorkspaceFormsController,
+  PublicFormsController,
+  WorkspaceGoalsController,
 ];
 
 function mutationRouteKeysFor(controller: ControllerClass) {

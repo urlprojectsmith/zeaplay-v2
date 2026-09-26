@@ -159,6 +159,7 @@ const workspacePermissions = [
   'storage.cloud.manage',
   'storage.cloud.import',
   'storage.cloud.export',
+  'analytics.view',
   'docs.view',
   'docs.create',
   'docs.edit',
@@ -170,6 +171,20 @@ const workspacePermissions = [
   'docs.comments.create',
   'docs.comments.update_own',
   'docs.comments.moderate',
+  'forms.view',
+  'forms.create',
+  'forms.edit',
+  'forms.publish',
+  'forms.manage',
+  'forms.submit',
+  'forms.submissions.view',
+  'forms.submissions.manage',
+  'goals.view',
+  'goals.create',
+  'goals.edit',
+  'goals.archive',
+  'goals.progress.update',
+  'goals.reconcile',
   'billing.allocation.read',
 ];
 
@@ -193,6 +208,9 @@ const agencyPermissions = [
   'projects.parent.read',
   'tickets.parent.read',
   'docs.parent.read',
+  'forms.parent.read',
+  'goals.parent.read',
+  'analytics.parent.read',
   'gamification.global_leaderboard.view_agency',
 ];
 
@@ -230,6 +248,10 @@ const superAgencyPermissions = [
   'projects.parent.read',
   'tickets.parent.read',
   'docs.parent.read',
+  'forms.parent.read',
+  'goals.parent.read',
+  'analytics.parent.read',
+  'analytics.rebuild',
   'gamification.global_leaderboard.view_super_agency',
 ];
 
@@ -241,6 +263,8 @@ const platformPermissions = [
   'billing.subscription.cancel',
   'billing.allocation.read',
   'billing.allocation.manage',
+  'analytics.platform.read',
+  'analytics.rebuild',
   'gamification.global_leaderboard.view_platform',
   'gamification.developer.diagnostics',
 ];
@@ -565,6 +589,7 @@ async function seedRoles() {
         'storage.cloud.connect',
         'storage.cloud.import',
         'storage.cloud.export',
+        'analytics.view',
         'docs.view',
         'docs.create',
         'docs.edit',
@@ -574,6 +599,19 @@ async function seedRoles() {
         'docs.comments.view',
         'docs.comments.create',
         'docs.comments.update_own',
+        'forms.view',
+        'forms.create',
+        'forms.edit',
+        'forms.publish',
+        'forms.submit',
+        'forms.submissions.view',
+        'analytics.view',
+        'goals.view',
+        'goals.create',
+        'goals.edit',
+        'goals.archive',
+        'goals.progress.update',
+        'goals.reconcile',
         'integrations.view',
         'integrations.create',
         'integrations.manage',
@@ -660,6 +698,7 @@ async function seedRoles() {
         'storage.cloud.connect',
         'storage.cloud.import',
         'storage.cloud.export',
+        'analytics.view',
         'docs.view',
         'docs.create',
         'docs.edit',
@@ -667,6 +706,13 @@ async function seedRoles() {
         'docs.comments.view',
         'docs.comments.create',
         'docs.comments.update_own',
+        'forms.view',
+        'forms.create',
+        'forms.edit',
+        'forms.submit',
+        'goals.view',
+        'goals.create',
+        'goals.progress.update',
         'integrations.view',
         'tasks.view',
         'tasks.time.view_own',
@@ -709,7 +755,7 @@ async function seedRoles() {
     });
     roles[definition.key] = role;
     await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
-    for (const permissionKey of definition.permissions) {
+    for (const permissionKey of new Set(definition.permissions)) {
       const permission = await prisma.permission.findUniqueOrThrow({
         where: { key: permissionKey },
       });

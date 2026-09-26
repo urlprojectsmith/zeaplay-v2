@@ -144,6 +144,7 @@ export const messages = {
       docs: 'Docs',
       forms: 'Forms',
       goals: 'Goals',
+      analytics: 'Analytics',
       customDashboard: 'Custom Dashboard',
     },
     calendar: {
@@ -2278,6 +2279,7 @@ export const messages = {
       docs: 'ஆவணங்கள்',
       forms: 'படிவங்கள்',
       goals: 'இலக்குகள்',
+      analytics: 'பகுப்பாய்வு',
       customDashboard: 'தனிப்பயன் டாஷ்போர்டு',
     },
     calendar: {

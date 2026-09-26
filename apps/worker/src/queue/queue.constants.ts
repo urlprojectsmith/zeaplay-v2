@@ -15,6 +15,8 @@ export const INBOUND_WEBHOOK_MAINTENANCE_QUEUE = 'inbound-webhook-maintenance';
 export const INBOUND_WEBHOOK_CLEANUP_JOB_TYPE = 'inbound-webhook.cleanup';
 export const BILLING_LIFECYCLE_QUEUE = 'billing-lifecycle';
 export const BILLING_LIFECYCLE_SCAN_JOB_TYPE = 'billing.lifecycle.scan';
+export const ANALYTICS_ROLLUP_QUEUE = 'analytics-rollup';
+export const ANALYTICS_ROLLUP_SCAN_JOB_TYPE = 'analytics.rollup.scan';
 
 export const FOUNDATION_QUEUES = [
   'email',
@@ -34,6 +36,7 @@ export const FOUNDATION_QUEUES = [
   WEBHOOK_DELIVERY_QUEUE,
   INBOUND_WEBHOOK_MAINTENANCE_QUEUE,
   BILLING_LIFECYCLE_QUEUE,
+  ANALYTICS_ROLLUP_QUEUE,
 ] as const;
 
 export type FoundationQueueName = (typeof FOUNDATION_QUEUES)[number];
