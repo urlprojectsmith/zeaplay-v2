@@ -48,9 +48,11 @@ import {
   type TaskPriority,
   type WorkspaceTagSummary,
 } from '../../../services/workspace-tasks';
+import { listWorkspaceRoles, rolesKeys } from '../../../services/workspace-roles';
 import { useSessionStore } from '../../../stores/session';
 import { PageContainer } from '../../layout/PageContainer';
 import { PageHeader } from '../../layout/PageHeader';
+import { useWorkspacePermissions } from '../useWorkspacePermissions';
 import { AllTasksBrowser } from './AllTasksBrowser';
 
 const priorities = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
@@ -164,16 +166,26 @@ export function WorkspaceTasksPage() {
     enabled: Boolean(workspaceId),
     staleTime: 30_000,
   });
+  const rolesQuery = useQuery({
+    queryKey: rolesKeys.all(workspaceId),
+    queryFn: () => listWorkspaceRoles(workspaceId as string),
+    enabled: Boolean(accessToken && workspaceId),
+    staleTime: 30_000,
+  });
+  const permissions = useWorkspacePermissions(workspaceId, rolesQuery.data ?? []);
+  const canCreateTasks = hasPermission(permissions, 'tasks.create');
   return (
     <PageContainer>
       <PageHeader
         title={labels.title}
         description={labels.description}
         actions={
-          <Button disabled={!workspaceId} onClick={() => setCreateOpen(true)}>
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            {labels.createTask}
-          </Button>
+          canCreateTasks ? (
+            <Button disabled={!workspaceId} onClick={() => setCreateOpen(true)}>
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              {labels.createTask}
+            </Button>
+          ) : null
         }
       />
       <AllTasksBrowser workspaceId={workspaceId} />
@@ -188,6 +200,10 @@ export function WorkspaceTasksPage() {
       />
     </PageContainer>
   );
+}
+
+function hasPermission(permissions: Set<string>, permission: string) {
+  return permissions.has('*') || permissions.has(permission);
 }
 
 export function TaskCreateDialog({

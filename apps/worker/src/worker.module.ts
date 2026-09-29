@@ -15,6 +15,7 @@ import { InboundWebhookMaintenanceProcessor } from './processors/inbound-webhook
 import { WorkerHierarchyService } from './processors/worker-hierarchy.service';
 import { BillingLifecycleProcessor } from './processors/billing-lifecycle.processor';
 import { AnalyticsRollupProcessor } from './processors/analytics-rollup.processor';
+import { ReportExportProcessor } from './processors/report-export.processor';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { AnalyticsRollupProcessor } from './processors/analytics-rollup.processo
     InboundWebhookMaintenanceProcessor,
     BillingLifecycleProcessor,
     AnalyticsRollupProcessor,
+    ReportExportProcessor,
     WorkerHierarchyService,
   ],
 })

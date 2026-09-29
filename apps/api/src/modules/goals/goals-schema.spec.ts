@@ -20,8 +20,9 @@ describe('Phase 16.3 Goals schema and architecture gate', () => {
     expect(migrationDirs.filter((name) => name.startsWith('0083_'))).toEqual([
       '0083_phase16_3_goals_foundation',
     ]);
-    expect(migrationDirs).toHaveLength(84);
-    expect(migrationDirs.at(-1)).toBe('0084_phase17_1_analytics_foundation');
+    expect(migrationDirs).toHaveLength(85);
+    expect(migrationDirs.at(-2)).toBe('0084_phase17_1_analytics_foundation');
+    expect(migrationDirs.at(-1)).toBe('0085_phase17_2_reports');
     expect(migration).toContain('CREATE TABLE "goals"');
     expect(migration).toContain('CREATE TABLE "goal_progress_events"');
     expect(migration).toContain('goals_owner_shape_chk');

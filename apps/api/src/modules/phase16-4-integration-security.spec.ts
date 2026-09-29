@@ -16,12 +16,13 @@ const securityMatrix = read('../../docs/phase16-integration-security-matrix.md')
 const phase16Certification = read('../../docs/phase16-certification.md');
 
 describe('Phase 16.4 Docs/Forms/Goals integration and security gate', () => {
-  it('keeps Phase 16 schema additive through 0083 before the Phase 17.1 migration', () => {
-    expect(migrations).toHaveLength(84);
-    expect(migrations.at(-4)).toBe('0081_phase16_1_docs_foundation');
-    expect(migrations.at(-3)).toBe('0082_phase16_2_forms_foundation');
-    expect(migrations.at(-2)).toBe('0083_phase16_3_goals_foundation');
-    expect(migrations.at(-1)).toBe('0084_phase17_1_analytics_foundation');
+  it('keeps Phase 16 schema additive through 0083 before the Phase 17 migrations', () => {
+    expect(migrations).toHaveLength(85);
+    expect(migrations.at(-5)).toBe('0081_phase16_1_docs_foundation');
+    expect(migrations.at(-4)).toBe('0082_phase16_2_forms_foundation');
+    expect(migrations.at(-3)).toBe('0083_phase16_3_goals_foundation');
+    expect(migrations.at(-2)).toBe('0084_phase17_1_analytics_foundation');
+    expect(migrations.at(-1)).toBe('0085_phase17_2_reports');
     expect(schema).toMatch(/\bdocs\s+Doc\[\]/);
     expect(schema).toMatch(/\bforms\s+Form\[\]/);
     expect(schema).toMatch(/\bgoals\s+Goal\[\]/);

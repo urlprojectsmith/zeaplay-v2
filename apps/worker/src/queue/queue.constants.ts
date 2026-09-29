@@ -17,6 +17,9 @@ export const BILLING_LIFECYCLE_QUEUE = 'billing-lifecycle';
 export const BILLING_LIFECYCLE_SCAN_JOB_TYPE = 'billing.lifecycle.scan';
 export const ANALYTICS_ROLLUP_QUEUE = 'analytics-rollup';
 export const ANALYTICS_ROLLUP_SCAN_JOB_TYPE = 'analytics.rollup.scan';
+export const REPORTS_QUEUE = 'reports';
+export const REPORT_EXPORT_JOB_TYPE = 'report.export.generate';
+export const REPORT_SCHEDULE_SCAN_JOB_TYPE = 'report.schedule.scan';
 
 export const FOUNDATION_QUEUES = [
   'email',
@@ -25,7 +28,6 @@ export const FOUNDATION_QUEUES = [
   'webhooks',
   'integrations',
   'gamification',
-  'reports',
   'archives',
   'files',
   ASSET_PROCESSING_QUEUE,
@@ -37,6 +39,7 @@ export const FOUNDATION_QUEUES = [
   INBOUND_WEBHOOK_MAINTENANCE_QUEUE,
   BILLING_LIFECYCLE_QUEUE,
   ANALYTICS_ROLLUP_QUEUE,
+  REPORTS_QUEUE,
 ] as const;
 
 export type FoundationQueueName = (typeof FOUNDATION_QUEUES)[number];

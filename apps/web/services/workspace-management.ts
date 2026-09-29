@@ -84,6 +84,17 @@ export async function updateWorkspaceUser(
   return response.data;
 }
 
+export async function createWorkspaceUser(
+  workspaceId: string,
+  body: { email: string; role: 'ADMIN' | 'MANAGER' | 'MEMBER' },
+) {
+  const response = await apiClient.request(`/workspaces/${workspaceId}/memberships`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  return response.data;
+}
+
 export async function getWorkspaceSettings(workspaceId: string) {
   const response = await apiClient.request<WorkspaceSettings>(`/workspaces/${workspaceId}`);
   return response.data;

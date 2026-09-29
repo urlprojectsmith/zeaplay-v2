@@ -19,3 +19,6 @@ export const INBOUND_WEBHOOK_MAINTENANCE_QUEUE = 'inbound-webhook-maintenance';
 export const INBOUND_WEBHOOK_CLEANUP_JOB_TYPE = 'inbound-webhook.cleanup';
 export const ANALYTICS_ROLLUP_QUEUE = 'analytics-rollup';
 export const ANALYTICS_ROLLUP_SCAN_JOB_TYPE = 'analytics.rollup.scan';
+export const REPORTS_QUEUE = 'reports';
+export const REPORT_EXPORT_JOB_TYPE = 'report.export.generate';
+export const REPORT_SCHEDULE_SCAN_JOB_TYPE = 'report.schedule.scan';

@@ -13,10 +13,13 @@ import { useSessionStore } from '../../stores/session';
 
 export function SuperAgencySwitcher({ compact = false }: { compact?: boolean }) {
   const { locale, t } = useLanguage();
-  const { selectedSuperAgencyId, setSuperAgency, superAgencies } = useSessionStore();
+  const { selectedSuperAgencyId, switchToSuperAgency, superAgencies } = useSessionStore();
   if (superAgencies.length === 0) return null;
   return (
-    <Select value={selectedSuperAgencyId ?? ''} onValueChange={setSuperAgency}>
+    <Select
+      value={selectedSuperAgencyId ?? ''}
+      onValueChange={(value) => void switchToSuperAgency(value)}
+    >
       <SelectTrigger
         className={compact ? 'w-44' : 'w-56'}
         label={compact ? undefined : t(locale, 'common.superAgency')}

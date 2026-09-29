@@ -570,6 +570,31 @@ describe('Phase 7.2 task creation experience', () => {
     expect(screen.queryByText('Followers')).not.toBeInTheDocument();
   });
 
+  it('hides task creation when the active workspace role lacks tasks.create', async () => {
+    listWorkspaceRoles.mockResolvedValueOnce([
+      {
+        id: 'role-owner',
+        key: 'OWNER',
+        name: 'Read only',
+        description: null,
+        scope: 'WORKSPACE',
+        isSystem: false,
+        isActive: true,
+        workspaceId: 'workspace-1',
+        permissions: [
+          { id: 'permission-tasks-view', key: 'tasks.view', description: null, createdAt: isoDate },
+        ],
+      },
+    ]);
+
+    renderWithProviders(<WorkspaceTasksPage />);
+
+    expect(await screen.findByRole('heading', { name: 'Tasks' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Create Task' })).not.toBeInTheDocument(),
+    );
+  });
+
   it('renders Kanban from Task statuses and moves cards through the fallback status selector', async () => {
     currentSearchParams = new URLSearchParams('view=kanban&search=alpha');
     listWorkspaceTasks.mockImplementation(
@@ -797,7 +822,7 @@ describe('Phase 7.2 task creation experience', () => {
       useSessionStore.setState({ selectedWorkspaceId: 'workspace-2' });
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create Task' }));
     expect(await screen.findByText('Bala')).toBeInTheDocument();
     expect(screen.queryByText('Anya')).not.toBeInTheDocument();
   });
@@ -902,6 +927,39 @@ describe('Phase 7.2 task creation experience', () => {
 
     await waitFor(() => expect(createWorkspaceProject).toHaveBeenCalled());
     expect(routerPush).toHaveBeenCalledWith('/workspace/projects/project-1');
+  });
+
+  it('prevents duplicate pending Project create submissions', async () => {
+    let resolveCreate: (value: unknown) => void = () => undefined;
+    createWorkspaceProject.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    currentPathname = '/workspace/projects';
+    renderWithProviders(<WorkspaceProjectsPage />);
+
+    await screen.findByText('Launch');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Project' }));
+    fireEvent.change(screen.getByLabelText('Project Name'), {
+      target: { value: 'Duplicate Guard' },
+    });
+    const form = screen.getByLabelText('Project Name').closest('form');
+    expect(form).not.toBeNull();
+
+    fireEvent.submit(form!);
+    await waitFor(() =>
+      expect(within(form!).getByRole('button', { name: 'Create Project' })).toBeDisabled(),
+    );
+    fireEvent.submit(form!);
+
+    expect(createWorkspaceProject).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveCreate(projectFixture({ id: 'project-created' }));
+      await Promise.resolve();
+    });
   });
 
   it('serves the minimal Ticket list/detail UI with workspace-scoped queries and permission actions - list/create segment', async () => {
@@ -1059,6 +1117,43 @@ describe('Phase 7.2 task creation experience', () => {
     );
     expect(screen.getByLabelText('Search Tickets')).toHaveValue('');
     listRender.unmount();
+  });
+
+  it('prevents duplicate pending Ticket create submissions', async () => {
+    const ticket = ticketFixture();
+    listWorkspaceTickets.mockResolvedValue({ items: [ticket], page: 1, pageSize: 20, total: 1 });
+    let resolveCreate: (value: unknown) => void = () => undefined;
+    createWorkspaceTicket.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    currentPathname = '/workspace/tickets';
+    renderWithProviders(<WorkspaceTicketsPage />);
+
+    await screen.findByText('TKT-000001');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Ticket' }));
+    fireEvent.change(screen.getByLabelText('Subject'), {
+      target: { value: 'Duplicate guard ticket' },
+    });
+    await waitFor(() => expect(listWorkspaceUsers).toHaveBeenCalled());
+    const dialog = screen.getByRole('dialog');
+    const form = dialog.querySelector('form');
+    expect(form).not.toBeNull();
+
+    fireEvent.submit(form!);
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Create Ticket' })).toBeDisabled(),
+    );
+    fireEvent.submit(form!);
+
+    expect(createWorkspaceTicket).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveCreate(ticket);
+      await Promise.resolve();
+    });
   });
 
   it('serves the minimal Ticket list/detail UI with workspace-scoped queries and permission actions - detail/action segment', async () => {
@@ -4513,6 +4608,12 @@ function mockDefaultTags() {
           createdAt: isoDate,
         },
         {
+          id: 'permission-tasks-create',
+          key: 'tasks.create',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
           id: 'permission-tasks-view',
           key: 'tasks.view',
           description: null,
@@ -4711,6 +4812,56 @@ function mockDefaultTags() {
         {
           id: 'permission-tickets-reports-view',
           key: 'tickets.reports.view',
+          description: null,
+          createdAt: isoDate,
+        },
+      ],
+      createdAt: isoDate,
+      updatedAt: isoDate,
+    },
+    {
+      id: 'role-member',
+      key: 'MEMBER',
+      name: 'Member',
+      description: null,
+      scope: 'WORKSPACE',
+      isSystem: true,
+      isActive: true,
+      workspaceId: null,
+      permissions: [
+        {
+          id: 'permission-member-tasks-update',
+          key: 'tasks.update',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-member-tasks-create',
+          key: 'tasks.create',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-member-tasks-view',
+          key: 'tasks.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-member-projects-create',
+          key: 'projects.create',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-member-tickets-view',
+          key: 'tickets.view',
+          description: null,
+          createdAt: isoDate,
+        },
+        {
+          id: 'permission-member-tickets-create',
+          key: 'tickets.create',
           description: null,
           createdAt: isoDate,
         },

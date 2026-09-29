@@ -10,7 +10,7 @@
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "typecheck": "turbo typecheck",
-    "test": "turbo test",
+    "test": "turbo test --concurrency=1",
     "test:integration": "turbo test:integration",
     "test:e2e": "playwright test",
     "prisma:generate": "pnpm --filter @zea-play/api prisma:generate",

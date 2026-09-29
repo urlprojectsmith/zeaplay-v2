@@ -701,6 +701,12 @@ async function mockTaskCreationApi(page: Page, options: { extraTasks?: number } 
             createdAt: now,
           },
           {
+            id: 'permission-tasks-create',
+            key: 'tasks.create',
+            description: null,
+            createdAt: now,
+          },
+          {
             id: 'permission-projects-reports-view',
             key: 'projects.reports.view',
             description: null,

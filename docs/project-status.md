@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: PHASE 17.1 - ANALYTICS FOUNDATION + METRIC REGISTRY + AGGREGATION ENGINE MAIN IMPLEMENTATION PASS / FINAL VERIFICATION READY.
-Next: Phase 17.1 final certification is READY when explicitly requested. Phase 17.2 Reports, Phase 17.3 Search, Phase 17.4 Custom Dashboards, and Phase 17.5 final certification are NOT STARTED.
+Current: PHASE 17.2 - REPORTS + CSV/XLSX EXPORTS + SCHEDULED REPORTS COMPLETE / PASS.
+Next: Phase 17.3 Search is ready to start when explicitly authorized. Phase 17.4 Custom Dashboards and Phase 17.5 final certification are NOT STARTED.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -9,21 +9,71 @@ Do not implement Phase 6 from this document alone. Use it to avoid rescanning co
 
 ## Current Certification Gate
 
-Phase 17.1 - ANALYTICS FOUNDATION + METRIC REGISTRY + AGGREGATION ENGINE
+Phase 17.2 - REPORTS + CSV/XLSX EXPORTS + SCHEDULED REPORTS
 
 Main Implementation: PASS
 
-Final Verification: READY / NOT RUN
+Final Verification: COMPLETE / CERTIFIED
 
-Phase 17.1: NOT COMPLETE until final certification prompt passes.
+Phase 17.1: COMPLETE / PASS
 
-Phase 17.2: NOT STARTED
+Phase 17.2: COMPLETE / PASS
 
-Phase 17.3: NOT STARTED
+Phase 17.3: READY / NOT STARTED
 
 Phase 17.4: NOT STARTED
 
 Phase 17.5: NOT STARTED
+
+- Migration count is 85.
+- Latest migration is `0085_phase17_2_reports`.
+- `0085` adds Reports enums, `reports`, `report_access`, `report_executions`, `report_exports`, `report_schedules`, `report_schedule_occurrences`, scoped indexes, export idempotency, schedule occurrence idempotency, and report permissions.
+- Reports architecture is documented in `docs/reports-architecture-phase17.md`.
+- Reports are saved definitions over the existing Phase 17.1 analytics engine. No duplicate analytics engine, custom formula engine, or user-editable metric registry was added.
+- Reports support Workspace, Agency, Super Agency, and Platform scopes using `AnalyticsScopeType`, explicit `scopeType + scopeId`, and lineage columns.
+- Report routes use the existing JWT, tenant, permission, and platform guard architecture. Frontend-supplied tenant IDs are not sufficient without server-side tenant validation.
+- Report permissions include `reports.view`, `reports.create`, `reports.edit`, `reports.export`, `reports.schedule`, `reports.manage`, and `reports.platform.read`.
+- Report visibility supports `PRIVATE`, `SELECTED_MEMBERS`, and `SCOPE`. Selected-member access is validated against active same-scope memberships or platform user IDs.
+- Report definitions store sanitized analytics configuration, revision numbers, and optimistic concurrency through `expectedRevision`.
+- Preview, manual export, and scheduled export create immutable execution records with report revision and config snapshot.
+- CSV and XLSX exports protect spreadsheet consumers from formula injection by prefixing dangerous string cells that begin with `=`, `+`, `-`, or `@`.
+- Manual exports support sync generation for small tables and queued generation for explicit async or large tables.
+- Export storage reuses the existing storage abstraction and stores generated objects under `generated/reports/{scopeType}/{scopeId}/{exportId}` with 7-day retention.
+- Download authorization rechecks report access and export scope before issuing a short-lived presigned URL.
+- Scheduled reports support daily, weekly, and monthly frequencies, timezone/local-time scheduling, monthly day clamping, and idempotent occurrence claiming.
+- Worker integration includes the report export processor on the reports queue.
+- Frontend report routes exist for Workspace, Agency, Super Agency, and Platform report surfaces, with React Query keys scoped by scope type and scope ID.
+- `pnpm format`: PASS.
+- Focused API reports/security regression: PASS, 5 suites / 18 tests.
+- Focused worker report export regression: PASS, 1 suite / 2 tests.
+- Focused web reports regression: PASS, 1 file / 3 tests.
+- Real reports integration on isolated migrated PostgreSQL: PASS, including CSV export, XLSX export, export storage, download authorization, missing export permission denial, scheduled dispatch, and schedule idempotency.
+- Report service permission rechecks were added for view, create, edit, export, schedule, and manage actions.
+- `reports.platform.read` and `analytics.platform.read` are platform-only permission keys and are rejected in tenant custom roles.
+- Scheduled report dispatch filters archived reports and revalidates recipients immediately before execution.
+- Stale repo-local ZeaPlay dev/test/runtime processes were found and stopped before rerunning the unit suites.
+- Standalone API unit suite with the normal API Jest configuration and no heap override: PASS, 69 suites / 639 tests.
+- Fresh root `pnpm exec turbo test --force` reproduced the Node native out-of-memory failure only when API, worker, and web package tests ran concurrently; the affected API suites were older notification/realtime/automation suites while Phase 17.2 reports tests passed.
+- Root test orchestration now runs `turbo test --concurrency=1`; Jest configuration was not changed, no heap override was added, and no tests were skipped or weakened.
+- Fresh sequential root `pnpm test`: PASS, 17 tasks; API PASS, 69 suites / 639 tests; worker PASS, 10 suites / 33 tests; web PASS, 28 files / 218 tests.
+- Full web suite: PASS, 28 files / 218 tests.
+- Worker unit suite: PASS, 10 suites / 33 tests.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- `pnpm test:integration`: PASS on isolated migrated PostgreSQL; API PASS, 9 suites / 117 tests; worker PASS, 10 suites / 33 tests.
+- `pnpm test:e2e`: PASS, 21 tests, with Playwright `fullyParallel: false` and `reuseExistingServer: false` preserved.
+- `pnpm phase14:6:13:migration-compat`: PASS, 85 migrations through `0085_phase17_2_reports`; clean install, legacy upgrade, Phase 15, Phase 15.4, Phase 16.1, Phase 16.2, zero-agency, one-agency, and many-agency scratch fixtures passed.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm audit --audit-level high`: PASS; two moderate advisories remain below threshold.
+- Phase 17.2 memory review: PASS; no new unbounded Prisma clients, queues, workers, timers, event listeners, report export row sets, or scheduler handles were found.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Phase 17.3 Search, Phase 17.4 Custom Dashboards, Phase 17.5 final certification, and Phase 18+ were not started.
+- Shared development database remains read-only and was not migrated; read-only status reports pending `0081_phase16_1_docs_foundation` through `0085_phase17_2_reports`.
+- Existing accepted warnings remain: Next.js ESLint-plugin warning during build, Playwright `NO_COLOR` / `FORCE_COLOR` warning, Windows LF/CRLF warnings, and two moderate audit advisories below the high gate.
+
+Phase 17.1 - ANALYTICS FOUNDATION + METRIC REGISTRY + AGGREGATION ENGINE previous certified baseline:
 
 - Migration count is 84.
 - Latest migration is `0084_phase17_1_analytics_foundation`.
@@ -50,11 +100,23 @@ Phase 17.5: NOT STARTED
 - Focused API analytics/gate regression: PASS, 3 suites / 22 tests.
 - Focused worker analytics rollup regression: PASS, 1 suite / 3 tests.
 - Focused web analytics regression: PASS via web suite, 25 files / 208 tests.
-- Root `pnpm test`: PASS, 17 tasks; API PASS, 64 suites / 614 tests; worker PASS, 9 suites / 31 tests; web PASS, 25 files / 208 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 64 suites / 616 tests; worker PASS, 9 suites / 31 tests; web PASS, 25 files / 208 tests.
 - Security/source search: PASS after review. Hits were expected `billing.active_subscriptions`, documentation explicitly deferring MRR/ARR/reports/search/custom dashboards, and allowed analytics query/cache code. No Phase 17.2 report engine, Phase 17.3 search engine, Phase 17.4 custom dashboard model, MRR/ARR implementation, or duplicate billing/gamification/source-of-truth engine was found.
 - Shared development database remains read-only and was not migrated.
 - Live/provider billing behavior remains NOT EXTERNALLY VERIFIED; no Stripe credentials or live Customer Portal verification were used.
-- Build, integration, E2E, audit, isolated migration-compatibility, and final certification remain deferred to the Phase 17.1 final certification prompt.
+- Playwright configuration remains certified with `fullyParallel: false` and `reuseExistingServer: false`; the web dev script still hardcodes `-p 3000`.
+- E2E port conflict was resolved without permanent source changes by inspecting port `3000`, confirming the listener was a stale repo-local ZeaPlay Next.js process, stopping only that process tree, and verifying port `3000` was free before and after E2E.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm phase14:6:13:migration-compat`: PASS, 84 migrations through `0084_phase17_1_analytics_foundation`; clean, legacy, Phase 15, Phase 15.4, Phase 16.1, Phase 16.2, zero-agency, one-agency, and many-agency scratch fixtures passed.
+- Root `pnpm test:integration`: PASS, 8 tasks.
+- Fresh API integration: PASS, 8 suites / 116 tests, including `phase17-1-analytics.integration-spec.ts`.
+- Fresh worker integration: PASS, 9 suites / 31 tests, including `analytics-rollup.processor.spec.ts`.
+- Fresh web suite: PASS, 25 files / 208 tests.
+- `pnpm build`: PASS, 11 tasks. First attempt hit a Windows Prisma DLL lock from repo-local API/worker dev processes; after stopping only those processes, the rerun passed.
+- `pnpm audit --audit-level high`: PASS; two moderate advisories remain below threshold.
+- Targeted E2E/skip/source audit: PASS; no `reuseExistingServer: true`, `fullyParallel: true`, skipped tests, focused tests, or `.only` hits found in the checked Phase 17.1 surfaces.
+- `git diff --check`: PASS.
+- At the time of Phase 17.1 certification, Phase 17.2 Reports, Phase 17.3 Search, Phase 17.4 Custom Dashboards, Phase 17.5 final certification, and Phase 18+ were not started.
 
 ## Previous Certification Baseline
 

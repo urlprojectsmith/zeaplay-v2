@@ -14,13 +14,15 @@ export interface RequestWithAuth {
   get?: (name: string) => string | undefined;
 }
 
-export type WorkspaceAccessSource = 'WORKSPACE_MEMBERSHIP' | 'AGENCY_ADMINISTRATION';
+export type WorkspaceAccessSource =
+  'WORKSPACE_MEMBERSHIP' | 'AGENCY_ADMINISTRATION' | 'SUPER_AGENCY_ADMINISTRATION';
 
 export interface AgencyTenantContext {
   userId: string;
   superAgencyId?: string;
   agencyId: string;
-  agencyMembershipId: string;
+  agencyMembershipId: string | null;
+  superAgencyMembershipId?: string | null;
   roleId: string;
   roleName: string;
   permissions: string[];

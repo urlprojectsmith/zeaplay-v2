@@ -1,6 +1,8 @@
 # Phase 17.1 Analytics Architecture
 
-Status: Phase 17.1 main implementation in progress. Final certification is deferred to Phase 17.1 Prompt 2.
+Status: Phase 17.1 final certification COMPLETE / PASS.
+
+Final certification preserved Playwright behavior with `fullyParallel: false` and `reuseExistingServer: false`. The hardcoded web dev port `-p 3000` remains unchanged.
 
 ## Ownership
 
@@ -143,3 +145,18 @@ The frontend uses scope-prefixed TanStack Query keys. Workspace and Agency reque
 Phase 17.2 Reports, Phase 17.3 Search, Phase 17.4 Custom Dashboards, Phase 17.5 final certification, and Phase 18+ are not started.
 
 Analytics does not add a report model, export system, search index, custom dashboard model, widget system, custom formula registry, or user-editable metric definition table in 17.1.
+
+## Final Certification Evidence
+
+Phase 17.1 Prompt 2 final certification passed on September 26, 2026.
+
+- Playwright E2E: PASS, 21 tests. Port `3000` was freed by stopping only a stale repo-local ZeaPlay Next.js process, and Playwright did not leave a stale listener on port `3000` after completion.
+- Migration compatibility: PASS, 84 migrations, latest `0084_phase17_1_analytics_foundation`; clean, legacy, Phase 15, Phase 15.4, Phase 16.1, Phase 16.2, zero-agency, one-agency, and many-agency scratch fixtures passed.
+- API integration: PASS, 8 suites / 116 tests, including `phase17-1-analytics.integration-spec.ts`.
+- Worker integration: PASS, 9 suites / 31 tests, including `analytics-rollup.processor.spec.ts`.
+- Web suite: PASS, 25 files / 208 tests.
+- Build: PASS, 11 tasks.
+- Package audit: PASS at high threshold; moderate advisories remain below threshold.
+- `git diff --check`: PASS.
+
+Initial build retry note: a Windows Prisma DLL lock from repo-local API/worker dev processes caused the first build attempt to fail. After stopping only those local dev processes, the build passed.

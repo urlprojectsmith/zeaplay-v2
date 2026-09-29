@@ -17,10 +17,12 @@ import { useSessionStore, type SessionAgency } from '../stores/session';
 const replace = vi.fn();
 const listWorkspaceRoles = vi.fn();
 let mockedPathname = '/workspace/dashboard';
+let mockedSearchParams = '';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace }),
   usePathname: () => mockedPathname,
+  useSearchParams: () => new URLSearchParams(mockedSearchParams),
 }));
 
 vi.mock('../services/workspace-roles', () => ({
@@ -123,6 +125,7 @@ describe('phase 5 foundations', () => {
     document.documentElement.style.removeProperty('--secondary');
     document.documentElement.style.removeProperty('--accent');
     mockedPathname = '/workspace/dashboard';
+    mockedSearchParams = '';
     replace.mockClear();
     listWorkspaceRoles.mockReset();
     listWorkspaceRoles.mockResolvedValue([
@@ -332,6 +335,40 @@ describe('phase 5 foundations', () => {
       'aria-current',
       'page',
     );
+  });
+
+  it('activates query-specific sidebar items without highlighting their base dashboard item', () => {
+    mockedPathname = '/agency/dashboard';
+    mockedSearchParams = 'tab=leaderboard';
+
+    render(
+      <LanguageProvider>
+        <NavigationGroup
+          collapsed={false}
+          group={{
+            label: 'Agency',
+            items: [
+              {
+                labelKey: 'navigation.dashboard',
+                href: '/agency/dashboard',
+                icon: LayoutDashboard,
+              },
+              {
+                labelKey: 'navigation.subAccounts',
+                href: '/agency/dashboard?tab=leaderboard',
+                icon: LayoutDashboard,
+              },
+            ],
+          }}
+        />
+      </LanguageProvider>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Sub-Accounts' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
   });
 
   it('persists sidebar collapsed preference', async () => {

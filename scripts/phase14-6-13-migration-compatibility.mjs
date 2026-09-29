@@ -38,8 +38,8 @@ const phase15Db = `${dbPrefix}_phase15`;
 const phase154Db = `${dbPrefix}_phase154`;
 const phase161Db = `${dbPrefix}_phase161`;
 const phase162Db = `${dbPrefix}_phase162`;
-const expectedMigrationCount = 84;
-const expectedLatestMigration = '0084_phase17_1_analytics_foundation';
+const expectedMigrationCount = 85;
+const expectedLatestMigration = '0085_phase17_2_reports';
 const allowedLocalHosts = new Set(['localhost', '127.0.0.1', '::1', 'host.docker.internal']);
 
 const fixture = {
@@ -1148,7 +1148,8 @@ function runLegacyUpgrade() {
           'billing_checkout_attempts',
           'stripe_billing_events',
           'billing_history',
-          'billing_invoices'
+          'billing_invoices',
+          'reports'
         );
       `,
     );
@@ -1782,6 +1783,9 @@ if (!migrations.includes('0083_phase16_3_goals_foundation')) {
 }
 if (!migrations.includes('0084_phase17_1_analytics_foundation')) {
   throw new Error('Missing migration 0084_phase17_1_analytics_foundation');
+}
+if (!migrations.includes('0085_phase17_2_reports')) {
+  throw new Error('Missing migration 0085_phase17_2_reports');
 }
 
 const clean = runCleanInstall();

@@ -314,4 +314,39 @@ describe('SuperAgenciesService', () => {
     ).rejects.toThrow('Platform permissions are not assignable.');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it('rejects platform report permissions when creating custom Super Agency roles', async () => {
+    const prisma = {
+      permission: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'permission-platform-reports', key: PermissionKeys.reportsPlatformRead },
+          ]),
+      },
+      role: { create: jest.fn() },
+      $transaction: jest.fn(),
+    };
+    const service = new SuperAgenciesService(
+      prisma as never,
+      { record: jest.fn() } as never,
+      {} as never,
+    );
+
+    await expect(
+      service.createRole(
+        {
+          userId: 'actor-id',
+          superAgencyId: 'super-agency-id',
+          superAgencyMembershipId: 'membership-id',
+          roleId: 'role-id',
+          roleName: 'SUPER_AGENCY_OWNER',
+          permissions: ['*'],
+          status: 'ACTIVE',
+        },
+        { name: 'Unsafe Platform Reports', permissionIds: ['permission-platform-reports'] },
+      ),
+    ).rejects.toThrow('Platform permissions are not assignable.');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
 });

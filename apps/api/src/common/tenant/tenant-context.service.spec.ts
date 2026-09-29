@@ -2,6 +2,13 @@ import { ForbiddenException } from '@nestjs/common';
 import { TenantContextService } from './tenant-context.service';
 
 describe('TenantContextService', () => {
+  const userId = '00000000-0000-4000-8000-000000000001';
+  const superAgencyAId = '00000000-0000-4000-8000-0000000000aa';
+  const superAgencyBId = '00000000-0000-4000-8000-0000000000bb';
+  const agencyAId = '00000000-0000-4000-8000-0000000000a1';
+  const agencyBId = '00000000-0000-4000-8000-0000000000b1';
+  const workspaceBId = '00000000-0000-4000-8000-0000000000b2';
+
   it('resolves an active Super Agency membership with permission-key context', async () => {
     const service = new TenantContextService({
       superAgencyMembership: {
@@ -117,5 +124,119 @@ describe('TenantContextService', () => {
         '00000000-0000-4000-8000-000000000003',
       ),
     ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('denies Super Agency A access to an Agency belonging to Super Agency B', async () => {
+    const superAgencyMembershipFindUnique = jest.fn().mockResolvedValue(null);
+    const service = new TenantContextService({
+      agencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+      agency: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: 'ACTIVE',
+          superAgencyId: superAgencyBId,
+          superAgency: { status: 'ACTIVE' },
+        }),
+      },
+      superAgencyMembership: { findUnique: superAgencyMembershipFindUnique },
+    } as never);
+
+    await expect(service.resolveAgency(userId, agencyBId)).rejects.toThrow(ForbiddenException);
+    expect(superAgencyMembershipFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_superAgencyId: { userId, superAgencyId: superAgencyBId } },
+      }),
+    );
+  });
+
+  it('denies Super Agency A access to a Subaccount under an unrelated Agency', async () => {
+    const superAgencyMembershipFindUnique = jest.fn().mockResolvedValue(null);
+    const service = new TenantContextService({
+      workspace: {
+        findFirst: jest.fn().mockResolvedValue({
+          status: 'ACTIVE',
+          agency: {
+            status: 'ACTIVE',
+            superAgencyId: superAgencyBId,
+            superAgency: { status: 'ACTIVE' },
+          },
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+      agencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+      superAgencyMembership: { findUnique: superAgencyMembershipFindUnique },
+    } as never);
+
+    await expect(service.resolveWorkspace(userId, agencyBId, workspaceBId)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(superAgencyMembershipFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_superAgencyId: { userId, superAgencyId: superAgencyBId } },
+      }),
+    );
+  });
+
+  it('denies Agency A users from resolving Agency B without direct or parent membership', async () => {
+    const service = new TenantContextService({
+      agencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+      agency: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: 'ACTIVE',
+          superAgencyId: superAgencyBId,
+          superAgency: { status: 'ACTIVE' },
+        }),
+      },
+      superAgencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as never);
+
+    await expect(service.resolveAgency(userId, agencyBId)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('denies Agency A users from resolving Agency B Subaccounts', async () => {
+    const service = new TenantContextService({
+      workspace: {
+        findFirst: jest.fn().mockResolvedValue({
+          status: 'ACTIVE',
+          agency: {
+            status: 'ACTIVE',
+            superAgencyId: superAgencyBId,
+            superAgency: { status: 'ACTIVE' },
+          },
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+      agencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+      superAgencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as never);
+
+    await expect(service.resolveWorkspace(userId, agencyBId, workspaceBId)).rejects.toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('denies Subaccount-only users from escalating to parent Agency context', async () => {
+    const service = new TenantContextService({
+      agencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+      agency: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: 'ACTIVE',
+          superAgencyId: superAgencyAId,
+          superAgency: { status: 'ACTIVE' },
+        }),
+      },
+      superAgencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as never);
+
+    await expect(service.resolveAgency(userId, agencyAId)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('denies Agency users from escalating to Super Agency context', async () => {
+    const service = new TenantContextService({
+      superAgencyMembership: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as never);
+
+    await expect(service.resolveSuperAgency(userId, superAgencyAId)).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 });

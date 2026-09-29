@@ -160,6 +160,12 @@ const workspacePermissions = [
   'storage.cloud.import',
   'storage.cloud.export',
   'analytics.view',
+  'reports.view',
+  'reports.create',
+  'reports.edit',
+  'reports.export',
+  'reports.schedule',
+  'reports.manage',
   'docs.view',
   'docs.create',
   'docs.edit',
@@ -205,12 +211,21 @@ const agencyPermissions = [
   'feature.read',
   'feature.update',
   'tasks.parent.read',
+  ...workspacePermissions,
+  'tasks.view',
+  'tasks.create',
   'projects.parent.read',
   'tickets.parent.read',
   'docs.parent.read',
   'forms.parent.read',
   'goals.parent.read',
   'analytics.parent.read',
+  'reports.view',
+  'reports.create',
+  'reports.edit',
+  'reports.export',
+  'reports.schedule',
+  'reports.manage',
   'gamification.global_leaderboard.view_agency',
 ];
 
@@ -245,6 +260,9 @@ const superAgencyPermissions = [
   'feature.read',
   'feature.update',
   'tasks.parent.read',
+  ...workspacePermissions,
+  'tasks.view',
+  'tasks.create',
   'projects.parent.read',
   'tickets.parent.read',
   'docs.parent.read',
@@ -252,6 +270,12 @@ const superAgencyPermissions = [
   'goals.parent.read',
   'analytics.parent.read',
   'analytics.rebuild',
+  'reports.view',
+  'reports.create',
+  'reports.edit',
+  'reports.export',
+  'reports.schedule',
+  'reports.manage',
   'gamification.global_leaderboard.view_super_agency',
 ];
 
@@ -265,6 +289,13 @@ const platformPermissions = [
   'billing.allocation.manage',
   'analytics.platform.read',
   'analytics.rebuild',
+  'reports.platform.read',
+  'reports.view',
+  'reports.create',
+  'reports.edit',
+  'reports.export',
+  'reports.schedule',
+  'reports.manage',
   'gamification.global_leaderboard.view_platform',
   'gamification.developer.diagnostics',
 ];
@@ -349,7 +380,7 @@ async function main() {
   await upsertAgencyMembership(owner.id, agencyAlphaTwo.id, roles.AGENCY_OWNER.id);
   await upsertAgencyMembership(otherOwner.id, agencyBeta.id, roles.AGENCY_OWNER.id);
   await upsertSuperAgencyMembership(owner.id, superAgencyA.id, roles.SUPER_AGENCY_OWNER.id);
-  await upsertSuperAgencyMembership(admin.id, superAgencyA.id, roles.SUPER_AGENCY_MANAGER.id);
+  await upsertSuperAgencyMembership(admin.id, superAgencyA.id, roles.SUPER_AGENCY_ADMIN.id);
   await upsertSuperAgencyMembership(otherOwner.id, superAgencyB.id, roles.SUPER_AGENCY_OWNER.id);
 
   const ownerAlphaMainMembership = await upsertWorkspaceMembership(
@@ -514,6 +545,8 @@ async function seedRoles() {
         'workspace.read',
         'billing.allocation.read',
         'feature.read',
+        'tasks.view',
+        'tasks.create',
       ],
     },
     {
@@ -544,7 +577,7 @@ async function seedRoles() {
       key: 'AGENCY_MANAGER',
       name: 'Agency Manager',
       scope: RoleScope.AGENCY,
-      permissions: ['agency.read', 'workspace.read'],
+      permissions: ['agency.read', 'workspace.read', 'tasks.view', 'tasks.create'],
     },
     {
       key: 'AGENCY_USER',
@@ -617,6 +650,7 @@ async function seedRoles() {
         'integrations.manage',
         'integrations.execute',
         'tasks.view',
+        'tasks.create',
         'tasks.time.view_own',
         'tasks.time.track',
         'tasks.time.edit_own',
@@ -715,6 +749,7 @@ async function seedRoles() {
         'goals.progress.update',
         'integrations.view',
         'tasks.view',
+        'tasks.create',
         'tasks.time.view_own',
         'tasks.time.track',
         'tasks.time.edit_own',

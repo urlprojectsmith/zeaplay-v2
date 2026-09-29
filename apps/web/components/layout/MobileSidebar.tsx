@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { BrandLogo } from '../branding/BrandLogo';
 import { useLanguage } from '../../contexts/language-provider';
+import { AccountContextSwitcher } from '../navigation/AccountContextSwitcher';
 import type { DashboardConfig } from '../navigation/navigation-config';
 import { LanguageSwitcher } from '../navigation/LanguageSwitcher';
 import { NavigationGroup } from '../navigation/NavigationGroup';
@@ -48,6 +49,7 @@ export function MobileSidebar({
           className="grid flex-1 content-start gap-5 overflow-y-auto p-3"
           aria-label={`${config.title} mobile navigation`}
         >
+          <AccountContextSwitcher collapsed={false} />
           {config.groups.map((group) => (
             <NavigationGroup key={group.label} group={group} collapsed={false} />
           ))}

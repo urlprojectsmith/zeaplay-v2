@@ -19,6 +19,7 @@
     "@prisma/client": "^6.1.0",
     "@zea-play/config": "workspace:*",
     "bullmq": "^5.34.5",
+    "exceljs": "^4.4.0",
     "ioredis": "^5.4.2",
     "luxon": "^3.7.2",
     "minio": "^8.0.3",

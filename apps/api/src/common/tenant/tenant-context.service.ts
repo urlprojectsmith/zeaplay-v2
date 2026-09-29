@@ -97,23 +97,56 @@ export class TenantContextService {
       },
     });
 
-    if (!membership) throw new ForbiddenException('Agency access denied.');
-    assertActiveUser(membership.user.status);
-    assertActiveSuperAgency(membership.agency.superAgency.status);
-    if (membership.agency.status !== AgencyStatus.ACTIVE)
-      throw new ForbiddenException('Agency is not active.');
-    assertActiveMembership(membership.status);
-    if (membership.role.scope !== RoleScope.AGENCY)
-      throw new ForbiddenException('Invalid agency role.');
+    if (membership) {
+      assertActiveUser(membership.user.status);
+      assertActiveSuperAgency(membership.agency.superAgency.status);
+      if (membership.agency.status !== AgencyStatus.ACTIVE)
+        throw new ForbiddenException('Agency is not active.');
+      assertActiveMembership(membership.status);
+      if (membership.role.scope !== RoleScope.AGENCY)
+        throw new ForbiddenException('Invalid agency role.');
 
+      return {
+        userId,
+        superAgencyId: membership.agency.superAgencyId,
+        agencyId,
+        agencyMembershipId: membership.id,
+        superAgencyMembershipId: null,
+        roleId: membership.role.id,
+        roleName: membership.role.key,
+        permissions: permissionsForRole(membership.role.key, membership.role.rolePermissions),
+      };
+    }
+
+    const agency = await this.prisma.agency.findUnique({
+      where: { id: agencyId },
+      select: {
+        status: true,
+        superAgencyId: true,
+        superAgency: { select: { status: true } },
+      },
+    });
+    if (!agency) throw new ForbiddenException('Agency access denied.');
+    assertActiveSuperAgency(agency.superAgency.status);
+    if (agency.status !== AgencyStatus.ACTIVE)
+      throw new ForbiddenException('Agency is not active.');
+
+    const superAgencyMembership = await this.resolveParentSuperAgencyMembership(
+      userId,
+      agency.superAgencyId,
+    );
     return {
       userId,
-      superAgencyId: membership.agency.superAgencyId,
+      superAgencyId: agency.superAgencyId,
       agencyId,
-      agencyMembershipId: membership.id,
-      roleId: membership.role.id,
-      roleName: membership.role.key,
-      permissions: permissionsForRole(membership.role.key, membership.role.rolePermissions),
+      agencyMembershipId: null,
+      superAgencyMembershipId: superAgencyMembership.id,
+      roleId: superAgencyMembership.role.id,
+      roleName: superAgencyMembership.role.key,
+      permissions: permissionsForRole(
+        superAgencyMembership.role.key,
+        superAgencyMembership.role.rolePermissions,
+      ),
     };
   }
 
@@ -168,7 +201,27 @@ export class TenantContextService {
         },
       },
     });
-    if (!agencyMembership) throw new ForbiddenException('Workspace access denied.');
+    if (!agencyMembership) {
+      const superAgencyMembership = await this.resolveParentSuperAgencyMembership(
+        userId,
+        workspace.agency.superAgencyId,
+      );
+      return {
+        userId,
+        superAgencyId: workspace.agency.superAgencyId,
+        agencyId,
+        workspaceId,
+        workspaceMembershipId: null,
+        agencyMembershipId: null,
+        roleId: superAgencyMembership.role.id,
+        roleName: superAgencyMembership.role.key,
+        permissions: permissionsForRole(
+          superAgencyMembership.role.key,
+          superAgencyMembership.role.rolePermissions,
+        ),
+        accessSource: 'SUPER_AGENCY_ADMINISTRATION',
+      };
+    }
     assertActiveMembership(agencyMembership.status);
     if (agencyMembership.role.scope !== RoleScope.AGENCY) {
       throw new ForbiddenException('Invalid agency role.');
@@ -229,6 +282,35 @@ export class TenantContextService {
       ),
       accessSource: 'AGENCY_ADMINISTRATION',
     };
+  }
+
+  private async resolveParentSuperAgencyMembership(userId: string, superAgencyId: string) {
+    const membership = await this.prisma.superAgencyMembership.findUnique({
+      where: { userId_superAgencyId: { userId, superAgencyId } },
+      select: {
+        id: true,
+        status: true,
+        user: { select: { status: true } },
+        superAgency: { select: { status: true } },
+        role: {
+          select: {
+            id: true,
+            key: true,
+            scope: true,
+            isActive: true,
+            rolePermissions: { select: { permission: { select: { key: true } } } },
+          },
+        },
+      },
+    });
+    if (!membership) throw new ForbiddenException('Agency access denied.');
+    assertActiveUser(membership.user.status);
+    assertActiveSuperAgency(membership.superAgency.status);
+    assertActiveMembership(membership.status);
+    if (membership.role.scope !== RoleScope.SUPER_AGENCY || !membership.role.isActive) {
+      throw new ForbiddenException('Invalid Super Agency role.');
+    }
+    return membership;
   }
 }
 

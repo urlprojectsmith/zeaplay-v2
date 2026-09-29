@@ -1,6 +1,7 @@
 'use client';
 
 import { BrandLogo } from '../branding/BrandLogo';
+import { AccountContextSwitcher } from '../navigation/AccountContextSwitcher';
 import type { DashboardConfig } from '../navigation/navigation-config';
 import { NavigationGroup } from '../navigation/NavigationGroup';
 
@@ -12,6 +13,9 @@ export function AppSidebar({ config, collapsed }: { config: DashboardConfig; col
     >
       <div className="flex h-16 items-center border-b border-[hsl(var(--sidebar-border))] px-4">
         <BrandLogo compact={collapsed} />
+      </div>
+      <div className="border-b border-[hsl(var(--sidebar-border))] p-3">
+        <AccountContextSwitcher collapsed={collapsed} />
       </div>
       <nav className="grid gap-5 p-3" aria-label={`${config.title} navigation`}>
         {config.groups.map((group) => (

@@ -40,6 +40,8 @@ import { DocsModule } from './modules/docs/docs.module';
 import { FormsModule } from './modules/forms/forms.module';
 import { GoalsModule } from './modules/goals/goals.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { AccountContextModule } from './modules/account-context/account-context.module';
 
 @Module({
   imports: [
@@ -72,6 +74,8 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
     FormsModule,
     GoalsModule,
     AnalyticsModule,
+    ReportsModule,
+    AccountContextModule,
     TagsModule,
     SuperAgenciesModule,
     AgenciesModule,

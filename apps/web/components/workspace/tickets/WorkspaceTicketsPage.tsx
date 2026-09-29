@@ -43,6 +43,7 @@ import {
 import { useLanguage } from '../../../contexts/language-provider';
 import { translate as t } from '../../../lib/i18n';
 import { useSessionStore } from '../../../stores/session';
+import { useWorkspacePermissions } from '../useWorkspacePermissions';
 import {
   listDepartments,
   listWorkspaceUsers,
@@ -129,7 +130,6 @@ export function WorkspaceTicketsPage() {
   const { locale } = useLanguage();
   const selectedWorkspaceId = useSessionStore((state) => state.selectedWorkspaceId);
   const accessToken = useSessionStore((state) => state.accessToken);
-  const agencies = useSessionStore((state) => state.agencies);
   const [createOpen, setCreateOpen] = useState(false);
   const [savedViewName, setSavedViewName] = useState('');
   const [savedViewScope, setSavedViewScope] = useState<TicketSavedViewScope>('PERSONAL');
@@ -284,7 +284,7 @@ export function WorkspaceTicketsPage() {
     enabled: Boolean(accessToken && selectedWorkspaceId),
   });
 
-  const permissions = useWorkspacePermissions(agencies, selectedWorkspaceId, rolesQuery.data ?? []);
+  const permissions = useWorkspacePermissions(selectedWorkspaceId, rolesQuery.data ?? []);
   const canCreate = hasPermission(permissions, 'tickets.create');
   const canAssign = hasPermission(permissions, 'tickets.assign');
   const canManageViews = hasPermission(permissions, 'tickets.views.manage');
@@ -318,7 +318,7 @@ export function WorkspaceTicketsPage() {
       toast.success(t(locale, 'workspaceTickets.ticketCreated'));
       setCreateOpen(false);
       void queryClient.invalidateQueries({
-        queryKey: ticketKeys.list(selectedWorkspaceId, params),
+        queryKey: ticketKeys.all(selectedWorkspaceId),
       });
       router.push(`/workspace/tickets/${ticket.id}` as Route);
     },
@@ -830,7 +830,6 @@ export function WorkspaceTicketDetailPage({ ticketId }: { ticketId: string }) {
   const { locale } = useLanguage();
   const selectedWorkspaceId = useSessionStore((state) => state.selectedWorkspaceId);
   const accessToken = useSessionStore((state) => state.accessToken);
-  const agencies = useSessionStore((state) => state.agencies);
   const [editOpen, setEditOpen] = useState(false);
   const [requesterOpen, setRequesterOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
@@ -882,7 +881,7 @@ export function WorkspaceTicketDetailPage({ ticketId }: { ticketId: string }) {
       }),
     enabled: Boolean(accessToken && selectedWorkspaceId && assignmentOpen),
   });
-  const permissions = useWorkspacePermissions(agencies, selectedWorkspaceId, rolesQuery.data ?? []);
+  const permissions = useWorkspacePermissions(selectedWorkspaceId, rolesQuery.data ?? []);
   const canUpdate = hasPermission(permissions, 'tickets.update');
   const canDelete = hasPermission(permissions, 'tickets.delete');
   const canAssign = hasPermission(permissions, 'tickets.assign');
@@ -1493,6 +1492,7 @@ function TicketFormDialog({
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (isSubmitting) return;
     const body: TicketPayload = {
       subject,
       description: description.trim() ? description : null,
@@ -2997,20 +2997,6 @@ function TicketField({ label, value }: { label: string; value: string }) {
       <p className="mt-1 break-words text-sm font-medium">{value}</p>
     </div>
   );
-}
-
-function useWorkspacePermissions(
-  agencies: ReturnType<typeof useSessionStore.getState>['agencies'],
-  workspaceId: string | null,
-  roles: Array<{ id: string; key?: string; permissions: Array<{ key: string }> }>,
-) {
-  return useMemo(() => {
-    const workspace = agencies
-      .flatMap((agency) => agency.workspaces)
-      .find((item) => item.id === workspaceId);
-    const role = roles.find((item) => item.id === workspace?.role || item.key === workspace?.role);
-    return new Set(role?.permissions.map((permission) => permission.key) ?? []);
-  }, [agencies, roles, workspaceId]);
 }
 
 function hasPermission(permissions: Set<string>, permission: string) {

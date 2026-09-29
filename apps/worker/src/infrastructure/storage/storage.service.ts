@@ -22,6 +22,25 @@ export class StorageService {
     return this.client.getObject(this.env.MINIO_BUCKET, key);
   }
 
+  async upload(
+    key: string,
+    body: Buffer | Readable,
+    options?: { contentType?: string; fileName?: string },
+  ): Promise<void> {
+    await this.client.putObject(
+      this.env.MINIO_BUCKET,
+      key,
+      body,
+      body instanceof Buffer ? body.length : undefined,
+      {
+        'Content-Type': options?.contentType ?? 'application/octet-stream',
+        ...(options?.fileName
+          ? { 'Content-Disposition': `attachment; filename="${options.fileName}"` }
+          : {}),
+      },
+    );
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.client.removeObject(this.env.MINIO_BUCKET, key);
   }

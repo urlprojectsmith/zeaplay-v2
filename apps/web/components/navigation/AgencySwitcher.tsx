@@ -16,7 +16,7 @@ export function AgencySwitcher({ compact = false }: { compact?: boolean }) {
   const { agencies, selectedAgencyId, setAgency } = useSessionStore();
   if (agencies.length === 0) return null;
   return (
-    <Select value={selectedAgencyId ?? ''} onValueChange={setAgency}>
+    <Select value={selectedAgencyId ?? ''} onValueChange={(value) => setAgency(value)}>
       <SelectTrigger
         className={compact ? 'w-40' : 'w-52'}
         label={compact ? undefined : t(locale, 'common.agency')}

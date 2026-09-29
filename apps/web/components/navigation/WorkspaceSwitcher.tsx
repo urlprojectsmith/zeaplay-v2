@@ -17,7 +17,7 @@ export function WorkspaceSwitcher({ compact = false }: { compact?: boolean }) {
   const agency = agencies.find((item) => item.id === selectedAgencyId);
   if (!agency || agency.workspaces.length === 0) return null;
   return (
-    <Select value={selectedWorkspaceId ?? ''} onValueChange={setWorkspace}>
+    <Select value={selectedWorkspaceId ?? ''} onValueChange={(value) => setWorkspace(value)}>
       <SelectTrigger
         className={compact ? 'w-40' : 'w-52'}
         label={compact ? undefined : t(locale, 'common.workspace')}

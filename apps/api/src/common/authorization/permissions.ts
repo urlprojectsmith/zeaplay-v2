@@ -26,6 +26,13 @@ export const PermissionKeys = {
   analyticsParentRead: 'analytics.parent.read',
   analyticsPlatformRead: 'analytics.platform.read',
   analyticsRebuild: 'analytics.rebuild',
+  reportsView: 'reports.view',
+  reportsCreate: 'reports.create',
+  reportsEdit: 'reports.edit',
+  reportsExport: 'reports.export',
+  reportsSchedule: 'reports.schedule',
+  reportsManage: 'reports.manage',
+  reportsPlatformRead: 'reports.platform.read',
   agencyCreate: 'agency.create',
   agencyRead: 'agency.read',
   agencyUpdate: 'agency.update',
@@ -236,6 +243,8 @@ export const PLATFORM_ONLY_PERMISSION_KEYS = new Set<string>([
   PermissionKeys.billingPriceManage,
   PermissionKeys.billingTrialManage,
   PermissionKeys.billingSupportView,
+  PermissionKeys.analyticsPlatformRead,
+  PermissionKeys.reportsPlatformRead,
   PermissionKeys.gamificationDeveloperDiagnostics,
 ]);
 

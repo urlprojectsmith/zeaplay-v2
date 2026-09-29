@@ -43,6 +43,7 @@ import {
 import type { Locale } from '../../../lib/i18n';
 import { useLanguage } from '../../../contexts/language-provider';
 import { useSessionStore } from '../../../stores/session';
+import { useWorkspacePermissions } from '../useWorkspacePermissions';
 import {
   listDepartments,
   listWorkspaceUsers,
@@ -263,19 +264,13 @@ export function WorkspaceProjectsPage() {
   const departmentsQuery = useDepartments(selectedWorkspaceId, accessToken);
   const tagsQuery = useWorkspaceTags(selectedWorkspaceId, accessToken);
   const usersQuery = useWorkspaceMemberSearch(selectedWorkspaceId, accessToken, '');
-  const selectedWorkspace = useSelectedWorkspace(selectedWorkspaceId);
   const rolesQuery = useQuery({
     queryKey: rolesKeys.all(selectedWorkspaceId),
     queryFn: () => listWorkspaceRoles(selectedWorkspaceId as string),
-    enabled: Boolean(accessToken && selectedWorkspaceId && selectedWorkspace?.role),
+    enabled: Boolean(accessToken && selectedWorkspaceId),
     staleTime: 30_000,
   });
-  const permissions = useMemo(() => {
-    const role = rolesQuery.data?.find(
-      (item) => item.key.toLowerCase() === selectedWorkspace?.role?.toLowerCase(),
-    );
-    return new Set(role?.permissions.map((permission) => permission.key) ?? []);
-  }, [rolesQuery.data, selectedWorkspace?.role]);
+  const permissions = useWorkspacePermissions(selectedWorkspaceId, rolesQuery.data ?? []);
   const canCreateProjects = hasPermission(permissions, 'projects.create');
 
   const createMutation = useMutation({
@@ -725,19 +720,13 @@ export function WorkspaceProjectDetailPage({ projectId }: { projectId: string })
   const statusesQuery = useProjectStatuses(selectedWorkspaceId, accessToken);
   const departmentsQuery = useDepartments(selectedWorkspaceId, accessToken);
   const usersQuery = useWorkspaceMemberSearch(selectedWorkspaceId, accessToken, memberSearch);
-  const selectedWorkspace = useSelectedWorkspace(selectedWorkspaceId);
   const rolesQuery = useQuery({
     queryKey: rolesKeys.all(selectedWorkspaceId),
     queryFn: () => listWorkspaceRoles(selectedWorkspaceId as string),
-    enabled: Boolean(accessToken && selectedWorkspaceId && selectedWorkspace?.role),
+    enabled: Boolean(accessToken && selectedWorkspaceId),
     staleTime: 30_000,
   });
-  const permissions = useMemo(() => {
-    const role = rolesQuery.data?.find(
-      (item) => item.key.toLowerCase() === selectedWorkspace?.role?.toLowerCase(),
-    );
-    return new Set(role?.permissions.map((permission) => permission.key) ?? []);
-  }, [rolesQuery.data, selectedWorkspace?.role]);
+  const permissions = useWorkspacePermissions(selectedWorkspaceId, rolesQuery.data ?? []);
   const canUpdateProject = hasPermission(permissions, 'projects.update');
   const canDeleteProject = hasPermission(permissions, 'projects.delete');
   const canManageProjectStatus =
@@ -1470,6 +1459,7 @@ function ProjectForm({
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (submitting) return;
     if (!form.name.trim() || invalidRange) return;
     onSubmit({
       name: form.name,
@@ -3403,14 +3393,6 @@ function isHttpUrl(value: string) {
 
 function hasPermission(permissions: Set<string>, permission: string) {
   return permissions.has('*') || permissions.has(permission);
-}
-
-function useSelectedWorkspace(workspaceId: string | null) {
-  return useSessionStore((state) =>
-    state.agencies
-      .flatMap((agency) => agency.workspaces)
-      .find((workspace) => workspace.id === workspaceId),
-  );
 }
 
 function uploadToStorage(url: string, file: File, onProgress: (value: number) => void) {

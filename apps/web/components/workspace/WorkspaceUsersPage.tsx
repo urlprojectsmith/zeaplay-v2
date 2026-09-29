@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Badge,
@@ -18,13 +18,14 @@ import {
   SelectValue,
   Skeleton,
 } from '@zea-play/ui';
-import { RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageContainer } from '../layout/PageContainer';
 import { PageHeader } from '../layout/PageHeader';
 import { useLanguage } from '../../contexts/language-provider';
 import { useSessionStore } from '../../stores/session';
 import {
+  createWorkspaceUser,
   listDepartments,
   listWorkspaceUsers,
   updateWorkspaceUser,
@@ -32,8 +33,11 @@ import {
 import type { Department, WorkspaceUser } from '../../services/workspace-management';
 import { listWorkspaceRoles, rolesKeys } from '../../services/workspace-roles';
 import type { WorkspaceRole } from '../../services/workspace-roles';
+import { useWorkspacePermissions } from './useWorkspacePermissions';
 
 const pageSize = 10;
+const createRoles = ['ADMIN', 'MANAGER', 'MEMBER'] as const;
+type CreateRole = (typeof createRoles)[number];
 
 export function WorkspaceUsersPage() {
   const { locale, t } = useLanguage();
@@ -49,11 +53,19 @@ export function WorkspaceUsersPage() {
   const [selected, setSelected] = useState<WorkspaceUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [createEmail, setCreateEmail] = useState('');
+  const [createRole, setCreateRole] = useState<CreateRole>('MEMBER');
+  const [creating, setCreating] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const rolesQuery = useQuery({
     queryKey: rolesKeys.all(workspaceId),
     queryFn: () => listWorkspaceRoles(workspaceId as string),
     enabled: Boolean(workspaceId),
   });
+  const permissions = useWorkspacePermissions(workspaceId, rolesQuery.data ?? []);
+  const canCreateUser =
+    hasPermission(permissions, 'workspace.member.create') &&
+    hasPermission(permissions, 'roles.assign');
 
   useEffect(() => {
     setUsers([]);
@@ -97,7 +109,7 @@ export function WorkspaceUsersPage() {
     return () => {
       active = false;
     };
-  }, [departmentId, page, role, search, status, workspaceId]);
+  }, [departmentId, page, reloadKey, role, search, status, workspaceId]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasFilters = Boolean(
@@ -118,12 +130,73 @@ export function WorkspaceUsersPage() {
     }
   }
 
+  async function createUser(event: FormEvent) {
+    event.preventDefault();
+    if (!workspaceId || !canCreateUser || !createEmail.trim() || creating) return;
+    setCreating(true);
+    try {
+      await createWorkspaceUser(workspaceId, {
+        email: createEmail.trim(),
+        role: createRole,
+      });
+      setCreateEmail('');
+      setCreateRole('MEMBER');
+      setPage(1);
+      setReloadKey((value) => value + 1);
+      toast.success(t(locale, 'workspaceUsers.created'));
+    } catch (nextError) {
+      toast.error(
+        nextError instanceof Error ? nextError.message : t(locale, 'workspaceUsers.createFailed'),
+      );
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <PageContainer>
       <PageHeader
         title={t(locale, 'workspaceUsers.title')}
         description={t(locale, 'workspaceUsers.description')}
       />
+      {canCreateUser ? (
+        <Card>
+          <CardContent className="pt-6">
+            <form
+              className="grid gap-3 md:grid-cols-[1fr_180px_auto]"
+              onSubmit={(event) => void createUser(event)}
+            >
+              <Input
+                aria-label={t(locale, 'workspaceUsers.email')}
+                placeholder={t(locale, 'workspaceUsers.emailPlaceholder')}
+                type="email"
+                value={createEmail}
+                onChange={(event) => setCreateEmail(event.target.value)}
+                required
+              />
+              <Select
+                value={createRole}
+                onValueChange={(value) => setCreateRole(value as CreateRole)}
+              >
+                <SelectTrigger label={t(locale, 'workspaceUsers.role')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {createRoles.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button type="submit" disabled={creating || !createEmail.trim()}>
+                <UserPlus className="h-4 w-4" />
+                {t(locale, 'workspaceUsers.createUser')}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
       <Card>
         <CardContent className="grid gap-3 pt-6 md:grid-cols-[1fr_160px_160px_180px]">
           <div className="relative">
@@ -255,6 +328,10 @@ export function WorkspaceUsersPage() {
       )}
     </PageContainer>
   );
+}
+
+function hasPermission(permissions: Set<string>, permission: string) {
+  return permissions.has('*') || permissions.has(permission);
 }
 
 function FilterSelect({
