@@ -37,6 +37,7 @@
     "class-validator": "^0.14.1",
     "compression": "^1.7.5",
     "exceljs": "^4.4.0",
+    "express": "^5.2.1",
     "helmet": "^8.0.0",
     "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.3",
