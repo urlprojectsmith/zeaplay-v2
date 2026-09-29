@@ -10,8 +10,13 @@
     "test": "jest",
     "test:integration": "jest --config jest.integration.config.js --runInBand",
     "prisma:generate": "dotenv -e ../../.env.example -- prisma generate",
+    "prisma:generate:prod": "dotenv -e ../../.env -- prisma generate",
     "prisma:validate": "dotenv -e ../../.env.example -- prisma validate",
-    "prisma:seed": "dotenv -e ../../.env.example -- ts-node prisma/seed.ts"
+    "prisma:validate:prod": "dotenv -e ../../.env -- prisma validate",
+    "prisma:migrate:status:prod": "dotenv -e ../../.env -- prisma migrate status",
+    "prisma:migrate:deploy:prod": "dotenv -e ../../.env -- prisma migrate deploy",
+    "prisma:seed": "dotenv -e ../../.env.example -- ts-node prisma/seed.ts",
+    "prisma:seed:prod": "dotenv -e ../../.env -- ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.2",
