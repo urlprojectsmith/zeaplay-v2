@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zea_password}
       TZ: UTC
     ports:
-      - '127.0.0.1:5432:5432'
+      - '127.0.0.1:7543:5432'
     restart: unless-stopped
     networks:
       - zea-play
@@ -33,7 +33,7 @@ services:
       PGBOUNCER_AUTH_TYPE: scram-sha-256
       PGBOUNCER_IGNORE_STARTUP_PARAMETERS: extra_float_digits,search_path
     ports:
-      - '127.0.0.1:6432:6432'
+      - '127.0.0.1:7432:6432'
     restart: unless-stopped
     networks:
       - zea-play
@@ -50,7 +50,7 @@ services:
     image: redis:7.4-alpine
     command: ['redis-server', '--appendonly', 'yes']
     ports:
-      - '127.0.0.1:6379:6379'
+      - '127.0.0.1:7379:6379'
     restart: unless-stopped
     networks:
       - zea-play
@@ -66,7 +66,7 @@ services:
     image: redis:7.4-alpine
     command: ['redis-server', '--appendonly', 'yes']
     ports:
-      - '127.0.0.1:6380:6379'
+      - '127.0.0.1:7380:6379'
     restart: unless-stopped
     networks:
       - zea-play
@@ -82,7 +82,7 @@ services:
     image: redis:7.4-alpine
     command: ['redis-server', '--appendonly', 'yes']
     ports:
-      - '127.0.0.1:6381:6379'
+      - '127.0.0.1:7381:6379'
     restart: unless-stopped
     networks:
       - zea-play
@@ -98,7 +98,7 @@ services:
     image: redis:7.4-alpine
     command: ['redis-server', '--appendonly', 'yes']
     ports:
-      - '127.0.0.1:6382:6379'
+      - '127.0.0.1:7382:6379'
     restart: unless-stopped
     networks:
       - zea-play
@@ -116,10 +116,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-zea-play-dev-minio-access}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-zea-play-dev-minio-secret-at-least-32-chars}
-      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-http://localhost:3000}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-http://localhost:7100}
     ports:
-      - '127.0.0.1:9000:9000'
-      - '127.0.0.1:9001:9001'
+      - '127.0.0.1:7900:9000'
+      - '127.0.0.1:7901:9001'
     restart: unless-stopped
     networks:
       - zea-play
@@ -152,8 +152,8 @@ services:
   mailpit:
     image: axllent/mailpit:v1.21
     ports:
-      - '127.0.0.1:1025:1025'
-      - '127.0.0.1:8025:8025'
+      - '127.0.0.1:7125:1025'
+      - '127.0.0.1:7825:8025'
     restart: unless-stopped
     networks:
       - zea-play
@@ -166,7 +166,7 @@ services:
   prometheus:
     image: prom/prometheus:v3.0.1
     ports:
-      - '127.0.0.1:9090:9090'
+      - '127.0.0.1:7390:9090'
     restart: unless-stopped
     networks:
       - zea-play
@@ -182,7 +182,7 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     ports:
-      - '127.0.0.1:3001:3000'
+      - '127.0.0.1:7301:3000'
     restart: unless-stopped
     networks:
       - zea-play
