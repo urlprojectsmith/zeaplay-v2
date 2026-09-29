@@ -7,13 +7,13 @@
 
 Useful endpoints:
 
-- Web: `http://localhost:3000`
-- API health: `http://localhost:4000/api/v1/health`
-- API docs: `http://localhost:4000/api/v1/docs`
-- MinIO console: `http://localhost:9001`
-- Mailpit: `http://localhost:8025`
-- Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3001`
+- Web: `http://localhost:7100`
+- API health: `http://localhost:7111/api/v1/health`
+- API docs: `http://localhost:7111/api/v1/docs`
+- MinIO console: `http://localhost:7901`
+- Mailpit: `http://localhost:7825`
+- Prometheus: `http://localhost:7390`
+- Grafana: `http://localhost:7301`
 
 All Compose ports bind to `127.0.0.1` for local development. Do not expose these dependency ports
 directly in production.
