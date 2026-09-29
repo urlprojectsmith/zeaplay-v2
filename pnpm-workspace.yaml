@@ -28,3 +28,4 @@ overrides:
   multer: '>=2.3.0'
   decode-uri-component: '>=0.4.3'
   stream-json: '>=3.4.1'
+  minio@8.0.7>stream-json: 1.9.1
