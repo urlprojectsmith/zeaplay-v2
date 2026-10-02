@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import type { PublicBranding } from './public-branding.shared';
 import { superAgencyHeaders } from './super-agencies';
 
 const AGENCY_HEADER = 'x-agency-id';
@@ -195,6 +196,7 @@ export async function getPublicForm(publicId: string) {
     schema: FormSchema;
     settings: { successMessage?: string; successRedirectUrl?: string; captchaRequired?: boolean };
     noindex: true;
+    branding: PublicBranding;
   }>(`/forms/${publicId}`, { skipTenantContext: true });
   return response.data;
 }

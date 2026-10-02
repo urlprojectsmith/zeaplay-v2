@@ -15,7 +15,13 @@ import TableHeader from '@tiptap/extension-table-header';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiClientError } from '@zea-play/api-client';
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Skeleton } from '@zea-play/ui';
+import { PublicBrandShell } from '../../branding/PublicBrandShell';
 import { getPublicDocShare, verifyPublicDocSharePassword } from '../../../services/workspace-docs';
+import {
+  defaultPublicBranding,
+  type PublicBranding,
+} from '../../../services/public-branding.shared';
+import { useLanguage } from '../../../contexts/language-provider';
 
 const renderExtensions = [
   StarterKit,
@@ -31,6 +37,7 @@ const renderExtensions = [
 ];
 
 export function PublicDocSharePage({ token }: { token: string }) {
+  const { locale, t } = useLanguage();
   const [password, setPassword] = useState('');
   const [access, setAccess] = useState<string | undefined>();
   const shareQuery = useQuery({
@@ -48,27 +55,27 @@ export function PublicDocSharePage({ token }: { token: string }) {
 
   if (shareQuery.isLoading)
     return (
-      <PublicShell>
+      <PublicShell brand={defaultPublicBranding}>
         <Skeleton className="h-80 rounded-md" />
       </PublicShell>
     );
 
   if (isPasswordRequired(shareQuery.error)) {
     return (
-      <PublicShell>
+      <PublicShell brand={defaultPublicBranding}>
         <Card className="mx-auto max-w-md">
           <CardHeader>
-            <CardTitle>Protected Doc</CardTitle>
+            <CardTitle>{t(locale, 'publicBranding.protectedDoc')}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
             <Input
+              label={t(locale, 'publicBranding.password')}
               type="password"
               value={password}
-              placeholder="Password"
               onChange={(event) => setPassword(event.target.value)}
             />
             <Button type="button" disabled={!password} onClick={() => passwordMutation.mutate()}>
-              Open
+              {t(locale, 'publicBranding.open')}
             </Button>
           </CardContent>
         </Card>
@@ -78,10 +85,10 @@ export function PublicDocSharePage({ token }: { token: string }) {
 
   if (shareQuery.error || !shareQuery.data) {
     return (
-      <PublicShell>
+      <PublicShell brand={defaultPublicBranding}>
         <Card className="mx-auto max-w-md">
           <CardHeader>
-            <CardTitle>Doc Unavailable</CardTitle>
+            <CardTitle>{t(locale, 'publicBranding.docUnavailable')}</CardTitle>
           </CardHeader>
         </Card>
       </PublicShell>
@@ -91,13 +98,13 @@ export function PublicDocSharePage({ token }: { token: string }) {
   const html = sanitizeRenderedHtml(generateHTML(shareQuery.data.content, renderExtensions));
 
   return (
-    <PublicShell>
+    <PublicShell brand={shareQuery.data.branding}>
       <article className="mx-auto grid max-w-4xl gap-5">
         <header className="border-b border-border pb-4">
           <h1 className="text-3xl font-semibold tracking-normal">{shareQuery.data.title}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Updated{' '}
-            {new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(
+            {t(locale, 'publicBranding.updated')}{' '}
+            {new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(
               new Date(shareQuery.data.updatedAt),
             )}
           </p>
@@ -111,8 +118,8 @@ export function PublicDocSharePage({ token }: { token: string }) {
   );
 }
 
-function PublicShell({ children }: { children: React.ReactNode }) {
-  return <main className="min-h-screen bg-background p-6 text-foreground">{children}</main>;
+function PublicShell({ brand, children }: { brand: PublicBranding; children: React.ReactNode }) {
+  return <PublicBrandShell brand={brand}>{children}</PublicBrandShell>;
 }
 
 function isPasswordRequired(error: unknown) {

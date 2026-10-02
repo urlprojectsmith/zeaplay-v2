@@ -5,6 +5,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { ApiClientError } from '@zea-play/api-client';
 import { Button, Card, CardHeader, CardTitle, Input, Skeleton, Textarea } from '@zea-play/ui';
 import { Send } from 'lucide-react';
+import { PublicBrandShell } from '../../branding/PublicBrandShell';
 import {
   authorizePublicFormUpload,
   completePublicFormUpload,
@@ -14,8 +15,17 @@ import {
   type FormSchema,
   type PublicUploadAnswerRef,
 } from '../../../services/workspace-forms';
+import {
+  defaultPublicBranding,
+  type PublicBranding,
+} from '../../../services/public-branding.shared';
+import { useLanguage } from '../../../contexts/language-provider';
+import type { Locale, translate } from '../../../lib/i18n';
+
+type TranslateFn = typeof translate;
 
 export function PublicFormPage({ publicId }: { publicId: string }) {
+  const { locale, t } = useLanguage();
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [submitted, setSubmitted] = useState(false);
   const formQuery = useQuery({
@@ -33,7 +43,7 @@ export function PublicFormPage({ publicId }: { publicId: string }) {
 
   if (formQuery.isLoading) {
     return (
-      <PublicShell>
+      <PublicShell brand={defaultPublicBranding}>
         <Skeleton className="mx-auto h-80 max-w-2xl rounded-md" />
       </PublicShell>
     );
@@ -41,10 +51,10 @@ export function PublicFormPage({ publicId }: { publicId: string }) {
 
   if (formQuery.error || !formQuery.data) {
     return (
-      <PublicShell>
+      <PublicShell brand={defaultPublicBranding}>
         <Card className="mx-auto max-w-md">
           <CardHeader>
-            <CardTitle>Form Unavailable</CardTitle>
+            <CardTitle>{t(locale, 'publicBranding.formUnavailable')}</CardTitle>
           </CardHeader>
         </Card>
       </PublicShell>
@@ -53,11 +63,12 @@ export function PublicFormPage({ publicId }: { publicId: string }) {
 
   if (submitted) {
     return (
-      <PublicShell>
+      <PublicShell brand={formQuery.data.branding}>
         <Card className="mx-auto max-w-xl">
           <CardHeader>
             <CardTitle>
-              {formQuery.data.settings.successMessage ?? 'Thanks. Your response was submitted.'}
+              {formQuery.data.settings.successMessage ??
+                t(locale, 'publicBranding.submittedFallback')}
             </CardTitle>
           </CardHeader>
         </Card>
@@ -66,8 +77,8 @@ export function PublicFormPage({ publicId }: { publicId: string }) {
   }
 
   return (
-    <PublicShell>
-      <main className="mx-auto grid max-w-2xl gap-5">
+    <PublicShell brand={formQuery.data.branding}>
+      <section className="mx-auto grid max-w-2xl gap-5">
         <header className="border-b border-border pb-4">
           <h1 className="text-3xl font-semibold tracking-normal">{formQuery.data.title}</h1>
           {formQuery.data.description ? (
@@ -79,19 +90,23 @@ export function PublicFormPage({ publicId }: { publicId: string }) {
           formVersionNumber={formQuery.data.versionNumber}
           schema={formQuery.data.schema}
           answers={answers}
+          locale={locale}
           onChange={setAnswers}
           onSubmit={() => submitMutation.mutate()}
+          t={t}
         />
         {submitMutation.error ? (
-          <p className="text-sm text-destructive">{errorMessage(submitMutation.error)}</p>
+          <p className="text-sm text-destructive" role="alert">
+            {errorMessage(submitMutation.error, locale, t)}
+          </p>
         ) : null}
-      </main>
+      </section>
     </PublicShell>
   );
 }
 
-function PublicShell({ children }: { children: React.ReactNode }) {
-  return <main className="min-h-screen bg-background p-6 text-foreground">{children}</main>;
+function PublicShell({ brand, children }: { brand: PublicBranding; children: React.ReactNode }) {
+  return <PublicBrandShell brand={brand}>{children}</PublicBrandShell>;
 }
 
 function FormBody({
@@ -99,15 +114,19 @@ function FormBody({
   formVersionNumber,
   schema,
   answers,
+  locale,
   onChange,
   onSubmit,
+  t,
 }: {
   publicId: string;
   formVersionNumber: number;
   schema: FormSchema;
   answers: Record<string, unknown>;
+  locale: Locale;
   onChange: (answers: Record<string, unknown>) => void;
   onSubmit: () => void;
+  t: TranslateFn;
 }) {
   return (
     <form
@@ -129,16 +148,20 @@ function FormBody({
               publicId={publicId}
               formVersionNumber={formVersionNumber}
               field={field}
+              locale={locale}
               value={uploadRefs(answers[field.id])}
               onChange={(value) => onChange({ ...answers, [field.id]: value })}
+              t={t}
             />
           ) : field.type === 'SIGNATURE' ? (
             <PublicSignatureInput
               publicId={publicId}
               formVersionNumber={formVersionNumber}
               field={field}
+              locale={locale}
               value={uploadRefs(answers[field.id])}
               onChange={(value) => onChange({ ...answers, [field.id]: value[0] })}
+              t={t}
             />
           ) : field.type === 'TEXTAREA' ? (
             <Textarea
@@ -170,7 +193,7 @@ function FormBody({
       ))}
       <Button type="submit">
         <Send className="h-4 w-4" />
-        Submit
+        {t(locale, 'publicBranding.submit')}
       </Button>
     </form>
   );
@@ -180,14 +203,18 @@ function PublicFileInput({
   publicId,
   formVersionNumber,
   field,
+  locale,
   value,
   onChange,
+  t,
 }: {
   publicId: string;
   formVersionNumber: number;
   field: FormField;
+  locale: Locale;
   value: PublicUploadAnswerRef[];
   onChange: (value: PublicUploadAnswerRef[]) => void;
+  t: TranslateFn;
 }) {
   const [message, setMessage] = useState('');
   const maxFiles = Math.max(1, Math.min(field.maxFiles ?? 1, 10));
@@ -204,15 +231,21 @@ function PublicFileInput({
           void uploadPublicFile(publicId, formVersionNumber, field, file)
             .then((ref) => {
               onChange([...value, ref].slice(0, maxFiles));
-              setMessage('Upload ready');
+              setMessage(t(locale, 'publicBranding.uploadReady'));
             })
-            .catch((error: unknown) => setMessage(safeUploadError(error)));
+            .catch((error: unknown) => setMessage(safeUploadError(error, locale, t)));
         }}
       />
       {value.length ? (
-        <p className="text-xs text-muted-foreground">{value.length} file ready</p>
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          {value.length} {t(locale, 'publicBranding.fileReady')}
+        </p>
       ) : null}
-      {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
+      {message ? (
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -221,18 +254,24 @@ function PublicSignatureInput({
   publicId,
   formVersionNumber,
   field,
+  locale,
   value,
   onChange,
+  t,
 }: {
   publicId: string;
   formVersionNumber: number;
   field: FormField;
+  locale: Locale;
   value: PublicUploadAnswerRef[];
   onChange: (value: PublicUploadAnswerRef[]) => void;
+  t: TranslateFn;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
-  const [message, setMessage] = useState(value.length ? 'Signature ready' : '');
+  const [message, setMessage] = useState(
+    value.length ? t(locale, 'publicBranding.signatureReady') : '',
+  );
   const draw = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || !drawingRef.current) return;
@@ -280,7 +319,7 @@ function PublicSignatureInput({
             setMessage('');
           }}
         >
-          Clear
+          {t(locale, 'publicBranding.clear')}
         </Button>
         <Button
           type="button"
@@ -289,23 +328,27 @@ function PublicSignatureInput({
             if (!canvas) return;
             canvas.toBlob((blob) => {
               if (!blob) {
-                setMessage('Upload failed');
+                setMessage(t(locale, 'publicBranding.uploadFailed'));
                 return;
               }
               const file = new File([blob], 'signature.png', { type: 'image/png' });
               void uploadPublicFile(publicId, formVersionNumber, field, file)
                 .then((ref) => {
                   onChange([ref]);
-                  setMessage('Signature ready');
+                  setMessage(t(locale, 'publicBranding.signatureReady'));
                 })
-                .catch((error: unknown) => setMessage(safeUploadError(error)));
+                .catch((error: unknown) => setMessage(safeUploadError(error, locale, t)));
             }, 'image/png');
           }}
         >
-          Upload signature
+          {t(locale, 'publicBranding.uploadSignature')}
         </Button>
       </div>
-      {message ? <p className="text-xs text-muted-foreground">{message}</p> : null}
+      {message ? (
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -339,10 +382,10 @@ async function uploadPublicFile(
   return { assetId: authorization.assetId, uploadToken: authorization.uploadToken };
 }
 
-function errorMessage(error: unknown) {
+function errorMessage(error: unknown, locale: Locale, t: TranslateFn) {
   if (error instanceof ApiClientError) return error.body.code || error.body.message;
   if (error instanceof Error) return error.message;
-  return 'Submission failed';
+  return t(locale, 'publicBranding.submissionFailed');
 }
 
 function inputValue(value: unknown) {
@@ -366,12 +409,12 @@ function isUploadRef(value: unknown): value is PublicUploadAnswerRef {
   );
 }
 
-function safeUploadError(error: unknown) {
+function safeUploadError(error: unknown, locale: Locale, t: TranslateFn) {
   if (error instanceof ApiClientError && error.body.code === 'FORM_UPLOAD_TYPE_NOT_ALLOWED') {
-    return 'File type not allowed';
+    return t(locale, 'publicBranding.fileTypeNotAllowed');
   }
   if (error instanceof ApiClientError && error.body.code === 'FORM_UPLOAD_TOO_LARGE') {
-    return 'File too large';
+    return t(locale, 'publicBranding.fileTooLarge');
   }
-  return 'Upload failed';
+  return t(locale, 'publicBranding.uploadFailed');
 }

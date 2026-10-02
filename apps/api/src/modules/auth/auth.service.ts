@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import {
@@ -24,6 +25,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { MailService } from '../../infrastructure/mail/mail.service';
 import { RedisService } from '../../infrastructure/redis/redis.service';
 import { AuditService } from '../audit/audit.service';
+import { BrandingService } from '../branding/branding.service';
 import { JwtTokenService } from '../../common/auth/jwt.service';
 import { PasswordService } from '../../common/auth/password.service';
 
@@ -69,6 +71,7 @@ export class AuthService {
     private readonly passwords: PasswordService,
     private readonly audit: AuditService,
     private readonly mail: MailService,
+    @Optional() private readonly branding?: BrandingService,
   ) {}
 
   async login(emailInput: string, password: string, meta: RequestMeta = {}) {
@@ -391,6 +394,9 @@ export class AuthService {
         to: user.email,
         code,
         expiresInMinutes: Math.ceil((expiresAt.getTime() - now.getTime()) / 60_000),
+        brand: await this.branding
+          ?.resolvePublicForWorkspace(input.workspaceId)
+          .catch(() => undefined),
       });
     } catch {
       await this.prisma.securityOtpChallenge.updateMany({

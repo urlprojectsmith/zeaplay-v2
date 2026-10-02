@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MailModule } from '../../infrastructure/mail/mail.module';
+import { BrandingModule } from '../branding/branding.module';
 import { NotificationsController } from './notifications.controller';
 import {
   NotificationEmailDeliveryService,
@@ -14,7 +15,7 @@ import { NotificationRouterService } from './notification-router.service';
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [MailModule],
+  imports: [MailModule, BrandingModule],
   controllers: [NotificationsController],
   providers: [
     NotificationsService,

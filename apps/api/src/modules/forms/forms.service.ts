@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
@@ -32,6 +33,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AssetsService } from '../assets/assets.service';
 import { AutomationDomainEventsService } from '../automation/automation-domain-events.service';
+import { BrandingService } from '../branding/branding.service';
 import {
   AuthorizePublicFormUploadDto,
   CompletePublicFormUploadDto,
@@ -115,6 +117,7 @@ export class FormsService {
     private readonly automationEvents: AutomationDomainEventsService,
     private readonly rateLimit: FormsRateLimitService,
     private readonly captcha: FormsCaptchaService,
+    @Optional() private readonly branding?: BrandingService,
   ) {}
 
   async listForms(tenant: WorkspaceTenantContext, query: FormListQueryDto) {
@@ -366,6 +369,7 @@ export class FormsService {
       schema: publicSchema(version.schema),
       settings: publicSettings(version.settings),
       noindex: true,
+      branding: await publicBrandingForWorkspace(this.branding, form.workspaceId),
     };
   }
 
@@ -1523,6 +1527,31 @@ async function consumePublicUploadAssets(
 
 function serializeForm(form: Record<string, unknown>) {
   return form;
+}
+
+async function publicBrandingForWorkspace(
+  branding: BrandingService | undefined,
+  workspaceId: string,
+) {
+  return branding
+    ? branding.resolvePublicForWorkspace(workspaceId)
+    : {
+        appName: 'ZeaPlay',
+        companyName: 'ZeaPlay',
+        logo: null,
+        darkLogo: null,
+        favicon: null,
+        loginBackground: null,
+        primaryColor: '#1F7A68',
+        primaryForeground: '#FFFFFF',
+        accentColor: '#7C3AED',
+        accentForeground: '#FFFFFF',
+        supportEmail: 'support@zeaplay.test',
+        supportUrl: 'https://zeaplay.test/support',
+        footerText: 'Powered by ZeaPlay',
+        metaDescription: 'ZeaPlay workspace platform',
+        fingerprint: 'platform-default',
+      };
 }
 
 function toJson(value: unknown): Prisma.InputJsonValue {

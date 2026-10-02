@@ -4,9 +4,16 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { AssetLifecycle, AssetStatus, Prisma, WhiteLabelScopeType } from '@prisma/client';
+import {
+  AssetLifecycle,
+  AssetStatus,
+  CustomDomainScopeType,
+  Prisma,
+  WhiteLabelScopeType,
+} from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { validateEnvironment } from '@zea-play/config';
 import type {
@@ -19,6 +26,7 @@ import { PrismaService } from '../../infrastructure/database/prisma.service';
 import type { StorageAdapter } from '../../infrastructure/storage/storage-adapter';
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { AuditService } from '../audit/audit.service';
+import { CustomDomainResolverService } from '../custom-domains/custom-domain-resolver.service';
 import type { UpdateWhiteLabelBrandingDto } from './dto/branding.dto';
 import {
   BRANDING_FIELD_KEYS,
@@ -68,6 +76,31 @@ interface AssetValue {
   sizeBytes: number;
   displayName: string;
   url?: string;
+  expiresInSeconds?: number;
+}
+
+export interface PublicBrandingDto {
+  appName: string;
+  companyName: string;
+  logo: PublicBrandingAssetDto | null;
+  darkLogo: PublicBrandingAssetDto | null;
+  favicon: PublicBrandingAssetDto | null;
+  loginBackground: PublicBrandingAssetDto | null;
+  primaryColor: string;
+  primaryForeground: string;
+  accentColor: string;
+  accentForeground: string;
+  supportEmail: string;
+  supportUrl: string;
+  footerText: string;
+  metaDescription: string;
+  fingerprint: string;
+}
+
+export interface PublicBrandingAssetDto {
+  url: string;
+  mimeType: string;
+  displayName: string;
   expiresInSeconds?: number;
 }
 
@@ -144,6 +177,7 @@ export class BrandingService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    @Optional() private readonly customDomains?: CustomDomainResolverService,
   ) {}
 
   getRegistry() {
@@ -164,6 +198,37 @@ export class BrandingService {
     const output = await this.composeEffectiveBrand(scope, chain, effectivePolicy, options);
     this.cache.set(cacheKey, { expiresAt: Date.now() + 30_000, value: output });
     return output;
+  }
+
+  async resolvePublicForHost(host: string | undefined | null): Promise<PublicBrandingDto> {
+    const resolved = await this.customDomains?.resolveHost(host);
+    if (!resolved) return this.toPublicBranding(await this.resolveForScope(this.platformScope()));
+    if (resolved.scopeType === CustomDomainScopeType.SUPER_AGENCY) {
+      return this.toPublicBranding(
+        await this.resolveForScope({
+          type: WhiteLabelScopeType.SUPER_AGENCY,
+          id: resolved.scopeId,
+          superAgencyId: resolved.scopeId,
+        }),
+      );
+    }
+    if (resolved.scopeType === CustomDomainScopeType.AGENCY) {
+      return this.toPublicBranding(
+        await this.resolveForScope({ type: WhiteLabelScopeType.AGENCY, id: resolved.scopeId }),
+      );
+    }
+    if (resolved.scopeType === CustomDomainScopeType.WORKSPACE) {
+      return this.toPublicBranding(
+        await this.resolveForScope({ type: WhiteLabelScopeType.WORKSPACE, id: resolved.scopeId }),
+      );
+    }
+    return this.toPublicBranding(await this.resolveForScope(this.platformScope()));
+  }
+
+  async resolvePublicForWorkspace(workspaceId: string): Promise<PublicBrandingDto> {
+    return this.toPublicBranding(
+      await this.resolveForScope({ type: WhiteLabelScopeType.WORKSPACE, id: workspaceId }),
+    );
   }
 
   async getConfig(scope: BrandingScope) {
@@ -267,6 +332,47 @@ export class BrandingService {
       superAgencyId: tenant.superAgencyId,
       agencyId: tenant.agencyId,
       workspaceId: tenant.workspaceId,
+    };
+  }
+
+  toPublicBranding(input: unknown): PublicBrandingDto {
+    const brand = input as {
+      appName?: string;
+      companyName?: string;
+      logo?: AssetValue | null;
+      darkLogo?: AssetValue | null;
+      favicon?: AssetValue | null;
+      loginBackground?: AssetValue | null;
+      primaryColor?: string;
+      primaryForeground?: string;
+      accentColor?: string;
+      accentForeground?: string;
+      supportEmail?: string;
+      supportUrl?: string;
+      footerText?: string;
+      metaDescription?: string;
+      fingerprint?: string;
+    };
+    return {
+      appName: brand.appName ?? DEFAULT_BRAND.appName,
+      companyName: brand.companyName ?? DEFAULT_BRAND.companyName,
+      logo: publicAsset(brand.logo),
+      darkLogo: publicAsset(brand.darkLogo),
+      favicon: publicAsset(brand.favicon),
+      loginBackground: publicAsset(brand.loginBackground),
+      primaryColor: brand.primaryColor ?? DEFAULT_BRAND.primaryColor,
+      primaryForeground:
+        brand.primaryForeground ??
+        accessibleForeground(brand.primaryColor ?? DEFAULT_BRAND.primaryColor),
+      accentColor: brand.accentColor ?? DEFAULT_BRAND.accentColor,
+      accentForeground:
+        brand.accentForeground ??
+        accessibleForeground(brand.accentColor ?? DEFAULT_BRAND.accentColor),
+      supportEmail: brand.supportEmail ?? DEFAULT_BRAND.supportEmail,
+      supportUrl: brand.supportUrl ?? DEFAULT_BRAND.supportUrl,
+      footerText: brand.footerText ?? DEFAULT_BRAND.footerText,
+      metaDescription: brand.metaDescription ?? DEFAULT_BRAND.metaDescription,
+      fingerprint: brand.fingerprint ?? this.fingerprint(DEFAULT_BRAND, [0]),
     };
   }
 
@@ -770,4 +876,14 @@ function readMetadataNumber(metadata: Prisma.JsonValue | null, key: string) {
   if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return null;
   const value = (metadata as Record<string, Prisma.JsonValue>)[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function publicAsset(asset: AssetValue | null | undefined): PublicBrandingAssetDto | null {
+  if (!asset?.url) return null;
+  return {
+    url: asset.url,
+    mimeType: asset.mimeType,
+    displayName: asset.displayName,
+    expiresInSeconds: asset.expiresInSeconds,
+  };
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { RedisModule } from '../../infrastructure/redis/redis.module';
 import { AssetsModule } from '../assets/assets.module';
 import { AutomationModule } from '../automation/automation.module';
+import { BrandingModule } from '../branding/branding.module';
 import {
   AgencyFormsOversightController,
   PublicFormsController,
@@ -13,7 +14,7 @@ import { FormsRateLimitService } from './forms-rate-limit.service';
 import { FormsService } from './forms.service';
 
 @Module({
-  imports: [AssetsModule, AutomationModule, RedisModule],
+  imports: [AssetsModule, AutomationModule, RedisModule, BrandingModule],
   controllers: [
     WorkspaceFormsController,
     PublicFormsController,

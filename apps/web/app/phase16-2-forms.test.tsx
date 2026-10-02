@@ -71,7 +71,7 @@ describe('Phase 16.2 Forms UI main gate', () => {
     expect(publicForm).toContain('authorizePublicFormUpload');
     expect(publicForm).toContain('completePublicFormUpload');
     expect(publicForm).toContain('PublicSignatureInput');
-    expect(publicForm).toContain('Upload signature');
+    expect(publicForm).toContain('publicBranding.uploadSignature');
     expect(publicForm).toContain('uploadToken');
     expect(read('components/workspace/forms/ParentFormsOversightPage.tsx')).toContain(
       'Forms metadata',

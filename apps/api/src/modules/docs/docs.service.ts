@@ -8,6 +8,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
@@ -37,6 +38,7 @@ import type { StorageAdapter } from '../../infrastructure/storage/storage-adapte
 import { STORAGE_ADAPTER } from '../../infrastructure/storage/storage.tokens';
 import { PrismaService } from '../../infrastructure/database/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { BrandingService } from '../branding/branding.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   AttachAssetDto,
@@ -76,6 +78,7 @@ export class DocsService {
     private readonly notifications: NotificationsService,
     private readonly passwords: PasswordService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    @Optional() private readonly branding?: BrandingService,
   ) {}
 
   async listDocs(tenant: WorkspaceTenantContext, query: DocListQueryDto) {
@@ -705,7 +708,10 @@ export class DocsService {
       where: { id: share.id },
       data: { lastAccessedAt: new Date() },
     });
-    return publicDocPayload(share.doc);
+    return {
+      ...publicDocPayload(share.doc),
+      branding: await publicBrandingForWorkspace(this.branding, share.doc.workspaceId),
+    };
   }
 
   async verifySharePassword(token: string, password: string) {
@@ -1070,6 +1076,7 @@ const publicShareSelect = {
   doc: {
     select: {
       id: true,
+      workspaceId: true,
       title: true,
       content: true,
       contentRevision: true,
@@ -1149,16 +1156,44 @@ function serializeDocDetail(doc: Record<string, unknown>) {
 
 function publicDocPayload(doc: unknown) {
   const item = doc as {
+    workspaceId?: string;
     attachments: Array<{ asset: { storageKey?: string } }>;
     [key: string]: unknown;
   };
+  const { workspaceId, ...publicItem } = item;
+  void workspaceId;
   return {
-    ...item,
+    ...publicItem,
     attachments: item.attachments.map(({ asset, ...attachment }) => ({
       ...attachment,
       asset: { ...asset, storageKey: undefined },
     })),
   };
+}
+
+async function publicBrandingForWorkspace(
+  branding: BrandingService | undefined,
+  workspaceId: string,
+) {
+  return branding
+    ? branding.resolvePublicForWorkspace(workspaceId)
+    : {
+        appName: 'ZeaPlay',
+        companyName: 'ZeaPlay',
+        logo: null,
+        darkLogo: null,
+        favicon: null,
+        loginBackground: null,
+        primaryColor: '#1F7A68',
+        primaryForeground: '#FFFFFF',
+        accentColor: '#7C3AED',
+        accentForeground: '#FFFFFF',
+        supportEmail: 'support@zeaplay.test',
+        supportUrl: 'https://zeaplay.test/support',
+        footerText: 'Powered by ZeaPlay',
+        metaDescription: 'ZeaPlay workspace platform',
+        fingerprint: 'platform-default',
+      };
 }
 
 function requireWorkspaceMembership(tenant: WorkspaceTenantContext) {

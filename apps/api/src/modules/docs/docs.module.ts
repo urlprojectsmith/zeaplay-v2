@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../../infrastructure/storage/storage.module';
+import { BrandingModule } from '../branding/branding.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import {
   AgencyDocsOversightController,
@@ -10,7 +11,7 @@ import {
 import { DocsService } from './docs.service';
 
 @Module({
-  imports: [StorageModule, NotificationsModule],
+  imports: [StorageModule, NotificationsModule, BrandingModule],
   controllers: [
     WorkspaceDocsController,
     PublicDocsController,

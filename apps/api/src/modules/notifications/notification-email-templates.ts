@@ -1,4 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
+import { brandedMailHtml, normalizeMailBrand } from '../../infrastructure/mail/mail.service';
+import type { MailBrandingInput } from '../../infrastructure/mail/mail.types';
 
 export type NotificationEmailTemplateKey =
   | 'task.assigned'
@@ -37,62 +39,83 @@ export function renderNotificationEmailTemplate(
   key: NotificationEmailTemplateKey,
   data: NotificationEmailTemplateData,
   appUrl: string,
+  brandInput?: MailBrandingInput,
 ): RenderedNotificationEmail {
   const safe = normalizeTemplateData(data);
+  const brand = normalizeMailBrand(brandInput);
   const actionUrl = fixedActionUrl(appUrl, safe.entityId);
-  const cta = actionUrl ? `\n\nOpen in ZeaPlay: ${actionUrl}` : '';
+  const cta = actionUrl ? `\n\nOpen in ${brand.appName}: ${actionUrl}` : '';
   switch (key) {
     case 'task.assigned':
-      return render('Task assigned', `You were assigned to ${safe.taskTitle ?? 'a task'}.${cta}`);
+      return render(
+        brand,
+        'Task assigned',
+        `You were assigned to ${safe.taskTitle ?? 'a task'}.${cta}`,
+      );
     case 'task.due_soon':
       return render(
+        brand,
         'Task due soon',
         `${safe.taskTitle ?? 'A task'} is due soon${formatDue(safe.dueAt)}.${cta}`,
       );
     case 'task.overdue':
-      return render('Task overdue', `${safe.taskTitle ?? 'A task'} is overdue.${cta}`);
+      return render(brand, 'Task overdue', `${safe.taskTitle ?? 'A task'} is overdue.${cta}`);
     case 'project.due_soon':
       return render(
+        brand,
         'Project due soon',
         `${safe.projectName ?? 'A project'} is due soon${formatDue(safe.dueAt)}.${cta}`,
       );
     case 'ticket.assigned':
       return render(
+        brand,
         'Ticket assigned',
         `You were assigned to ${safe.ticketNumber ?? 'a ticket'}: ${safe.ticketSubject ?? 'Untitled ticket'}.${cta}`,
       );
     case 'ticket.sla_warning':
       return render(
+        brand,
         'Ticket SLA warning',
         `${safe.ticketNumber ?? 'A ticket'} is approaching its SLA deadline${formatDue(safe.dueAt)}.${cta}`,
       );
     case 'automation.failed':
       return render(
+        brand,
         'Automation failed',
         `${safe.workflowName ?? 'An automation'} failed and needs attention.${cta}`,
       );
     case 'automation.dead_lettered':
       return render(
+        brand,
         'Automation dead lettered',
         `${safe.workflowName ?? 'An automation'} exhausted retries and was moved to dead letter.${cta}`,
       );
     case 'gamification.achievement_earned':
       return render(
+        brand,
         'Achievement earned',
-        `You earned ${safe.achievementName ?? 'an achievement'} in ZeaPlay.${cta}`,
+        `You earned ${safe.achievementName ?? 'an achievement'} in ${brand.appName}.${cta}`,
       );
     case 'gamification.badge_earned':
-      return render('Badge earned', `You earned ${safe.badgeName ?? 'a badge'} in ZeaPlay.${cta}`);
+      return render(
+        brand,
+        'Badge earned',
+        `You earned ${safe.badgeName ?? 'a badge'} in ${brand.appName}.${cta}`,
+      );
     default:
       throw new BadRequestException('UNKNOWN_NOTIFICATION_EMAIL_TEMPLATE');
   }
 }
 
-function render(subject: string, text: string): RenderedNotificationEmail {
+function render(
+  brand: ReturnType<typeof normalizeMailBrand>,
+  subject: string,
+  text: string,
+): RenderedNotificationEmail {
   return {
-    subject,
+    subject: `${brand.appName}: ${subject}`,
     text,
-    html: `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`,
+    html: brandedMailHtml(brand, [`<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`]),
   };
 }
 

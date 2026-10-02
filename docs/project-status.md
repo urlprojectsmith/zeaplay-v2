@@ -1,13 +1,58 @@
 # Zea Play Project Status
 
-Current: ZEA PLAY VERSION 2 PHASE 18.2 CUSTOM DOMAINS MAIN IMPLEMENTATION PASS.
-Next: Phase 18.2 final/live verification is READY / NOT STARTED. Phase 18.3 branded login/public/email and Phase 18.4 final certification are NOT STARTED.
+Current: ZEA PLAY VERSION 2 PHASE 18.3 BRANDED LOGIN + PUBLIC PAGES + EMAIL BRANDING FOCUSED REFINEMENT COMPLETE LOCALLY / PARTIAL.
+Next: Run Linux standalone web build verification from `/opt/zeaplay` before Phase 18.3 final PASS. Phase 18.2 live DNS/NPM/TLS verification remains DEFERRED. Phase 18.4 final certification is NOT STARTED.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
 Do not implement Phase 6 from this document alone. Use it to avoid rescanning completed Phase 1-5 work.
 
 ## Current Certification Gate
+
+Phase 18.3 - BRANDED LOGIN + PUBLIC PAGES + EMAIL BRANDING
+
+Main Implementation: PARTIAL / LINUX_BUILD_VERIFICATION_REQUIRED
+
+Final Verification: PARTIAL / LINUX_BUILD_VERIFICATION_REQUIRED
+
+Phase 18.1: COMPLETE / PASS
+
+Phase 18.2: MAIN IMPLEMENTATION PASS / LIVE VERIFICATION DEFERRED
+
+Phase 18.3: FOCUSED REFINEMENT COMPLETE LOCALLY / LINUX BUILD NOT VERIFIED
+
+Phase 18.4: NOT STARTED
+
+Version 1: COMPLETE / CERTIFIED
+
+Version 2: IN PROGRESS
+
+Phase 18: IN PROGRESS
+
+- Phase 18.3 extends the certified Phase 18.1 `BrandingService` and does not create a second branding system.
+- Public login/auth routes resolve branding server-side through `GET /branding/public`, using active-only Phase 18.2 custom-domain host resolution where available and Platform defaults for canonical, unknown, invalid, inactive, suspended, or archived host contexts.
+- Public Docs and public Forms include public-safe effective Workspace branding only after the existing public share/form authorization lookup succeeds. Public resource access semantics, password/share tokens, submission validation, upload security, and rate limits remain unchanged.
+- Email branding extends existing `MailService` and notification email templates. Tenant branding may affect body, subject prefix, logo, colors, footer, and support references, but does not change the configured trusted sender domain/address.
+- No migration was added. Phase 18.1 branding tables and Phase 18.2 custom-domain tables remain authoritative.
+- Documentation added: `docs/phase18-3-branded-public-email.md` and `docs/phase18-3-security-matrix.md`.
+- Public/auth i18n refinement: PASS for existing English/Tamil i18n layer on Phase 18.3 auth/public visible strings.
+- Accessibility refinement: PASS for brand logo alt text, public Doc password labels, public Form alert/live-region status, and existing focusable controls.
+- Focused API branding/email/docs/forms/auth tests: PASS, 6 suites / 40 tests.
+- Focused web public branding + login smoke: PASS, 2 files / 7 tests.
+- API typecheck: PASS.
+- Web typecheck: PASS.
+- Root typecheck: PASS, 17 tasks.
+- API build: PASS.
+- Web lint: PASS.
+- Full web app test: PASS, 33 files / 243 tests.
+- Root `pnpm test`: PASS, 17 tasks. API PASS, 75 suites / 678 tests. Worker PASS, 12 suites / 37 tests. Web PASS, 33 files / 243 tests.
+- `pnpm format`: PASS.
+- `git diff --check`: PASS.
+- Security/source diff scan: PASS for no `.env` diff and no private-key/credential patterns in the Phase 18.3 diff.
+- Root `pnpm build`: PARTIAL on Windows. API and worker build tasks passed. Next.js compiled, typechecked, generated 73 static pages, then failed during standalone traced-file copy because Windows denied symlink creation (`EPERM`).
+- Linux web build: NOT VERIFIED. `/opt/zeaplay` was not accessible from this Windows workspace.
+- Integration, E2E, shared-dev read-only checks, and Linux runtime smoke remain pending for final PASS.
+- Phase 18.2 remains DEFERRED for live DNS, NPM, TLS, and production custom-domain verification. No production Nginx Proxy Manager, DNS, PM2, or proxy changes were made.
 
 Phase 18.2 - CUSTOM DOMAINS + DNS OWNERSHIP + HOST RESOLUTION + NGINX PROXY MANAGER + TLS
 

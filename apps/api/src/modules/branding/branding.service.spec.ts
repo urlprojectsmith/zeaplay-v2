@@ -3,7 +3,12 @@ import {
   ForbiddenException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { AssetLifecycle, AssetStatus, WhiteLabelScopeType } from '@prisma/client';
+import {
+  AssetLifecycle,
+  AssetStatus,
+  CustomDomainScopeType,
+  WhiteLabelScopeType,
+} from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { BrandingService } from './branding.service';
 import { PLATFORM_BRANDING_SCOPE_ID } from './branding.registry';
@@ -40,12 +45,15 @@ function brandRow(overrides: Record<string, unknown>) {
   };
 }
 
-function serviceWithPrisma(prisma: Record<string, unknown>) {
+function serviceWithPrisma(
+  prisma: Record<string, unknown>,
+  customDomains?: Record<string, unknown>,
+) {
   const storage = {
     createPresignedDownloadUrl: jest.fn((key: string) => `https://storage.test/${key}`),
   };
   const audit = { record: jest.fn() } as unknown as AuditService;
-  return new BrandingService(prisma as never, audit, storage as never);
+  return new BrandingService(prisma as never, audit, storage as never, customDomains as never);
 }
 
 describe('BrandingService', () => {
@@ -367,5 +375,74 @@ describe('BrandingService', () => {
         },
       ),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('resolves public branding from active custom host bindings only', async () => {
+    const workspaceId = '33333333-3333-4333-8333-333333333333';
+    const service = serviceWithPrisma(
+      {
+        workspace: {
+          findUnique: jest.fn(() => ({
+            id: workspaceId,
+            agencyId: 'agency-1',
+            agency: { superAgencyId: 'super-1' },
+          })),
+        },
+        whiteLabelBranding: {
+          findMany: jest.fn(() => [
+            brandRow({
+              scopeType: WhiteLabelScopeType.SUPER_AGENCY,
+              scopeId: 'super-1',
+              appName: 'Tenant Portal',
+              companyName: 'Tenant Co',
+              workspaceAllowedOverrides: ['APP_NAME', 'SUPPORT_EMAIL'],
+            }),
+            brandRow({
+              scopeType: WhiteLabelScopeType.WORKSPACE,
+              scopeId: workspaceId,
+              appName: 'Workspace Login',
+              supportEmail: 'help@tenant.test',
+            }),
+          ]),
+        },
+      },
+      {
+        resolveHost: jest.fn(() => ({
+          domainId: 'domain-1',
+          scopeType: CustomDomainScopeType.WORKSPACE,
+          scopeId: workspaceId,
+          status: 'ACTIVE',
+        })),
+      },
+    );
+
+    const result = await service.resolvePublicForHost('workspace.example.com');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        appName: 'Workspace Login',
+        companyName: 'Tenant Co',
+        supportEmail: 'help@tenant.test',
+      }),
+    );
+    expect(result).not.toHaveProperty('policy');
+    expect(result).not.toHaveProperty('sources');
+    expect(result.logo).toBeNull();
+  });
+
+  it('falls back to platform defaults for unknown public hosts', async () => {
+    const service = serviceWithPrisma(
+      {
+        whiteLabelBranding: {
+          findMany: jest.fn(() => []),
+        },
+      },
+      { resolveHost: jest.fn(() => null) },
+    );
+
+    const result = await service.resolvePublicForHost('unknown.example.com');
+
+    expect(result.appName).toBe('ZeaPlay');
+    expect(result.companyName).toBe('ZeaPlay');
   });
 });

@@ -19,6 +19,7 @@ import {
   NotificationEmailTemplateKey,
   renderNotificationEmailTemplate,
 } from './notification-email-templates';
+import { BrandingService } from '../branding/branding.service';
 
 const DISPATCH_LIMIT = 100;
 const STALE_SENDING_MS = 15 * 60 * 1000;
@@ -86,6 +87,7 @@ export class NotificationEmailProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    @Optional() private readonly branding?: BrandingService,
   ) {
     super();
   }
@@ -148,10 +150,14 @@ export class NotificationEmailProcessor extends WorkerHost {
     }
     try {
       const templateData = jsonTemplateData(delivery.templateData);
+      const brand = await this.branding
+        ?.resolvePublicForWorkspace(delivery.workspaceId)
+        .catch(() => undefined);
       const rendered = renderNotificationEmailTemplate(
         delivery.templateKey as NotificationEmailTemplateKey,
         templateData,
         this.env.WEB_APP_URL,
+        brand,
       );
       await this.mail.send({ to: recipient.user.email, ...rendered });
       await this.prisma.notificationEmailDelivery.update({

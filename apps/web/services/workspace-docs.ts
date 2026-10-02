@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import type { PublicBranding } from './public-branding.shared';
 import { superAgencyHeaders } from './super-agencies';
 
 export type DocVisibility = 'PRIVATE' | 'SELECTED_MEMBERS' | 'WORKSPACE';
@@ -263,6 +264,7 @@ export async function getPublicDocShare(token: string, access?: string) {
     content: Record<string, unknown>;
     contentRevision: number;
     updatedAt: string;
+    branding: PublicBranding;
     attachments: Array<{
       id: string;
       asset: { id: string; displayName: string; mimeType: string; sizeBytes: number };

@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import type {
   AgencyTenantContext,
   AuthenticatedUser,
@@ -37,6 +38,11 @@ export class BrandingController {
   @Get('branding/fields')
   getRegistry() {
     return this.branding.getRegistry();
+  }
+
+  @Get('branding/public')
+  getPublicBranding(@Req() request: Request) {
+    return this.branding.resolvePublicForHost(request.get('host'));
   }
 
   @Get('platform/branding/effective')

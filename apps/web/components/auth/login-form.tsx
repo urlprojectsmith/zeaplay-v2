@@ -4,9 +4,12 @@ import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input } from '@zea-play/ui';
 import { useSessionStore } from '../../stores/session';
+import { BrandLogo } from '../branding/BrandLogo';
+import { useLanguage } from '../../contexts/language-provider';
 
 export function LoginForm() {
   const router = useRouter();
+  const { locale, t } = useLanguage();
   const login = useSessionStore((state) => state.login);
   const [email, setEmail] = useState('owner@zeaplay.test');
   const [password, setPassword] = useState('DevelopmentPassword123!');
@@ -31,7 +34,7 @@ export function LoginForm() {
               : '/',
       );
     } catch {
-      setError('Unable to sign in with those credentials.');
+      setError(t(locale, 'publicBranding.signInError'));
     } finally {
       setIsSubmitting(false);
     }
@@ -40,12 +43,12 @@ export function LoginForm() {
   return (
     <form className="auth-panel" onSubmit={(event) => void onSubmit(event)}>
       <div>
-        <p className="eyebrow">Zea Play</p>
-        <h1>Sign in</h1>
+        <BrandLogo />
+        <h1>{t(locale, 'publicBranding.signInTitle')}</h1>
       </div>
       <Input
         autoComplete="email"
-        label="Email"
+        label={t(locale, 'publicBranding.email')}
         type="email"
         value={email}
         onChange={(event) => setEmail(event.target.value)}
@@ -53,7 +56,7 @@ export function LoginForm() {
       />
       <Input
         autoComplete="current-password"
-        label="Password"
+        label={t(locale, 'publicBranding.password')}
         type="password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
@@ -62,7 +65,7 @@ export function LoginForm() {
       />
       {error ? <p className="form-error">{error}</p> : null}
       <Button type="submit" disabled={isSubmitting} loading={isSubmitting}>
-        {isSubmitting ? 'Signing in...' : 'Sign in'}
+        {isSubmitting ? t(locale, 'publicBranding.signingIn') : t(locale, 'publicBranding.signIn')}
       </Button>
     </form>
   );

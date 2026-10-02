@@ -3,8 +3,11 @@
 import { FormEvent, useState } from 'react';
 import { Button, Input } from '@zea-play/ui';
 import { verifyGamificationResetEmailOtp } from '../../services/workspace-gamification';
+import { BrandLogo } from '../branding/BrandLogo';
+import { useLanguage } from '../../contexts/language-provider';
 
 export function VerifyOtpForm() {
+  const { locale, t } = useLanguage();
   const [challengeId, setChallengeId] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -18,11 +21,11 @@ export function VerifyOtpForm() {
     setIsSubmitting(true);
     try {
       const grant = await verifyGamificationResetEmailOtp(challengeId.trim(), code);
-      setVerifiedUntil(new Date(grant.expiresAt).toLocaleString());
+      setVerifiedUntil(new Date(grant.expiresAt).toLocaleString(locale));
       setChallengeId('');
       setCode('');
     } catch {
-      setError('Unable to verify that code.');
+      setError(t(locale, 'publicBranding.verifyOtpError'));
     } finally {
       setIsSubmitting(false);
     }
@@ -31,12 +34,12 @@ export function VerifyOtpForm() {
   return (
     <form className="auth-panel" onSubmit={(event) => void onSubmit(event)}>
       <div>
-        <p className="eyebrow">Zea Play</p>
-        <h1>Verify OTP</h1>
+        <BrandLogo />
+        <h1>{t(locale, 'publicBranding.verifyOtpTitle')}</h1>
       </div>
       <Input
         autoComplete="off"
-        label="Challenge ID"
+        label={t(locale, 'publicBranding.challengeId')}
         value={challengeId}
         onChange={(event) => setChallengeId(event.target.value)}
         required
@@ -44,7 +47,7 @@ export function VerifyOtpForm() {
       <Input
         autoComplete="one-time-code"
         inputMode="numeric"
-        label="Verification code"
+        label={t(locale, 'publicBranding.verificationCode')}
         maxLength={6}
         pattern="[0-9]{6}"
         value={code}
@@ -53,14 +56,18 @@ export function VerifyOtpForm() {
       />
       {error ? <p className="form-error">{error}</p> : null}
       {verifiedUntil ? (
-        <p className="form-success">Verification active until {verifiedUntil}.</p>
+        <p className="form-success">
+          {t(locale, 'publicBranding.verificationActiveUntil')} {verifiedUntil}.
+        </p>
       ) : null}
       <Button
         type="submit"
         disabled={isSubmitting || !challengeId.trim() || code.length !== 6}
         loading={isSubmitting}
       >
-        {isSubmitting ? 'Verifying...' : 'Verify code'}
+        {isSubmitting
+          ? t(locale, 'publicBranding.verifying')
+          : t(locale, 'publicBranding.verifyCode')}
       </Button>
     </form>
   );
