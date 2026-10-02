@@ -41,7 +41,11 @@ import { FormsModule } from './modules/forms/forms.module';
 import { GoalsModule } from './modules/goals/goals.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { SearchModule } from './modules/search/search.module';
+import { CustomDashboardsModule } from './modules/custom-dashboards/custom-dashboards.module';
 import { AccountContextModule } from './modules/account-context/account-context.module';
+import { BrandingModule } from './modules/branding/branding.module';
+import { CustomDomainsModule } from './modules/custom-domains/custom-domains.module';
 
 @Module({
   imports: [
@@ -75,6 +79,10 @@ import { AccountContextModule } from './modules/account-context/account-context.
     GoalsModule,
     AnalyticsModule,
     ReportsModule,
+    SearchModule,
+    CustomDashboardsModule,
+    BrandingModule,
+    CustomDomainsModule,
     AccountContextModule,
     TagsModule,
     SuperAgenciesModule,

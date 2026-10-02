@@ -239,4 +239,45 @@ describe('TenantContextService', () => {
       ForbiddenException,
     );
   });
+
+  it('allows an active custom Workspace host only for its exact Workspace context', async () => {
+    const customDomainFindFirst = jest.fn().mockResolvedValue({
+      scopeType: 'WORKSPACE',
+      scopeId: workspaceBId,
+      superAgencyId: superAgencyBId,
+      agencyId: agencyBId,
+      workspaceId: workspaceBId,
+    });
+    const service = new TenantContextService({
+      customDomain: { findFirst: customDomainFindFirst },
+    } as never);
+
+    await expect(
+      service.assertHostMatchesWorkspace('Client.Example.com:443', workspaceBId),
+    ).resolves.toBeUndefined();
+    await expect(service.assertHostMatchesAgency('client.example.com', agencyBId)).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(customDomainFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          normalizedHostname: 'client.example.com',
+          status: 'ACTIVE',
+          removedAt: null,
+        }),
+      }),
+    );
+  });
+
+  it('does not bind unsafe or canonical hosts to a tenant fallback', async () => {
+    const customDomainFindFirst = jest.fn();
+    const service = new TenantContextService({
+      customDomain: { findFirst: customDomainFindFirst },
+    } as never);
+
+    await expect(
+      service.assertHostMatchesWorkspace('localhost:7100', workspaceBId),
+    ).resolves.toBeUndefined();
+    expect(customDomainFindFirst).not.toHaveBeenCalled();
+  });
 });

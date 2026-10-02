@@ -8,7 +8,7 @@ export function BrandLogo({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-2">
       {brand.logoUrl ? (
-        // Arbitrary white-label logo hosts are intentionally supported without next/image remote allowlists.
+        // Branding image URLs are short-lived API-authorized storage URLs.
         // eslint-disable-next-line @next/next/no-img-element
         <img alt="" className="h-8 w-8 rounded-md object-contain" src={brand.logoUrl} />
       ) : (

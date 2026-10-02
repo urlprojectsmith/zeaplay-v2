@@ -16,6 +16,8 @@ import { WorkerHierarchyService } from './processors/worker-hierarchy.service';
 import { BillingLifecycleProcessor } from './processors/billing-lifecycle.processor';
 import { AnalyticsRollupProcessor } from './processors/analytics-rollup.processor';
 import { ReportExportProcessor } from './processors/report-export.processor';
+import { SearchIndexProcessor } from './processors/search-index.processor';
+import { CustomDomainProvisioningProcessor } from './processors/custom-domain-provisioning.processor';
 
 @Module({
   imports: [
@@ -50,6 +52,8 @@ import { ReportExportProcessor } from './processors/report-export.processor';
     BillingLifecycleProcessor,
     AnalyticsRollupProcessor,
     ReportExportProcessor,
+    SearchIndexProcessor,
+    CustomDomainProvisioningProcessor,
     WorkerHierarchyService,
   ],
 })

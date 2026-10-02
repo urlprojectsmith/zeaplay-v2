@@ -1,6 +1,8 @@
 import { ForbiddenException, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import {
   AgencyStatus,
+  CustomDomainScopeType,
+  CustomDomainStatus,
   MembershipStatus,
   RoleScope,
   SuperAgencyStatus,
@@ -14,12 +16,49 @@ import type {
   WorkspaceTenantContext,
 } from '../auth/auth.types';
 import { AGENCY_ADMIN_ROLES } from '../authorization/permissions';
+import { normalizeRequestHost } from '../../modules/custom-domains/custom-domain-normalization';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class TenantContextService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async assertHostMatchesSuperAgency(host: string | undefined, superAgencyId: string) {
+    const domain = await this.findActiveCustomDomainForHost(host);
+    if (!domain) return;
+    if (
+      domain.scopeType !== CustomDomainScopeType.SUPER_AGENCY ||
+      domain.superAgencyId !== superAgencyId ||
+      domain.scopeId !== superAgencyId
+    ) {
+      throw new ForbiddenException('Custom domain does not match the Super Agency context.');
+    }
+  }
+
+  async assertHostMatchesAgency(host: string | undefined, agencyId: string) {
+    const domain = await this.findActiveCustomDomainForHost(host);
+    if (!domain) return;
+    if (
+      domain.scopeType !== CustomDomainScopeType.AGENCY ||
+      domain.agencyId !== agencyId ||
+      domain.scopeId !== agencyId
+    ) {
+      throw new ForbiddenException('Custom domain does not match the Agency context.');
+    }
+  }
+
+  async assertHostMatchesWorkspace(host: string | undefined, workspaceId: string) {
+    const domain = await this.findActiveCustomDomainForHost(host);
+    if (!domain) return;
+    if (
+      domain.scopeType !== CustomDomainScopeType.WORKSPACE ||
+      domain.workspaceId !== workspaceId ||
+      domain.scopeId !== workspaceId
+    ) {
+      throw new ForbiddenException('Custom domain does not match the Workspace context.');
+    }
+  }
 
   async resolveSuperAgency(
     userId: string,
@@ -311,6 +350,25 @@ export class TenantContextService {
       throw new ForbiddenException('Invalid Super Agency role.');
     }
     return membership;
+  }
+
+  private async findActiveCustomDomainForHost(host: string | undefined) {
+    const normalizedHostname = normalizeRequestHost(host);
+    if (!normalizedHostname) return null;
+    return this.prisma.customDomain.findFirst({
+      where: {
+        normalizedHostname,
+        status: CustomDomainStatus.ACTIVE,
+        removedAt: null,
+      },
+      select: {
+        scopeType: true,
+        scopeId: true,
+        superAgencyId: true,
+        agencyId: true,
+        workspaceId: true,
+      },
+    });
   }
 }
 

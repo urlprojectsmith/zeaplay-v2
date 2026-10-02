@@ -25,6 +25,10 @@ export class TenantContextGuard implements CanActivate {
       agencyId,
       workspaceId,
     );
+    await this.tenantContext.assertHostMatchesWorkspace(
+      request.get?.('host') ?? request.header('host'),
+      request.workspaceTenant.workspaceId,
+    );
     request.tenant = request.workspaceTenant;
     if (request.params?.agencyId && request.params.agencyId !== request.tenant.agencyId)
       throw new ForbiddenException('Tenant context does not match the requested resource.');
@@ -44,6 +48,10 @@ export class AgencyTenantGuard implements CanActivate {
     const agencyId = firstValue(request.params?.agencyId) ?? request.header(AGENCY_HEADER);
     if (!agencyId) throw new UnauthorizedException('Agency context required.');
     request.agencyTenant = await this.tenantContext.resolveAgency(request.user.id, agencyId);
+    await this.tenantContext.assertHostMatchesAgency(
+      request.get?.('host') ?? request.header('host'),
+      request.agencyTenant.agencyId,
+    );
     if (request.params?.agencyId && request.params.agencyId !== request.agencyTenant.agencyId) {
       throw new ForbiddenException('Tenant context does not match the requested resource.');
     }
@@ -64,6 +72,10 @@ export class SuperAgencyTenantGuard implements CanActivate {
     request.superAgencyTenant = await this.tenantContext.resolveSuperAgency(
       request.user.id,
       superAgencyId,
+    );
+    await this.tenantContext.assertHostMatchesSuperAgency(
+      request.get?.('host') ?? request.header('host'),
+      request.superAgencyTenant.superAgencyId,
     );
     request.tenant = undefined;
     if (

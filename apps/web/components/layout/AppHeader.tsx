@@ -1,8 +1,9 @@
 'use client';
 
-import { Menu, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@zea-play/ui';
 import { useLanguage } from '../../contexts/language-provider';
+import { GlobalSearch } from '../search/GlobalSearch';
 import type { DashboardConfig } from '../navigation/navigation-config';
 import { AgencySwitcher } from '../navigation/AgencySwitcher';
 import { LanguageSwitcher } from '../navigation/LanguageSwitcher';
@@ -59,10 +60,7 @@ export function AppHeader({
           <Breadcrumbs items={['Zea Play', config.title]} />
         </div>
         <div className="hidden items-center gap-2 xl:flex">
-          <div className="flex h-10 min-w-64 items-center gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] px-3 text-sm text-[hsl(var(--muted-foreground))]">
-            <Search aria-hidden="true" className="h-4 w-4" />
-            <span>{t(locale, 'common.search')}</span>
-          </div>
+          <GlobalSearch scope={config.scope} />
           {config.scope === 'super-agency' ? <SuperAgencySwitcher compact /> : null}
           {config.scope === 'agency' || config.scope === 'workspace' ? (
             <AgencySwitcher compact />
@@ -72,6 +70,9 @@ export function AppHeader({
         <div className="hidden items-center gap-2 md:flex">
           <ThemeSwitcher />
           <LanguageSwitcher />
+        </div>
+        <div className="xl:hidden">
+          <GlobalSearch scope={config.scope} />
         </div>
         {config.scope === 'workspace' ? <GlobalTimerIndicator /> : null}
         {config.scope === 'workspace' ? <NotificationCenter /> : null}

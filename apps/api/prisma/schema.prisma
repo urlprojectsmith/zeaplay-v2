@@ -68,6 +68,31 @@ enum AnalyticsScopeType {
   PLATFORM
 }
 
+enum WhiteLabelScopeType {
+  PLATFORM
+  SUPER_AGENCY
+  AGENCY
+  WORKSPACE
+}
+
+enum CustomDomainScopeType {
+  SUPER_AGENCY
+  AGENCY
+  WORKSPACE
+}
+
+enum CustomDomainStatus {
+  PENDING_VERIFICATION
+  DNS_VERIFIED
+  ROUTING_PENDING
+  SSL_PENDING
+  ACTIVE
+  FAILED
+  SUSPENDED
+  REMOVING
+  REMOVED
+}
+
 enum AnalyticsBucket {
   HOUR
   DAY
@@ -125,6 +150,78 @@ enum ReportScheduleFrequency {
   DAILY
   WEEKLY
   MONTHLY
+}
+
+enum DashboardVisibility {
+  PRIVATE
+  SELECTED_MEMBERS
+  WORKSPACE
+  SCOPE
+}
+
+enum DashboardStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum DashboardWidgetType {
+  METRIC_CARD
+  LINE_CHART
+  BAR_CHART
+  AREA_CHART
+  PIE_CHART
+  DONUT_CHART
+  TABLE
+  GOAL_PROGRESS
+  GAMIFICATION_SUMMARY
+}
+
+enum DashboardWidgetDataSourceType {
+  ANALYTICS_QUERY
+  SAVED_REPORT
+}
+
+enum SearchResultType {
+  TASK
+  PROJECT
+  TICKET
+  DOC
+  FORM
+  GOAL
+  FILE
+  MEMBER
+  AUTOMATION
+  API_KEY
+  WEBHOOK
+  INTEGRATION
+  BILLING_METADATA
+  SUPER_AGENCY
+  AGENCY
+  WORKSPACE
+}
+
+enum SearchPrivacyClass {
+  PUBLIC_METADATA
+  WORKSPACE_OPERATIONAL
+  ACL_SENSITIVE
+  PARENT_SAFE_METADATA
+  PLATFORM_SAFE_METADATA
+  BILLING_SAFE_METADATA
+}
+
+enum SearchIndexJobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED_STALE
+}
+
+enum SearchIndexOperation {
+  UPSERT
+  ARCHIVE
+  DELETE
+  REBUILD_SCOPE
 }
 
 enum ProjectStatus {
@@ -1314,7 +1411,7 @@ model Department {
   taskTemplates                  TaskTemplate[]
   gamificationPointRules         GamificationPointRule[]         @relation("GamificationPointRuleDepartment")
   gamificationCreationPointRules GamificationCreationPointRule[] @relation("GamificationCreationPointRuleDepartment")
-  goals                           Goal[]                          @relation("GoalDepartmentOwner")
+  goals                          Goal[]                          @relation("GoalDepartmentOwner")
 
   @@unique([workspaceId, name])
   @@unique([id, workspaceId])
@@ -3684,10 +3781,10 @@ model Form {
   createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace            Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  createdByMembership  WorkspaceMembership  @relation("FormCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  updatedByMembership  WorkspaceMembership? @relation("FormUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  archivedByMembership WorkspaceMembership? @relation("FormArchiver", fields: [archivedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  createdByMembership  WorkspaceMembership   @relation("FormCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  updatedByMembership  WorkspaceMembership?  @relation("FormUpdater", fields: [updatedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  archivedByMembership WorkspaceMembership?  @relation("FormArchiver", fields: [archivedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   versions             FormVersion[]
   submissions          FormSubmission[]
   submissionAssets     FormSubmissionAsset[]
@@ -3715,10 +3812,10 @@ model FormVersion {
   archivedAt              DateTime?        @map("archived_at") @db.Timestamptz(6)
   createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  workspace             Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  form                  Form                 @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
-  createdByMembership   WorkspaceMembership  @relation("FormVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  publishedByMembership WorkspaceMembership? @relation("FormVersionPublisher", fields: [publishedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  form                  Form                  @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  createdByMembership   WorkspaceMembership   @relation("FormVersionCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  publishedByMembership WorkspaceMembership?  @relation("FormVersionPublisher", fields: [publishedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   submissions           FormSubmission[]
   submissionAssets      FormSubmissionAsset[]
 
@@ -3746,10 +3843,10 @@ model FormSubmission {
   submittedAt             DateTime                       @default(now()) @map("submitted_at") @db.Timestamptz(6)
   createdAt               DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  workspace             Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  form                  Form                 @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  formVersion           FormVersion          @relation(fields: [formVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  submittedByMembership WorkspaceMembership? @relation("FormSubmissionSubmitter", fields: [submittedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  form                  Form                  @relation(fields: [formId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  formVersion           FormVersion           @relation(fields: [formVersionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  submittedByMembership WorkspaceMembership?  @relation("FormSubmissionSubmitter", fields: [submittedByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   assets                FormSubmissionAsset[]
 
   @@unique([id, workspaceId])
@@ -3806,10 +3903,10 @@ model Goal {
   createdAt             DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace           Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  ownerMembership     WorkspaceMembership?  @relation("GoalMembershipOwner", fields: [ownerMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  department          Department?           @relation("GoalDepartmentOwner", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
-  createdByMembership WorkspaceMembership   @relation("GoalCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  ownerMembership     WorkspaceMembership? @relation("GoalMembershipOwner", fields: [ownerMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  department          Department?          @relation("GoalDepartmentOwner", fields: [departmentId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  createdByMembership WorkspaceMembership  @relation("GoalCreator", fields: [createdByMembershipId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
   progressEvents      GoalProgressEvent[]
 
   @@unique([id, workspaceId])
@@ -4649,6 +4746,86 @@ model FeatureEntitlement {
   @@map("feature_entitlements")
 }
 
+model WhiteLabelBranding {
+  id                               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType                        WhiteLabelScopeType @map("scope_type")
+  scopeId                          String              @map("scope_id") @db.Uuid
+  appName                          String?             @map("app_name") @db.VarChar(80)
+  companyName                      String?             @map("company_name") @db.VarChar(120)
+  logoAssetId                      String?             @map("logo_asset_id") @db.Uuid
+  logoAssetWorkspaceId             String?             @map("logo_asset_workspace_id") @db.Uuid
+  darkLogoAssetId                  String?             @map("dark_logo_asset_id") @db.Uuid
+  darkLogoAssetWorkspaceId         String?             @map("dark_logo_asset_workspace_id") @db.Uuid
+  faviconAssetId                   String?             @map("favicon_asset_id") @db.Uuid
+  faviconAssetWorkspaceId          String?             @map("favicon_asset_workspace_id") @db.Uuid
+  loginBackgroundAssetId           String?             @map("login_background_asset_id") @db.Uuid
+  loginBackgroundAssetWorkspaceId  String?             @map("login_background_asset_workspace_id") @db.Uuid
+  primaryColor                     String?             @map("primary_color") @db.VarChar(7)
+  accentColor                      String?             @map("accent_color") @db.VarChar(7)
+  supportEmail                     String?             @map("support_email") @db.VarChar(320)
+  supportUrl                       String?             @map("support_url") @db.VarChar(500)
+  footerText                       String?             @map("footer_text") @db.VarChar(160)
+  metaDescription                  String?             @map("meta_description") @db.VarChar(180)
+  agencyAllowedOverrides           String[]            @default([]) @map("agency_allowed_overrides")
+  workspaceAllowedOverrides        String[]            @default([]) @map("workspace_allowed_overrides")
+  revision                         Int                 @default(1)
+  createdById                      String?             @map("created_by_id") @db.Uuid
+  updatedById                      String?             @map("updated_by_id") @db.Uuid
+  createdAt                        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([scopeType, scopeId])
+  @@index([scopeType, updatedAt])
+  @@index([logoAssetWorkspaceId, logoAssetId])
+  @@index([darkLogoAssetWorkspaceId, darkLogoAssetId])
+  @@index([faviconAssetWorkspaceId, faviconAssetId])
+  @@index([loginBackgroundAssetWorkspaceId, loginBackgroundAssetId])
+  @@map("white_label_branding")
+}
+
+model CustomDomain {
+  id                         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType                  CustomDomainScopeType @map("scope_type")
+  scopeId                    String                @map("scope_id") @db.Uuid
+  superAgencyId              String?               @map("super_agency_id") @db.Uuid
+  agencyId                   String?               @map("agency_id") @db.Uuid
+  workspaceId                String?               @map("workspace_id") @db.Uuid
+  hostname                   String                @db.VarChar(253)
+  normalizedHostname         String                @map("normalized_hostname") @db.VarChar(253)
+  displayHostname            String?               @map("display_hostname") @db.VarChar(253)
+  status                     CustomDomainStatus    @default(PENDING_VERIFICATION)
+  verificationTokenHash      String                @map("verification_token_hash") @db.Char(64)
+  verificationTokenCreatedAt DateTime              @default(now()) @map("verification_token_created_at") @db.Timestamptz(6)
+  verificationExpiresAt      DateTime              @map("verification_expires_at") @db.Timestamptz(6)
+  verifiedAt                 DateTime?             @map("verified_at") @db.Timestamptz(6)
+  lastDnsCheckedAt           DateTime?             @map("last_dns_checked_at") @db.Timestamptz(6)
+  routingVerifiedAt          DateTime?             @map("routing_verified_at") @db.Timestamptz(6)
+  sslRequestedAt             DateTime?             @map("ssl_requested_at") @db.Timestamptz(6)
+  sslActiveAt                DateTime?             @map("ssl_active_at") @db.Timestamptz(6)
+  failureCode                String?               @map("failure_code") @db.VarChar(120)
+  failureMessageSafe         String?               @map("failure_message_safe") @db.VarChar(500)
+  consecutiveFailureCount    Int                   @default(0) @map("consecutive_failure_count")
+  npmProxyHostId             String?               @map("npm_proxy_host_id") @db.VarChar(120)
+  npmCertificateId           String?               @map("npm_certificate_id") @db.VarChar(120)
+  provisioningAttempt        Int                   @default(0) @map("provisioning_attempt")
+  reconciliationDueAt        DateTime?             @map("reconciliation_due_at") @db.Timestamptz(6)
+  revision                   Int                   @default(1)
+  createdById                String?               @map("created_by_id") @db.Uuid
+  updatedById                String?               @map("updated_by_id") @db.Uuid
+  createdAt                  DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  removedAt                  DateTime?             @map("removed_at") @db.Timestamptz(6)
+
+  @@index([normalizedHostname], map: "custom_domains_normalized_hostname_idx")
+  @@index([scopeType, scopeId, status], map: "custom_domains_scope_status_idx")
+  @@index([status, reconciliationDueAt], map: "custom_domains_reconcile_idx")
+  @@index([verificationExpiresAt], map: "custom_domains_verification_expiry_idx")
+  @@index([superAgencyId, status], map: "custom_domains_super_agency_status_idx")
+  @@index([agencyId, status], map: "custom_domains_agency_status_idx")
+  @@index([workspaceId, status], map: "custom_domains_workspace_status_idx")
+  @@map("custom_domains")
+}
+
 model MasterPlan {
   id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   key               String           @unique @db.VarChar(80)
@@ -4945,26 +5122,26 @@ model AnalyticsRollup {
 }
 
 model Report {
-  id                              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  scopeType                       AnalyticsScopeType @map("scope_type")
-  scopeId                         String           @map("scope_id") @db.Uuid
-  workspaceId                     String?          @map("workspace_id") @db.Uuid
-  agencyId                        String?          @map("agency_id") @db.Uuid
-  superAgencyId                   String?          @map("super_agency_id") @db.Uuid
-  createdByUserId                 String?          @map("created_by_user_id") @db.Uuid
-  createdByWorkspaceMembershipId  String?          @map("created_by_workspace_membership_id") @db.Uuid
-  createdByAgencyMembershipId     String?          @map("created_by_agency_membership_id") @db.Uuid
-  createdBySuperAgencyMembershipId String?         @map("created_by_super_agency_membership_id") @db.Uuid
-  name                            String           @db.VarChar(160)
-  description                     String?          @db.VarChar(500)
-  type                            ReportType
-  visibility                      ReportVisibility @default(PRIVATE)
-  configuration                   Json
-  revision                        Int              @default(1)
-  status                          ReportStatus     @default(ACTIVE)
-  archivedAt                      DateTime?        @map("archived_at") @db.Timestamptz(6)
-  createdAt                       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType                        AnalyticsScopeType @map("scope_type")
+  scopeId                          String             @map("scope_id") @db.Uuid
+  workspaceId                      String?            @map("workspace_id") @db.Uuid
+  agencyId                         String?            @map("agency_id") @db.Uuid
+  superAgencyId                    String?            @map("super_agency_id") @db.Uuid
+  createdByUserId                  String?            @map("created_by_user_id") @db.Uuid
+  createdByWorkspaceMembershipId   String?            @map("created_by_workspace_membership_id") @db.Uuid
+  createdByAgencyMembershipId      String?            @map("created_by_agency_membership_id") @db.Uuid
+  createdBySuperAgencyMembershipId String?            @map("created_by_super_agency_membership_id") @db.Uuid
+  name                             String             @db.VarChar(160)
+  description                      String?            @db.VarChar(500)
+  type                             ReportType
+  visibility                       ReportVisibility   @default(PRIVATE)
+  configuration                    Json
+  revision                         Int                @default(1)
+  status                           ReportStatus       @default(ACTIVE)
+  archivedAt                       DateTime?          @map("archived_at") @db.Timestamptz(6)
+  createdAt                        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                        DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   accesses   ReportAccess[]
   executions ReportExecution[]
@@ -4979,15 +5156,15 @@ model Report {
 }
 
 model ReportAccess {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reportId              String   @map("report_id") @db.Uuid
-  scopeType             AnalyticsScopeType @map("scope_type")
-  scopeId               String   @map("scope_id") @db.Uuid
-  workspaceMembershipId String?  @map("workspace_membership_id") @db.Uuid
-  agencyMembershipId    String?  @map("agency_membership_id") @db.Uuid
-  superAgencyMembershipId String? @map("super_agency_membership_id") @db.Uuid
-  userId                String?  @map("user_id") @db.Uuid
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId                String             @map("report_id") @db.Uuid
+  scopeType               AnalyticsScopeType @map("scope_type")
+  scopeId                 String             @map("scope_id") @db.Uuid
+  workspaceMembershipId   String?            @map("workspace_membership_id") @db.Uuid
+  agencyMembershipId      String?            @map("agency_membership_id") @db.Uuid
+  superAgencyMembershipId String?            @map("super_agency_membership_id") @db.Uuid
+  userId                  String?            @map("user_id") @db.Uuid
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
 
   report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
@@ -5000,25 +5177,25 @@ model ReportAccess {
 }
 
 model ReportExecution {
-  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reportId               String                @map("report_id") @db.Uuid
-  scopeType              AnalyticsScopeType    @map("scope_type")
-  scopeId                String                @map("scope_id") @db.Uuid
-  reportRevision         Int                   @map("report_revision")
-  configSnapshot         Json                  @map("config_snapshot")
-  executionType          ReportExecutionType   @map("execution_type")
-  status                 ReportExecutionStatus @default(PENDING)
-  requestedByUserId      String?               @map("requested_by_user_id") @db.Uuid
-  requestedByMembershipId String?              @map("requested_by_membership_id") @db.Uuid
-  scheduledOccurrenceKey String?               @map("scheduled_occurrence_key") @db.VarChar(120)
-  startedAt              DateTime?             @map("started_at") @db.Timestamptz(6)
-  completedAt            DateTime?             @map("completed_at") @db.Timestamptz(6)
-  failedAt               DateTime?             @map("failed_at") @db.Timestamptz(6)
-  rowCount               Int?                  @map("row_count")
-  safeErrorCode          String?               @map("safe_error_code") @db.VarChar(120)
-  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                      String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId                String                @map("report_id") @db.Uuid
+  scopeType               AnalyticsScopeType    @map("scope_type")
+  scopeId                 String                @map("scope_id") @db.Uuid
+  reportRevision          Int                   @map("report_revision")
+  configSnapshot          Json                  @map("config_snapshot")
+  executionType           ReportExecutionType   @map("execution_type")
+  status                  ReportExecutionStatus @default(PENDING)
+  requestedByUserId       String?               @map("requested_by_user_id") @db.Uuid
+  requestedByMembershipId String?               @map("requested_by_membership_id") @db.Uuid
+  scheduledOccurrenceKey  String?               @map("scheduled_occurrence_key") @db.VarChar(120)
+  startedAt               DateTime?             @map("started_at") @db.Timestamptz(6)
+  completedAt             DateTime?             @map("completed_at") @db.Timestamptz(6)
+  failedAt                DateTime?             @map("failed_at") @db.Timestamptz(6)
+  rowCount                Int?                  @map("row_count")
+  safeErrorCode           String?               @map("safe_error_code") @db.VarChar(120)
+  createdAt               DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  report  Report         @relation(fields: [reportId], references: [id], onDelete: Cascade)
   exports ReportExport[]
 
   @@unique([reportId, scheduledOccurrenceKey], map: "report_executions_occurrence_key")
@@ -5028,31 +5205,31 @@ model ReportExecution {
 }
 
 model ReportExport {
-  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reportId               String             @map("report_id") @db.Uuid
-  executionId            String?            @map("execution_id") @db.Uuid
-  scopeType              AnalyticsScopeType @map("scope_type")
-  scopeId                String             @map("scope_id") @db.Uuid
-  format                 ReportExportFormat
-  status                 ReportExportStatus @default(QUEUED)
-  requestedByUserId      String?            @map("requested_by_user_id") @db.Uuid
-  requestedByMembershipId String?           @map("requested_by_membership_id") @db.Uuid
-  reportRevision         Int                @map("report_revision")
-  configSnapshot         Json               @map("config_snapshot")
-  filename               String             @db.VarChar(220)
-  mimeType               String             @map("mime_type") @db.VarChar(120)
-  storageProvider        String?            @map("storage_provider") @db.VarChar(40)
-  storageBucket          String?            @map("storage_bucket") @db.VarChar(120)
-  storageKey             String?            @map("storage_key") @db.VarChar(512)
-  sizeBytes              BigInt?            @map("size_bytes") @db.BigInt
-  rowCount               Int?               @map("row_count")
-  idempotencyKey         String?            @map("idempotency_key") @db.VarChar(160)
-  expiresAt              DateTime           @map("expires_at") @db.Timestamptz(6)
-  completedAt            DateTime?          @map("completed_at") @db.Timestamptz(6)
-  failedAt               DateTime?          @map("failed_at") @db.Timestamptz(6)
-  safeErrorCode          String?            @map("safe_error_code") @db.VarChar(120)
-  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId                String             @map("report_id") @db.Uuid
+  executionId             String?            @map("execution_id") @db.Uuid
+  scopeType               AnalyticsScopeType @map("scope_type")
+  scopeId                 String             @map("scope_id") @db.Uuid
+  format                  ReportExportFormat
+  status                  ReportExportStatus @default(QUEUED)
+  requestedByUserId       String?            @map("requested_by_user_id") @db.Uuid
+  requestedByMembershipId String?            @map("requested_by_membership_id") @db.Uuid
+  reportRevision          Int                @map("report_revision")
+  configSnapshot          Json               @map("config_snapshot")
+  filename                String             @db.VarChar(220)
+  mimeType                String             @map("mime_type") @db.VarChar(120)
+  storageProvider         String?            @map("storage_provider") @db.VarChar(40)
+  storageBucket           String?            @map("storage_bucket") @db.VarChar(120)
+  storageKey              String?            @map("storage_key") @db.VarChar(512)
+  sizeBytes               BigInt?            @map("size_bytes") @db.BigInt
+  rowCount                Int?               @map("row_count")
+  idempotencyKey          String?            @map("idempotency_key") @db.VarChar(160)
+  expiresAt               DateTime           @map("expires_at") @db.Timestamptz(6)
+  completedAt             DateTime?          @map("completed_at") @db.Timestamptz(6)
+  failedAt                DateTime?          @map("failed_at") @db.Timestamptz(6)
+  safeErrorCode           String?            @map("safe_error_code") @db.VarChar(120)
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   report    Report           @relation(fields: [reportId], references: [id], onDelete: Cascade)
   execution ReportExecution? @relation(fields: [executionId], references: [id], onDelete: SetNull)
@@ -5064,22 +5241,22 @@ model ReportExport {
 }
 
 model ReportSchedule {
-  id                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reportId                String                  @map("report_id") @db.Uuid
-  scopeType               AnalyticsScopeType      @map("scope_type")
-  scopeId                 String                  @map("scope_id") @db.Uuid
-  frequency               ReportScheduleFrequency
-  timezone                String                  @default("UTC") @db.VarChar(80)
-  localTime               String                  @map("local_time") @db.VarChar(5)
-  dayOfWeek               Int?                    @map("day_of_week")
-  dayOfMonth              Int?                    @map("day_of_month")
-  enabled                 Boolean                 @default(true)
-  recipientConfig         Json                    @map("recipient_config")
-  nextRunAt               DateTime                @map("next_run_at") @db.Timestamptz(6)
-  lastRunAt               DateTime?               @map("last_run_at") @db.Timestamptz(6)
-  createdByUserId         String?                 @map("created_by_user_id") @db.Uuid
-  createdAt               DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt               DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId        String                  @map("report_id") @db.Uuid
+  scopeType       AnalyticsScopeType      @map("scope_type")
+  scopeId         String                  @map("scope_id") @db.Uuid
+  frequency       ReportScheduleFrequency
+  timezone        String                  @default("UTC") @db.VarChar(80)
+  localTime       String                  @map("local_time") @db.VarChar(5)
+  dayOfWeek       Int?                    @map("day_of_week")
+  dayOfMonth      Int?                    @map("day_of_month")
+  enabled         Boolean                 @default(true)
+  recipientConfig Json                    @map("recipient_config")
+  nextRunAt       DateTime                @map("next_run_at") @db.Timestamptz(6)
+  lastRunAt       DateTime?               @map("last_run_at") @db.Timestamptz(6)
+  createdByUserId String?                 @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   report      Report                     @relation(fields: [reportId], references: [id], onDelete: Cascade)
   occurrences ReportScheduleOccurrence[]
@@ -5090,22 +5267,186 @@ model ReportSchedule {
 }
 
 model ReportScheduleOccurrence {
-  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  scheduleId     String                @map("schedule_id") @db.Uuid
-  occurrenceKey  String                @map("occurrence_key") @db.VarChar(120)
-  status         ReportExecutionStatus @default(PENDING)
-  executionId    String?               @map("execution_id") @db.Uuid
-  exportId       String?               @map("export_id") @db.Uuid
-  claimedAt      DateTime?             @map("claimed_at") @db.Timestamptz(6)
-  completedAt    DateTime?             @map("completed_at") @db.Timestamptz(6)
-  safeErrorCode  String?               @map("safe_error_code") @db.VarChar(120)
-  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  id            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scheduleId    String                @map("schedule_id") @db.Uuid
+  occurrenceKey String                @map("occurrence_key") @db.VarChar(120)
+  status        ReportExecutionStatus @default(PENDING)
+  executionId   String?               @map("execution_id") @db.Uuid
+  exportId      String?               @map("export_id") @db.Uuid
+  claimedAt     DateTime?             @map("claimed_at") @db.Timestamptz(6)
+  completedAt   DateTime?             @map("completed_at") @db.Timestamptz(6)
+  safeErrorCode String?               @map("safe_error_code") @db.VarChar(120)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
 
   schedule ReportSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
 
   @@unique([scheduleId, occurrenceKey], map: "report_schedule_occurrences_once_key")
   @@index([status, claimedAt], map: "report_schedule_occurrences_status_claimed_idx")
   @@map("report_schedule_occurrences")
+}
+
+model CustomDashboard {
+  id                               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType                        AnalyticsScopeType  @map("scope_type")
+  scopeId                          String              @map("scope_id") @db.Uuid
+  workspaceId                      String?             @map("workspace_id") @db.Uuid
+  agencyId                         String?             @map("agency_id") @db.Uuid
+  superAgencyId                    String?             @map("super_agency_id") @db.Uuid
+  createdByUserId                  String?             @map("created_by_user_id") @db.Uuid
+  createdByWorkspaceMembershipId   String?             @map("created_by_workspace_membership_id") @db.Uuid
+  createdByAgencyMembershipId      String?             @map("created_by_agency_membership_id") @db.Uuid
+  createdBySuperAgencyMembershipId String?             @map("created_by_super_agency_membership_id") @db.Uuid
+  name                             String              @db.VarChar(160)
+  description                      String?             @db.VarChar(500)
+  visibility                       DashboardVisibility @default(PRIVATE)
+  globalFilters                    Json                @default("{}") @map("global_filters")
+  revision                         Int                 @default(1)
+  status                           DashboardStatus     @default(ACTIVE)
+  archivedAt                       DateTime?           @map("archived_at") @db.Timestamptz(6)
+  createdAt                        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  accesses    DashboardAccess[]
+  widgets     DashboardWidget[]
+  preferences DashboardPreference[]
+
+  @@index([scopeType, scopeId, status, updatedAt], map: "custom_dashboards_scope_status_updated_idx")
+  @@index([workspaceId, status], map: "custom_dashboards_workspace_status_idx")
+  @@index([agencyId, status], map: "custom_dashboards_agency_status_idx")
+  @@index([superAgencyId, status], map: "custom_dashboards_super_agency_status_idx")
+  @@map("custom_dashboards")
+}
+
+model DashboardAccess {
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dashboardId             String             @map("dashboard_id") @db.Uuid
+  scopeType               AnalyticsScopeType @map("scope_type")
+  scopeId                 String             @map("scope_id") @db.Uuid
+  workspaceMembershipId   String?            @map("workspace_membership_id") @db.Uuid
+  agencyMembershipId      String?            @map("agency_membership_id") @db.Uuid
+  superAgencyMembershipId String?            @map("super_agency_membership_id") @db.Uuid
+  userId                  String?            @map("user_id") @db.Uuid
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  dashboard CustomDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@unique([dashboardId, workspaceMembershipId], map: "dashboard_access_workspace_member_key")
+  @@unique([dashboardId, agencyMembershipId], map: "dashboard_access_agency_member_key")
+  @@unique([dashboardId, superAgencyMembershipId], map: "dashboard_access_super_agency_member_key")
+  @@unique([dashboardId, userId], map: "dashboard_access_user_key")
+  @@index([scopeType, scopeId], map: "dashboard_access_scope_idx")
+  @@map("dashboard_access")
+}
+
+model DashboardWidget {
+  id             String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dashboardId    String                        @map("dashboard_id") @db.Uuid
+  type           DashboardWidgetType
+  title          String                        @db.VarChar(160)
+  description    String?                       @db.VarChar(500)
+  dataSourceType DashboardWidgetDataSourceType @map("data_source_type")
+  configuration  Json
+  layout         Json
+  refreshSeconds Int?                          @map("refresh_seconds")
+  createdAt      DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  dashboard CustomDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@index([dashboardId, updatedAt], map: "dashboard_widgets_dashboard_updated_idx")
+  @@map("dashboard_widgets")
+}
+
+model DashboardPreference {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dashboardId   String             @map("dashboard_id") @db.Uuid
+  scopeType     AnalyticsScopeType @map("scope_type")
+  scopeId       String             @map("scope_id") @db.Uuid
+  userId        String             @map("user_id") @db.Uuid
+  isFavorite    Boolean            @default(false) @map("is_favorite")
+  isDefault     Boolean            @default(false) @map("is_default")
+  contextKey    String             @map("context_key") @db.VarChar(120)
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  dashboard CustomDashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@unique([dashboardId, userId], map: "dashboard_preferences_dashboard_user_key")
+  @@index([userId, contextKey], map: "dashboard_preferences_user_context_idx")
+  @@index([userId, scopeType, scopeId], map: "dashboard_preferences_user_scope_idx")
+  @@map("dashboard_preferences")
+}
+
+model SearchDocument {
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType       AnalyticsScopeType      @map("scope_type")
+  scopeId         String                  @map("scope_id") @db.Uuid
+  workspaceId     String?                 @map("workspace_id") @db.Uuid
+  agencyId        String?                 @map("agency_id") @db.Uuid
+  superAgencyId   String?                 @map("super_agency_id") @db.Uuid
+  entityType      SearchResultType        @map("entity_type")
+  entityId        String                  @map("entity_id") @db.Uuid
+  title           String                  @db.VarChar(240)
+  subtitle        String?                 @db.VarChar(300)
+  searchText      String                  @map("search_text") @db.Text
+  route           Json
+  metadata        Json                    @default("{}")
+  privacyClass    SearchPrivacyClass      @map("privacy_class")
+  archived        Boolean                 @default(false)
+  sourceUpdatedAt DateTime                @map("source_updated_at") @db.Timestamptz(6)
+  indexedAt       DateTime                @default(now()) @map("indexed_at") @db.Timestamptz(6)
+  sourceVersion   Int                     @default(1) @map("source_version")
+  searchVector    Unsupported("tsvector") @default(dbgenerated("''::tsvector")) @map("search_vector")
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([scopeType, scopeId, entityType, entityId], map: "search_documents_scope_entity_key")
+  @@index([scopeType, scopeId, entityType, archived, updatedAt], map: "search_documents_scope_type_updated_idx")
+  @@index([workspaceId, entityType, archived], map: "search_documents_workspace_type_idx")
+  @@index([agencyId, entityType, archived], map: "search_documents_agency_type_idx")
+  @@index([superAgencyId, entityType, archived], map: "search_documents_super_agency_type_idx")
+  @@map("search_documents")
+}
+
+model RecentSearch {
+  id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                  String             @map("user_id") @db.Uuid
+  scopeType               AnalyticsScopeType @map("scope_type")
+  scopeId                 String             @map("scope_id") @db.Uuid
+  workspaceMembershipId   String?            @map("workspace_membership_id") @db.Uuid
+  agencyMembershipId      String?            @map("agency_membership_id") @db.Uuid
+  superAgencyMembershipId String?            @map("super_agency_membership_id") @db.Uuid
+  query                   String             @db.VarChar(160)
+  queryNormalized         String             @map("query_normalized") @db.VarChar(160)
+  resultTypes             SearchResultType[] @default([]) @map("result_types")
+  createdAt               DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, scopeType, scopeId, queryNormalized], map: "recent_searches_user_scope_query_key")
+  @@index([userId, scopeType, scopeId, updatedAt], map: "recent_searches_user_scope_updated_idx")
+  @@map("recent_searches")
+}
+
+model SearchIndexJob {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scopeType       AnalyticsScopeType?  @map("scope_type")
+  scopeId         String?              @map("scope_id") @db.Uuid
+  entityType      SearchResultType?    @map("entity_type")
+  entityId        String?              @map("entity_id") @db.Uuid
+  operation       SearchIndexOperation
+  status          SearchIndexJobStatus @default(PENDING)
+  sourceUpdatedAt DateTime?            @map("source_updated_at") @db.Timestamptz(6)
+  attemptCount    Int                  @default(0) @map("attempt_count")
+  lockedAt        DateTime?            @map("locked_at") @db.Timestamptz(6)
+  completedAt     DateTime?            @map("completed_at") @db.Timestamptz(6)
+  safeErrorCode   String?              @map("safe_error_code") @db.VarChar(120)
+  payload         Json                 @default("{}")
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, createdAt], map: "search_index_jobs_status_created_idx")
+  @@index([entityType, entityId, createdAt], map: "search_index_jobs_entity_created_idx")
+  @@map("search_index_jobs")
 }
 
 model AuditLog {

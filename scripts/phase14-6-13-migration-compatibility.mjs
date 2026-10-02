@@ -38,8 +38,13 @@ const phase15Db = `${dbPrefix}_phase15`;
 const phase154Db = `${dbPrefix}_phase154`;
 const phase161Db = `${dbPrefix}_phase161`;
 const phase162Db = `${dbPrefix}_phase162`;
-const expectedMigrationCount = 85;
-const expectedLatestMigration = '0085_phase17_2_reports';
+const phase163Db = `${dbPrefix}_phase163`;
+const phase171Db = `${dbPrefix}_phase171`;
+const phase172Db = `${dbPrefix}_phase172`;
+const phase173Db = `${dbPrefix}_phase173`;
+const phase174Db = `${dbPrefix}_phase174`;
+const expectedMigrationCount = 90;
+const expectedLatestMigration = '0090_phase18_2_custom_domains';
 const allowedLocalHosts = new Set(['localhost', '127.0.0.1', '::1', 'host.docker.internal']);
 
 const fixture = {
@@ -133,7 +138,7 @@ function sqlLiteralList(value) {
 
 function assertScratchName(dbName) {
   if (
-    !/^zea_play_phase14613[a-z0-9_]*_(clean|legacy|zero|one|many|phase15|phase154|phase161|phase162)$/.test(
+    !/^zea_play_phase14613[a-z0-9_]*_(clean|legacy|zero|one|many|phase15|phase154|phase161|phase162|phase163|phase171|phase172|phase173|phase174)$/.test(
       dbName,
     ) ||
     /prod|production|shared/i.test(dbName) ||
@@ -178,6 +183,11 @@ function assertHarnessSafety() {
     phase154Db,
     phase161Db,
     phase162Db,
+    phase163Db,
+    phase171Db,
+    phase172Db,
+    phase173Db,
+    phase174Db,
   ]) {
     assertScratchName(dbName);
   }
@@ -194,7 +204,12 @@ function redact(value) {
     .replaceAll(databaseUrl(phase15Db), '<redacted-phase15-database-url>')
     .replaceAll(databaseUrl(phase154Db), '<redacted-phase154-database-url>')
     .replaceAll(databaseUrl(phase161Db), '<redacted-phase161-database-url>')
-    .replaceAll(databaseUrl(phase162Db), '<redacted-phase162-database-url>');
+    .replaceAll(databaseUrl(phase162Db), '<redacted-phase162-database-url>')
+    .replaceAll(databaseUrl(phase163Db), '<redacted-phase163-database-url>')
+    .replaceAll(databaseUrl(phase171Db), '<redacted-phase171-database-url>')
+    .replaceAll(databaseUrl(phase172Db), '<redacted-phase172-database-url>')
+    .replaceAll(databaseUrl(phase173Db), '<redacted-phase173-database-url>')
+    .replaceAll(databaseUrl(phase174Db), '<redacted-phase174-database-url>');
 }
 
 function quoteWindowsArg(value) {
@@ -357,6 +372,26 @@ function buildPhase161PrismaDir() {
 
 function buildPhase162PrismaDir() {
   return buildPrismaDirThrough('0082_phase16_2_forms_foundation', '0082');
+}
+
+function buildPhase163PrismaDir() {
+  return buildPrismaDirThrough('0083_phase16_3_goals_foundation', '0083');
+}
+
+function buildPhase171PrismaDir() {
+  return buildPrismaDirThrough('0084_phase17_1_analytics_foundation', '0084');
+}
+
+function buildPhase172PrismaDir() {
+  return buildPrismaDirThrough('0085_phase17_2_reports', '0085');
+}
+
+function buildPhase173PrismaDir() {
+  return buildPrismaDirThrough('0086_phase17_3_global_search', '0086');
+}
+
+function buildPhase174PrismaDir() {
+  return buildPrismaDirThrough('0087_phase17_4_custom_dashboards', '0087');
 }
 
 function assertEqual(label, actual, expected) {
@@ -901,6 +936,194 @@ COMMIT;
 `;
 }
 
+function phase16GoalsFixtureSql() {
+  const ids = {
+    workspace: uuid('9503', 1),
+    workspaceMembership: uuid('9506', 1),
+    goal: uuid('9546', 1),
+    goalEvent: uuid('9547', 1),
+  };
+
+  return `
+BEGIN;
+
+INSERT INTO goals (id, workspace_id, owner_type, metric_type, period_type, title, description, target_value, current_progress, status, period_start, period_end, created_by_membership_id, metadata, created_at, updated_at)
+VALUES ('${ids.goal}', '${ids.workspace}', 'WORKSPACE', 'TASKS_COMPLETED', 'MONTHLY', 'Phase 16 Goals Upgrade', 'Preserve goal before 0084', 10, 2, 'ACTIVE', '2026-09-01T00:00:00Z', '2026-09-30T23:59:59Z', '${ids.workspaceMembership}', '{"safe":"phase16-goal"}'::jsonb, '2026-09-04T00:00:00Z', '2026-09-04T00:00:00Z');
+
+INSERT INTO goal_progress_events (id, workspace_id, goal_id, source_type, idempotency_key, delta, value_after, occurred_at, actor_membership_id, note, created_at)
+VALUES ('${ids.goalEvent}', '${ids.workspace}', '${ids.goal}', 'MANUAL', 'phase16-goal-progress', 2, 2, '2026-09-04T00:00:00Z', '${ids.workspaceMembership}', 'Phase 16 goal progress', '2026-09-04T00:00:00Z');
+
+COMMIT;
+`;
+}
+
+function phase171AnalyticsFixtureSql() {
+  const ids = {
+    workspace: uuid('9503', 1),
+    rollup: uuid('9548', 1),
+  };
+
+  return `
+BEGIN;
+
+INSERT INTO analytics_rollups (id, scope_type, scope_id, workspace_id, metric_key, bucket, bucket_start, bucket_end, dimension_key, dimension_value, value, version, source_hash, rebuilt_at, created_at, updated_at)
+VALUES ('${ids.rollup}', 'WORKSPACE', '${ids.workspace}', '${ids.workspace}', 'tasks.completed', 'DAY', '2026-09-05T00:00:00Z', '2026-09-06T00:00:00Z', 'status', 'done', 2.000000, 1, 'phase171-rollup', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+COMMIT;
+`;
+}
+
+function phase172PopulatedFixtureSql() {
+  const ids = {
+    user: uuid('9500', 1),
+    superAgency: uuid('9501', 1),
+    agency: uuid('9502', 1),
+    workspace: uuid('9503', 1),
+    roleSuper: uuid('9540', 1),
+    superMembership: uuid('9541', 1),
+    taskStatus: uuid('9542', 1),
+    ticketStatus: uuid('9542', 2),
+    task: uuid('9543', 1),
+    project: uuid('9544', 1),
+    ticket: uuid('9545', 1),
+    goal: uuid('9546', 1),
+    goalEvent: uuid('9547', 1),
+    rollup: uuid('9548', 1),
+    report: uuid('9549', 1),
+    execution: uuid('9550', 1),
+    export: uuid('9551', 1),
+    schedule: uuid('9552', 1),
+    occurrence: uuid('9553', 1),
+    invoice: uuid('9554', 1),
+    webhook: uuid('9555', 1),
+    integration: uuid('9556', 1),
+  };
+
+  return `
+BEGIN;
+
+INSERT INTO roles (id, key, name, name_normalized, scope, is_system, is_active, created_at, updated_at)
+VALUES ('${ids.roleSuper}', 'phase172_super_admin', 'Phase 17.2 Super Admin', 'phase 17.2 super admin', 'SUPER_AGENCY', true, true, '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO super_agency_memberships (id, user_id, super_agency_id, role_id, status, created_at, updated_at)
+VALUES ('${ids.superMembership}', '${ids.user}', '${ids.superAgency}', '${ids.roleSuper}', 'ACTIVE', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO status_definitions (id, workspace_id, entity_type, name, name_normalized, color, position, category, is_default, is_system, created_at, updated_at) VALUES
+  ('${ids.taskStatus}', '${ids.workspace}', 'TASK', 'Todo', 'phase172-task-todo', '#3366ff', 1, 'TODO', true, true, '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z'),
+  ('${ids.ticketStatus}', '${ids.workspace}', 'TICKET', 'Open', 'phase172-ticket-open', '#22aa66', 1, 'TODO', true, true, '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO tasks (id, workspace_id, title, description, priority, status_definition_id, created_by_id, created_at, updated_at)
+VALUES ('${ids.task}', '${ids.workspace}', 'Phase 17.2 Upgrade Task', 'Preserve task before 0086', 'HIGH', '${ids.taskStatus}', '${ids.user}', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO projects (id, workspace_id, name, description, status, visibility, owner_membership_id, created_by_id, created_at, updated_at)
+VALUES ('${ids.project}', '${ids.workspace}', 'Phase 17.2 Upgrade Project', 'Preserve project before 0086', 'ACTIVE', 'WORKSPACE', '${uuid('9506', 1)}', '${ids.user}', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO tickets (id, workspace_id, sequence_number, ticket_number, subject, description, status_definition_id, priority, created_by_membership_id, created_at, updated_at)
+VALUES ('${ids.ticket}', '${ids.workspace}', 172, 'P17-172', 'Phase 17.2 Upgrade Ticket', 'Preserve ticket before 0086', '${ids.ticketStatus}', 'HIGH', '${uuid('9506', 1)}', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO goals (id, workspace_id, owner_type, metric_type, period_type, title, description, target_value, current_progress, status, period_start, period_end, created_by_membership_id, metadata, created_at, updated_at)
+VALUES ('${ids.goal}', '${ids.workspace}', 'WORKSPACE', 'TASKS_COMPLETED', 'MONTHLY', 'Phase 17.2 Upgrade Goal', 'Preserve goal before 0086', 10, 2, 'ACTIVE', '2026-09-01T00:00:00Z', '2026-09-30T23:59:59Z', '${uuid('9506', 1)}', '{"safe":"metadata"}'::jsonb, '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO goal_progress_events (id, workspace_id, goal_id, source_type, idempotency_key, delta, value_after, occurred_at, actor_membership_id, note, created_at)
+VALUES ('${ids.goalEvent}', '${ids.workspace}', '${ids.goal}', 'MANUAL', 'phase172-goal-progress', 2, 2, '2026-09-05T00:00:00Z', '${uuid('9506', 1)}', 'Phase 17.2 progress', '2026-09-05T00:00:00Z');
+
+INSERT INTO analytics_rollups (id, scope_type, scope_id, workspace_id, metric_key, bucket, bucket_start, bucket_end, dimension_key, dimension_value, value, version, source_hash, rebuilt_at, created_at, updated_at)
+VALUES ('${ids.rollup}', 'WORKSPACE', '${ids.workspace}', '${ids.workspace}', 'tasks.completed', 'DAY', '2026-09-05T00:00:00Z', '2026-09-06T00:00:00Z', 'status', 'done', 2.000000, 1, 'phase172-rollup', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO reports (id, scope_type, scope_id, workspace_id, agency_id, super_agency_id, created_by_user_id, created_by_workspace_membership_id, name, description, type, visibility, configuration, revision, status, created_at, updated_at)
+VALUES ('${ids.report}', 'WORKSPACE', '${ids.workspace}', '${ids.workspace}', '${ids.agency}', '${ids.superAgency}', '${ids.user}', '${uuid('9506', 1)}', 'Phase 17.2 Upgrade Report', 'Preserve report before 0086', 'SUMMARY', 'SCOPE', '{"metric":"tasks.completed"}'::jsonb, 3, 'ACTIVE', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO report_executions (id, report_id, scope_type, scope_id, report_revision, config_snapshot, execution_type, status, requested_by_user_id, requested_by_membership_id, scheduled_occurrence_key, completed_at, row_count, created_at)
+VALUES ('${ids.execution}', '${ids.report}', 'WORKSPACE', '${ids.workspace}', 3, '{"metric":"tasks.completed"}'::jsonb, 'SCHEDULED_EXPORT', 'SUCCEEDED', '${ids.user}', '${uuid('9506', 1)}', 'phase172-occurrence', '2026-09-05T00:05:00Z', 12, '2026-09-05T00:01:00Z');
+
+INSERT INTO report_exports (id, report_id, execution_id, scope_type, scope_id, format, status, requested_by_user_id, requested_by_membership_id, report_revision, config_snapshot, filename, mime_type, storage_provider, storage_bucket, storage_key, size_bytes, row_count, idempotency_key, expires_at, completed_at, created_at, updated_at)
+VALUES ('${ids.export}', '${ids.report}', '${ids.execution}', 'WORKSPACE', '${ids.workspace}', 'CSV', 'READY', '${ids.user}', '${uuid('9506', 1)}', 3, '{"metric":"tasks.completed"}'::jsonb, 'phase172.csv', 'text/csv', 'MINIO', 'phase172', 'reports/phase172.csv', 128, 12, 'phase172-export', '2026-10-05T00:00:00Z', '2026-09-05T00:06:00Z', '2026-09-05T00:02:00Z', '2026-09-05T00:06:00Z');
+
+INSERT INTO report_schedules (id, report_id, scope_type, scope_id, frequency, timezone, local_time, enabled, recipient_config, next_run_at, created_by_user_id, created_at, updated_at)
+VALUES ('${ids.schedule}', '${ids.report}', 'WORKSPACE', '${ids.workspace}', 'DAILY', 'UTC', '09:00', true, '{"emails":["phase172@example.test"]}'::jsonb, '2026-09-06T09:00:00Z', '${ids.user}', '2026-09-05T00:03:00Z', '2026-09-05T00:03:00Z');
+
+INSERT INTO report_schedule_occurrences (id, schedule_id, occurrence_key, status, execution_id, export_id, claimed_at, completed_at, created_at)
+VALUES ('${ids.occurrence}', '${ids.schedule}', 'phase172-occurrence', 'SUCCEEDED', '${ids.execution}', '${ids.export}', '2026-09-05T00:04:00Z', '2026-09-05T00:06:00Z', '2026-09-05T00:04:00Z');
+
+INSERT INTO billing_invoices (id, super_agency_id, provider, provider_invoice_id, invoice_number, currency, status, amount_due_minor, amount_paid_minor, amount_remaining_minor, provider_created_at, created_at, updated_at)
+VALUES ('${ids.invoice}', '${ids.superAgency}', 'STRIPE', 'in_phase172_upgrade', 'PHASE172-INV', 'USD', 'open', 5000, 0, 5000, '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO webhook_subscriptions (id, workspace_id, name, description, endpoint_url, status, encrypted_secret, event_types, created_by_membership_id, created_at, updated_at)
+VALUES ('${ids.webhook}', '${ids.workspace}', 'Phase 17.2 Upgrade Webhook', 'Preserve webhook metadata before 0086', 'https://example.test/phase172', 'ACTIVE', 'encrypted-phase172-webhook-secret', ARRAY['task.created'], '${uuid('9506', 1)}', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+INSERT INTO integration_connections (id, workspace_id, provider, name, status, auth_type, provider_account_label, encrypted_credentials, scopes, capabilities, configuration_json, connected_by_membership_id, created_at, updated_at)
+VALUES ('${ids.integration}', '${ids.workspace}', 'SLACK', 'Phase 17.2 Upgrade Integration', 'CONNECTED', 'OAUTH', 'phase172-account', 'encrypted-phase172-refresh-token', ARRAY['chat:write'], ARRAY['messages'], '{}'::jsonb, '${uuid('9506', 1)}', '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z');
+
+COMMIT;
+`;
+}
+
+function phase173SearchFixtureSql() {
+  const ids = {
+    user: uuid('9500', 1),
+    workspace: uuid('9503', 1),
+    agency: uuid('9502', 1),
+    superAgency: uuid('9501', 1),
+    workspaceMembership: uuid('9506', 1),
+    task: uuid('9543', 1),
+    searchDocument: uuid('9560', 1),
+    recentSearch: uuid('9561', 1),
+    searchJob: uuid('9562', 1),
+  };
+
+  return `
+BEGIN;
+
+INSERT INTO search_documents (id, scope_type, scope_id, workspace_id, agency_id, super_agency_id, entity_type, entity_id, title, subtitle, search_text, route, metadata, privacy_class, archived, source_updated_at, source_version, created_at, updated_at)
+VALUES ('${ids.searchDocument}', 'WORKSPACE', '${ids.workspace}', '${ids.workspace}', '${ids.agency}', '${ids.superAgency}', 'TASK', '${ids.task}', 'Phase 17.3 Search Upgrade Task', 'Task', 'phase173 searchable task', '{"path":"/workspace/tasks"}'::jsonb, '{"safe":true}'::jsonb, 'WORKSPACE_OPERATIONAL', false, '2026-09-06T00:00:00Z', 1, '2026-09-06T00:00:00Z', '2026-09-06T00:00:00Z');
+
+INSERT INTO recent_searches (id, user_id, scope_type, scope_id, workspace_membership_id, query, query_normalized, result_types, created_at, updated_at)
+VALUES ('${ids.recentSearch}', '${ids.user}', 'WORKSPACE', '${ids.workspace}', '${ids.workspaceMembership}', 'phase173', 'phase173', ARRAY['TASK']::"SearchResultType"[], '2026-09-06T00:01:00Z', '2026-09-06T00:01:00Z');
+
+INSERT INTO search_index_jobs (id, scope_type, scope_id, entity_type, entity_id, operation, status, source_updated_at, attempt_count, completed_at, payload, created_at, updated_at)
+VALUES ('${ids.searchJob}', 'WORKSPACE', '${ids.workspace}', 'TASK', '${ids.task}', 'UPSERT', 'SUCCEEDED', '2026-09-06T00:00:00Z', 1, '2026-09-06T00:02:00Z', '{"source":"phase173"}'::jsonb, '2026-09-06T00:00:00Z', '2026-09-06T00:02:00Z');
+
+COMMIT;
+`;
+}
+
+function phase174DashboardFixtureSql() {
+  const ids = {
+    user: uuid('9500', 1),
+    workspace: uuid('9503', 1),
+    agency: uuid('9502', 1),
+    superAgency: uuid('9501', 1),
+    workspaceMembership: uuid('9506', 1),
+    dashboard: uuid('9570', 1),
+    access: uuid('9571', 1),
+    preference: uuid('9572', 1),
+  };
+
+  const widgets = Array.from({ length: 30 }, (_, index) => {
+    const widgetId = uuid('9580', index + 1);
+    return `('${widgetId}', '${ids.dashboard}', 'METRIC_CARD', 'Widget ${index + 1}', 'ANALYTICS_QUERY', '{"metricKeys":["tasks.total"]}'::jsonb, '{"x":0,"y":${index},"width":4,"height":4,"order":${index}}'::jsonb, 60, '2026-09-07T00:00:00Z', '2026-09-07T00:00:00Z')`;
+  }).join(',\n  ');
+
+  return `
+BEGIN;
+
+INSERT INTO custom_dashboards (id, scope_type, scope_id, workspace_id, agency_id, super_agency_id, created_by_user_id, created_by_workspace_membership_id, name, description, visibility, global_filters, revision, status, created_at, updated_at)
+VALUES ('${ids.dashboard}', 'WORKSPACE', '${ids.workspace}', '${ids.workspace}', '${ids.agency}', '${ids.superAgency}', '${ids.user}', '${ids.workspaceMembership}', 'Phase 17.4 Upgrade Dashboard', 'Preserve dashboard before 0088', 'WORKSPACE', '{"datePreset":"LAST_30_DAYS"}'::jsonb, 2, 'ACTIVE', '2026-09-07T00:00:00Z', '2026-09-07T00:00:00Z');
+
+INSERT INTO dashboard_access (id, dashboard_id, scope_type, scope_id, workspace_membership_id, created_at)
+VALUES ('${ids.access}', '${ids.dashboard}', 'WORKSPACE', '${ids.workspace}', '${ids.workspaceMembership}', '2026-09-07T00:00:00Z');
+
+INSERT INTO dashboard_preferences (id, dashboard_id, scope_type, scope_id, user_id, is_favorite, is_default, context_key, created_at, updated_at)
+VALUES ('${ids.preference}', '${ids.dashboard}', 'WORKSPACE', '${ids.workspace}', '${ids.user}', true, true, 'WORKSPACE:${ids.workspace}', '2026-09-07T00:00:00Z', '2026-09-07T00:00:00Z');
+
+INSERT INTO dashboard_widgets (id, dashboard_id, type, title, data_source_type, configuration, layout, refresh_seconds, created_at, updated_at)
+VALUES
+  ${widgets};
+
+COMMIT;
+`;
+}
+
 function runCleanInstall() {
   resetDatabase(cleanDb);
   migrateDeploy(cleanDb, currentSchema);
@@ -1149,7 +1372,9 @@ function runLegacyUpgrade() {
           'stripe_billing_events',
           'billing_history',
           'billing_invoices',
-          'reports'
+          'reports',
+          'search_documents',
+          'custom_dashboards'
         );
       `,
     );
@@ -1747,6 +1972,368 @@ function runPhase162Upgrade() {
   }
 }
 
+function runPhase163Upgrade() {
+  const phase163 = buildPhase163PrismaDir();
+  try {
+    resetDatabase(phase163Db);
+    migrateDeploy(phase163Db, phase163.schemaPath);
+    psql(phase163Db, phase152UpgradeFixtureSql());
+    psql(phase163Db, phase16DocsFixtureSql());
+    psql(phase163Db, phase16FormsFixtureSql());
+    psql(phase163Db, phase16GoalsFixtureSql());
+
+    const preUpgrade = {
+      docs: psqlScalar(phase163Db, `SELECT COUNT(*) FROM docs WHERE id = '${uuid('9521', 1)}';`),
+      forms: psqlScalar(phase163Db, `SELECT COUNT(*) FROM forms WHERE id = '${uuid('9530', 1)}';`),
+      submissions: psqlScalar(
+        phase163Db,
+        `SELECT COUNT(*) FROM form_submissions WHERE id = '${uuid('9532', 1)}';`,
+      ),
+      goals: psqlScalar(phase163Db, `SELECT COUNT(*) FROM goals WHERE id = '${uuid('9546', 1)}';`),
+      goalEvents: psqlScalar(
+        phase163Db,
+        `SELECT COUNT(*) FROM goal_progress_events WHERE id = '${uuid('9547', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase163Db, currentSchema);
+    const status = migrateStatus(phase163Db, currentSchema);
+
+    for (const [label, count] of Object.entries(preUpgrade)) {
+      assertEqual(`phase16.3 upgrade ${label} preserved`, count, '1');
+    }
+    assertOne(
+      phase163Db,
+      'phase16.3 upgrade analytics_rollups table added',
+      `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'analytics_rollups';`,
+    );
+
+    return {
+      database: phase163Db,
+      migrations: psqlScalar(
+        phase163Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      analyticsRollupsAfterUpgrade: psqlScalar(
+        phase163Db,
+        `SELECT COUNT(*) FROM analytics_rollups;`,
+      ),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase163.tempRoot) &&
+      phase163.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase163.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function runPhase171Upgrade() {
+  const phase171 = buildPhase171PrismaDir();
+  try {
+    resetDatabase(phase171Db);
+    migrateDeploy(phase171Db, phase171.schemaPath);
+    psql(phase171Db, phase152UpgradeFixtureSql());
+    psql(phase171Db, phase16DocsFixtureSql());
+    psql(phase171Db, phase16FormsFixtureSql());
+    psql(phase171Db, phase16GoalsFixtureSql());
+    psql(phase171Db, phase171AnalyticsFixtureSql());
+
+    const preUpgrade = {
+      goals: psqlScalar(phase171Db, `SELECT COUNT(*) FROM goals WHERE id = '${uuid('9546', 1)}';`),
+      analyticsRollups: psqlScalar(
+        phase171Db,
+        `SELECT COUNT(*) FROM analytics_rollups WHERE id = '${uuid('9548', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase171Db, currentSchema);
+    const status = migrateStatus(phase171Db, currentSchema);
+
+    for (const [label, count] of Object.entries(preUpgrade)) {
+      assertEqual(`phase17.1 upgrade ${label} preserved`, count, '1');
+    }
+    assertOne(
+      phase171Db,
+      'phase17.1 upgrade reports table added',
+      `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'reports';`,
+    );
+
+    return {
+      database: phase171Db,
+      migrations: psqlScalar(
+        phase171Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      reportsAfterUpgrade: psqlScalar(phase171Db, `SELECT COUNT(*) FROM reports;`),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase171.tempRoot) &&
+      phase171.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase171.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function runPhase172Upgrade() {
+  const phase172 = buildPhase172PrismaDir();
+  try {
+    resetDatabase(phase172Db);
+    migrateDeploy(phase172Db, phase172.schemaPath);
+    psql(phase172Db, phase152UpgradeFixtureSql());
+    psql(phase172Db, phase16DocsFixtureSql());
+    psql(phase172Db, phase16FormsFixtureSql());
+    psql(phase172Db, phase172PopulatedFixtureSql());
+
+    const preUpgrade = {
+      superAgencyMemberships: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM super_agency_memberships WHERE id = '${uuid('9541', 1)}';`,
+      ),
+      tasks: psqlScalar(phase172Db, `SELECT COUNT(*) FROM tasks WHERE id = '${uuid('9543', 1)}';`),
+      projects: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM projects WHERE id = '${uuid('9544', 1)}';`,
+      ),
+      tickets: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM tickets WHERE id = '${uuid('9545', 1)}';`,
+      ),
+      docs: psqlScalar(phase172Db, `SELECT COUNT(*) FROM docs WHERE id = '${uuid('9521', 1)}';`),
+      forms: psqlScalar(phase172Db, `SELECT COUNT(*) FROM forms WHERE id = '${uuid('9530', 1)}';`),
+      submissions: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM form_submissions WHERE id = '${uuid('9532', 1)}';`,
+      ),
+      goals: psqlScalar(phase172Db, `SELECT COUNT(*) FROM goals WHERE id = '${uuid('9546', 1)}';`),
+      goalEvents: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM goal_progress_events WHERE id = '${uuid('9547', 1)}';`,
+      ),
+      analyticsRollups: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM analytics_rollups WHERE id = '${uuid('9548', 1)}';`,
+      ),
+      reports: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM reports WHERE id = '${uuid('9549', 1)}';`,
+      ),
+      reportExecutions: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM report_executions WHERE id = '${uuid('9550', 1)}';`,
+      ),
+      reportExports: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM report_exports WHERE id = '${uuid('9551', 1)}';`,
+      ),
+      reportSchedules: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM report_schedules WHERE id = '${uuid('9552', 1)}';`,
+      ),
+      reportOccurrences: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM report_schedule_occurrences WHERE id = '${uuid('9553', 1)}';`,
+      ),
+      apiKeys: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM api_keys WHERE id = '${uuid('9513', 1)}';`,
+      ),
+      webhooks: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM webhook_subscriptions WHERE id = '${uuid('9555', 1)}';`,
+      ),
+      integrations: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM integration_connections WHERE id = '${uuid('9556', 1)}';`,
+      ),
+      billingInvoices: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM billing_invoices WHERE id = '${uuid('9554', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase172Db, currentSchema);
+    const status = migrateStatus(phase172Db, currentSchema);
+
+    for (const [label, count] of Object.entries(preUpgrade)) {
+      assertEqual(`phase17.2 upgrade ${label} preserved`, count, '1');
+    }
+    assertOne(
+      phase172Db,
+      'phase17.2 upgrade pg_trgm enabled',
+      `SELECT COUNT(*) FROM pg_extension WHERE extname = 'pg_trgm';`,
+    );
+    assertOne(
+      phase172Db,
+      'phase17.2 upgrade search_documents table added',
+      `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'search_documents';`,
+    );
+    assertZero(
+      phase172Db,
+      'phase17.2 upgrade search index starts empty',
+      `SELECT COUNT(*) FROM search_documents;`,
+    );
+
+    return {
+      database: phase172Db,
+      migrations: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      fixtureEntityCount: Object.values(preUpgrade).reduce((sum, value) => sum + Number(value), 0),
+      searchDocumentsAfterUpgrade: psqlScalar(phase172Db, `SELECT COUNT(*) FROM search_documents;`),
+      pgTrgmEnabled: psqlScalar(
+        phase172Db,
+        `SELECT COUNT(*) FROM pg_extension WHERE extname = 'pg_trgm';`,
+      ),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase172.tempRoot) &&
+      phase172.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase172.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function runPhase173Upgrade() {
+  const phase173 = buildPhase173PrismaDir();
+  try {
+    resetDatabase(phase173Db);
+    migrateDeploy(phase173Db, phase173.schemaPath);
+    psql(phase173Db, phase152UpgradeFixtureSql());
+    psql(phase173Db, phase16DocsFixtureSql());
+    psql(phase173Db, phase16FormsFixtureSql());
+    psql(phase173Db, phase172PopulatedFixtureSql());
+    psql(phase173Db, phase173SearchFixtureSql());
+
+    const preUpgrade = {
+      searchDocuments: psqlScalar(
+        phase173Db,
+        `SELECT COUNT(*) FROM search_documents WHERE id = '${uuid('9560', 1)}';`,
+      ),
+      recentSearches: psqlScalar(
+        phase173Db,
+        `SELECT COUNT(*) FROM recent_searches WHERE id = '${uuid('9561', 1)}';`,
+      ),
+      searchIndexJobs: psqlScalar(
+        phase173Db,
+        `SELECT COUNT(*) FROM search_index_jobs WHERE id = '${uuid('9562', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase173Db, currentSchema);
+    const status = migrateStatus(phase173Db, currentSchema);
+
+    for (const [label, count] of Object.entries(preUpgrade)) {
+      assertEqual(`phase17.3 upgrade ${label} preserved`, count, '1');
+    }
+    assertOne(
+      phase173Db,
+      'phase17.3 upgrade custom_dashboards table added',
+      `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'custom_dashboards';`,
+    );
+
+    return {
+      database: phase173Db,
+      migrations: psqlScalar(
+        phase173Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      dashboardsAfterUpgrade: psqlScalar(phase173Db, `SELECT COUNT(*) FROM custom_dashboards;`),
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase173.tempRoot) &&
+      phase173.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase173.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function runPhase174Upgrade() {
+  const phase174 = buildPhase174PrismaDir();
+  try {
+    resetDatabase(phase174Db);
+    migrateDeploy(phase174Db, phase174.schemaPath);
+    psql(phase174Db, phase152UpgradeFixtureSql());
+    psql(phase174Db, phase16DocsFixtureSql());
+    psql(phase174Db, phase16FormsFixtureSql());
+    psql(phase174Db, phase172PopulatedFixtureSql());
+    psql(phase174Db, phase173SearchFixtureSql());
+    psql(phase174Db, phase174DashboardFixtureSql());
+
+    const preUpgrade = {
+      dashboards: psqlScalar(
+        phase174Db,
+        `SELECT COUNT(*) FROM custom_dashboards WHERE id = '${uuid('9570', 1)}';`,
+      ),
+      dashboardAccess: psqlScalar(
+        phase174Db,
+        `SELECT COUNT(*) FROM dashboard_access WHERE id = '${uuid('9571', 1)}';`,
+      ),
+      dashboardPreferences: psqlScalar(
+        phase174Db,
+        `SELECT COUNT(*) FROM dashboard_preferences WHERE id = '${uuid('9572', 1)}';`,
+      ),
+      dashboardWidgets: psqlScalar(
+        phase174Db,
+        `SELECT COUNT(*) FROM dashboard_widgets WHERE dashboard_id = '${uuid('9570', 1)}';`,
+      ),
+    };
+
+    migrateDeploy(phase174Db, currentSchema);
+    const status = migrateStatus(phase174Db, currentSchema);
+
+    assertEqual('phase17.4 upgrade dashboards preserved', preUpgrade.dashboards, '1');
+    assertEqual('phase17.4 upgrade dashboard access preserved', preUpgrade.dashboardAccess, '1');
+    assertEqual(
+      'phase17.4 upgrade dashboard preferences preserved',
+      preUpgrade.dashboardPreferences,
+      '1',
+    );
+    assertEqual('phase17.4 upgrade dashboard widgets preserved', preUpgrade.dashboardWidgets, '30');
+    assertEqual(
+      'phase17.4 upgrade widget trigger advisory lock',
+      psqlScalar(
+        phase174Db,
+        `SELECT CASE WHEN pg_get_functiondef('dashboard_widgets_limit_30'::regproc) LIKE '%pg_advisory_xact_lock%' THEN 1 ELSE 0 END;`,
+      ),
+      '1',
+    );
+
+    return {
+      database: phase174Db,
+      migrations: psqlScalar(
+        phase174Db,
+        `SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL;`,
+      ),
+      preUpgrade,
+      statusUpToDate: /Database schema is up to date/i.test(status.stdout + status.stderr),
+    };
+  } finally {
+    if (
+      existsSync(phase174.tempRoot) &&
+      phase174.tempRoot.startsWith(path.join(repoRoot, '.tmp'))
+    ) {
+      rmSync(phase174.tempRoot, { recursive: true, force: true });
+    }
+  }
+}
+
 const migrations = migrationDirectories();
 assertHarnessSafety();
 validateMigrationInventory(migrations);
@@ -1787,6 +2374,21 @@ if (!migrations.includes('0084_phase17_1_analytics_foundation')) {
 if (!migrations.includes('0085_phase17_2_reports')) {
   throw new Error('Missing migration 0085_phase17_2_reports');
 }
+if (!migrations.includes('0086_phase17_3_global_search')) {
+  throw new Error('Missing migration 0086_phase17_3_global_search');
+}
+if (!migrations.includes('0087_phase17_4_custom_dashboards')) {
+  throw new Error('Missing migration 0087_phase17_4_custom_dashboards');
+}
+if (!migrations.includes('0088_phase17_4_dashboard_widget_limit_lock')) {
+  throw new Error('Missing migration 0088_phase17_4_dashboard_widget_limit_lock');
+}
+if (!migrations.includes('0089_phase18_1_white_label_branding')) {
+  throw new Error('Missing migration 0089_phase18_1_white_label_branding');
+}
+if (!migrations.includes('0090_phase18_2_custom_domains')) {
+  throw new Error('Missing migration 0090_phase18_2_custom_domains');
+}
 
 const clean = runCleanInstall();
 const legacy = runLegacyUpgrade();
@@ -1794,6 +2396,11 @@ const phase152Upgrade = runPhase152Upgrade();
 const phase154Upgrade = runPhase154Upgrade();
 const phase161Upgrade = runPhase161Upgrade();
 const phase162Upgrade = runPhase162Upgrade();
+const phase163Upgrade = runPhase163Upgrade();
+const phase171Upgrade = runPhase171Upgrade();
+const phase172Upgrade = runPhase172Upgrade();
+const phase173Upgrade = runPhase173Upgrade();
+const phase174Upgrade = runPhase174Upgrade();
 const zeroAgency = runLegacyEdgeScenario(zeroAgencyDb, 0, 'zero');
 const oneAgency = runLegacyEdgeScenario(oneAgencyDb, 1, 'one');
 const manyAgency = runLegacyEdgeScenario(manyAgencyDb, 25, 'many');
@@ -1812,6 +2419,11 @@ console.log(
         phase154Db,
         phase161Db,
         phase162Db,
+        phase163Db,
+        phase171Db,
+        phase172Db,
+        phase173Db,
+        phase174Db,
         host: dbHost,
         port: dbPort,
         container,
@@ -1827,6 +2439,11 @@ console.log(
       phase154Upgrade,
       phase161Upgrade,
       phase162Upgrade,
+      phase163Upgrade,
+      phase171Upgrade,
+      phase172Upgrade,
+      phase173Upgrade,
+      phase174Upgrade,
       edgeCases: {
         zeroAgency,
         oneAgency,

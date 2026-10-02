@@ -10,4 +10,6 @@ module.exports = {
   },
   setupFiles: ['<rootDir>/test/setup-env.ts'],
   testEnvironment: 'node',
+  // Keep API unit tests inside the default Node heap on Windows CI/dev machines.
+  maxWorkers: 1,
 };

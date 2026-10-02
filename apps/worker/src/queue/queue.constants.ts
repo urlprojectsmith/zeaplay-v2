@@ -20,6 +20,11 @@ export const ANALYTICS_ROLLUP_SCAN_JOB_TYPE = 'analytics.rollup.scan';
 export const REPORTS_QUEUE = 'reports';
 export const REPORT_EXPORT_JOB_TYPE = 'report.export.generate';
 export const REPORT_SCHEDULE_SCAN_JOB_TYPE = 'report.schedule.scan';
+export const SEARCH_INDEX_QUEUE = 'search-index';
+export const SEARCH_INDEX_JOB_TYPE = 'search.index';
+export const CUSTOM_DOMAIN_PROVISIONING_QUEUE = 'custom-domain-provisioning';
+export const CUSTOM_DOMAIN_PROVISION_JOB_TYPE = 'custom-domain.provision';
+export const CUSTOM_DOMAIN_RECONCILE_JOB_TYPE = 'custom-domain.reconcile';
 
 export const FOUNDATION_QUEUES = [
   'email',
@@ -40,6 +45,8 @@ export const FOUNDATION_QUEUES = [
   BILLING_LIFECYCLE_QUEUE,
   ANALYTICS_ROLLUP_QUEUE,
   REPORTS_QUEUE,
+  SEARCH_INDEX_QUEUE,
+  CUSTOM_DOMAIN_PROVISIONING_QUEUE,
 ] as const;
 
 export type FoundationQueueName = (typeof FOUNDATION_QUEUES)[number];

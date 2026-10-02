@@ -9,6 +9,7 @@ import {
   type AccountContextTargetType,
 } from '../services/account-context';
 import { apiClient, setApiAccessToken, setApiTenantContext } from '../services/api';
+import { resolveDomainBoundSwitchRedirect } from '../services/custom-domains';
 
 export interface SessionWorkspace {
   id: string;
@@ -238,6 +239,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...currentSource(current),
     });
     if (!isLatestContextSwitch(sequence)) return;
+    if (await redirectDomainBoundSwitch(response)) return;
     applyAccountContext(response, current, set);
   },
   async switchToAgency(agencyId, options) {
@@ -249,6 +251,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...currentSource(current),
     });
     if (!isLatestContextSwitch(sequence)) return;
+    if (await redirectDomainBoundSwitch(response)) return;
     applyAccountContext(response, current, set, options);
   },
   async switchToWorkspace(workspaceId, agencyId) {
@@ -261,6 +264,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...currentSource(current),
     });
     if (!isLatestContextSwitch(sequence)) return;
+    if (await redirectDomainBoundSwitch(response)) return;
     applyAccountContext(response, current, set);
   },
   async returnToSuperAgency(superAgencyId) {
@@ -272,6 +276,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...currentSource(current),
     });
     if (!isLatestContextSwitch(sequence)) return;
+    if (await redirectDomainBoundSwitch(response)) return;
     applyAccountContext(response, current, set);
   },
   async returnToAgency(agencyId) {
@@ -283,6 +288,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...currentSource(current),
     });
     if (!isLatestContextSwitch(sequence)) return;
+    if (await redirectDomainBoundSwitch(response)) return;
     applyAccountContext(response, current, set);
   },
 }));
@@ -362,6 +368,18 @@ function persistSelection(selection: {
   selectedWorkspaceId: string | null;
 }) {
   localStorage.setItem(storageKey, JSON.stringify(selection));
+}
+
+async function redirectDomainBoundSwitch(context: AccountContextResponse) {
+  const redirectUrl = await resolveDomainBoundSwitchRedirect(context);
+  if (!redirectUrl) return false;
+  persistSelection({
+    selectedSuperAgencyId: context.selectedSuperAgencyId,
+    selectedAgencyId: context.selectedAgencyId,
+    selectedWorkspaceId: context.selectedWorkspaceId,
+  });
+  window.location.assign(redirectUrl);
+  return true;
 }
 
 function setTenant(agencyId: string | null, workspaceId: string | null) {

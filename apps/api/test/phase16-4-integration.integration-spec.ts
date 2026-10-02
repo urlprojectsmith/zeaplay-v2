@@ -152,13 +152,14 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
   });
 
   it('updates a custom goal through the canonical automation action path', async () => {
+    const period = activeGoalPeriod();
     const goal = await goals.createGoal(tenant, {
       title: 'Phase 16.4 Automation Goal',
       ownerType: GoalOwnerType.WORKSPACE,
       metricType: GoalMetricType.CUSTOM_NUMERIC,
       periodType: GoalPeriodType.CUSTOM,
-      periodStart: '2026-09-01T00:00:00.000Z',
-      periodEnd: '2026-10-01T00:00:00.000Z',
+      periodStart: period.start,
+      periodEnd: period.end,
       targetValue: 5,
     });
 
@@ -219,6 +220,7 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
   });
 
   it('reconciles goals from gamification ledgers without writing XP or score rows', async () => {
+    const period = activeGoalPeriod();
     await prisma.gamificationXpEntry.create({
       data: {
         workspaceId: ids.workspace,
@@ -228,7 +230,7 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
         sourceType: 'SYSTEM',
         sourceEvent: 'phase16-test',
         idempotencyKey: `phase16-xp-${ids.run}`,
-        createdAt: new Date('2026-09-05T00:00:00.000Z'),
+        createdAt: period.ledgerAt,
       },
     });
     await prisma.gamificationWorkXpEvent.create({
@@ -244,7 +246,7 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
         idempotencyKey: `phase16-score-work-${ids.run}`,
         outcome: GamificationWorkXpEventOutcome.APPLIED,
         netXpSnapshot: 10,
-        occurredAt: new Date('2026-09-05T00:00:00.000Z'),
+        occurredAt: period.ledgerAt,
       },
     });
     await prisma.gamificationGlobalScoreEvent.create({
@@ -258,7 +260,7 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
         scoreType: GamificationGlobalScoreEventScoreType.COMPLETION,
         status: GamificationGlobalScoreEventStatus.APPLIED,
         normalizedScore: 7,
-        occurredAt: new Date('2026-09-05T00:00:00.000Z'),
+        occurredAt: period.ledgerAt,
         idempotencyKey: `phase16-score-event-${ids.run}`,
       },
     });
@@ -275,8 +277,8 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
       ownerMembershipId: ids.workspaceMembership,
       metricType: GoalMetricType.XP_EARNED,
       periodType: GoalPeriodType.CUSTOM,
-      periodStart: '2026-09-01T00:00:00.000Z',
-      periodEnd: '2026-10-01T00:00:00.000Z',
+      periodStart: period.start,
+      periodEnd: period.end,
       targetValue: 40,
     });
     const scoreGoal = await goals.createGoal(tenant, {
@@ -285,8 +287,8 @@ describe('Phase 16.4 real Docs/Forms/Goals integration', () => {
       ownerMembershipId: ids.workspaceMembership,
       metricType: GoalMetricType.GLOBAL_SCORE,
       periodType: GoalPeriodType.CUSTOM,
-      periodStart: '2026-09-01T00:00:00.000Z',
-      periodEnd: '2026-10-01T00:00:00.000Z',
+      periodStart: period.start,
+      periodEnd: period.end,
       targetValue: 7,
     });
 
@@ -430,6 +432,15 @@ function assetRow(
     sourceEntityType,
     sourceEntityId,
     uploadExpiresAt: new Date('2026-10-01T00:00:00.000Z'),
+  };
+}
+
+function activeGoalPeriod() {
+  const now = Date.now();
+  return {
+    start: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+    end: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    ledgerAt: new Date(now - 60 * 60 * 1000),
   };
 }
 

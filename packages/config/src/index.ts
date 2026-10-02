@@ -9,6 +9,27 @@ const environmentSchema = z.object({
   WEB_APP_URL: z.string().url(),
   API_PUBLIC_URL: z.string().url(),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  CANONICAL_HOSTS: z.string().default('localhost'),
+  CUSTOM_DOMAIN_PUBLIC_IPS: z.string().default(''),
+  CUSTOM_DOMAIN_APPROVED_CNAME_HOSTS: z.string().default(''),
+  CUSTOM_DOMAIN_TOKEN_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(48),
+  CUSTOM_DOMAIN_VERIFY_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(1000)
+    .default(10),
+  CUSTOM_DOMAIN_TOKEN_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().max(1000).default(5),
+  CUSTOM_DOMAIN_RESOLVER_CACHE_SECONDS: z.coerce.number().int().min(5).max(300).default(30),
+  CUSTOM_DOMAIN_NEGATIVE_CACHE_SECONDS: z.coerce.number().int().min(1).max(60).default(5),
+  CUSTOM_DOMAIN_PROVISIONING_MODE: z.enum(['dry-run', 'live']).default('dry-run'),
+  NPM_API_URL: z.string().url().optional().or(z.literal('')).default(''),
+  NPM_ADMIN_EMAIL: z.string().optional().default(''),
+  NPM_ADMIN_PASSWORD: z.string().optional().default(''),
+  NPM_LETS_ENCRYPT_EMAIL: z.string().email().optional().or(z.literal('')).default(''),
+  NPM_UPSTREAM_SCHEME: z.enum(['http', 'https']).default('http'),
+  NPM_UPSTREAM_HOST: z.string().min(1).default('127.0.0.1'),
+  NPM_UPSTREAM_PORT: z.coerce.number().int().positive().default(3000),
   REQUEST_BODY_LIMIT: z
     .string()
     .regex(/^\d+(kb|mb)$/i, 'Use an explicit request body limit such as 512kb or 1mb.')

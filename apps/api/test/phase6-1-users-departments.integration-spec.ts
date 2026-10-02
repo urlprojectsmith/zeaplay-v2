@@ -20,10 +20,10 @@ process.env = {
   DIRECT_DATABASE_URL:
     process.env.DIRECT_DATABASE_URL ??
     'postgresql://zea:zea_password@localhost:5432/zea_play?schema=public',
-  REDIS_CACHE_URL: 'redis://localhost:6379',
-  REDIS_QUEUE_URL: 'redis://localhost:6380',
-  REDIS_REALTIME_URL: 'redis://localhost:6381',
-  REDIS_RATE_LIMIT_URL: 'redis://localhost:6382',
+  REDIS_CACHE_URL: process.env.REDIS_CACHE_URL ?? 'redis://localhost:7379',
+  REDIS_QUEUE_URL: process.env.REDIS_QUEUE_URL ?? 'redis://localhost:7380',
+  REDIS_REALTIME_URL: process.env.REDIS_REALTIME_URL ?? 'redis://localhost:7381',
+  REDIS_RATE_LIMIT_URL: process.env.REDIS_RATE_LIMIT_URL ?? 'redis://localhost:7382',
   JWT_ACCESS_SECRET: 'test-access-secret-at-least-32-characters',
   MINIO_ENDPOINT: 'localhost',
   MINIO_PORT: '9000',

@@ -4,10 +4,11 @@ import { json, raw, urlencoded } from 'express';
 import { HttpStatus, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { validateEnvironment, parseCorsOrigins } from '@zea-play/config';
+import { validateEnvironment } from '@zea-play/config';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { CustomDomainCorsService } from './modules/custom-domains/custom-domain-cors.service';
 
 async function bootstrap() {
   const env = validateEnvironment(process.env);
@@ -33,7 +34,20 @@ async function bootstrap() {
   );
   app.use(json({ limit: env.REQUEST_BODY_LIMIT }));
   app.use(urlencoded({ extended: false, limit: env.REQUEST_BODY_LIMIT }));
-  app.enableCors({ origin: parseCorsOrigins(env.CORS_ORIGINS), credentials: true });
+  const customDomainCors = app.get(CustomDomainCorsService);
+  app.enableCors({
+    origin: async (
+      origin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) => {
+      try {
+        callback(null, await customDomainCors.isAllowedOrigin(origin));
+      } catch {
+        callback(null, false);
+      }
+    },
+    credentials: true,
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

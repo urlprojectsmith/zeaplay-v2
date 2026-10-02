@@ -5,8 +5,10 @@ export interface BrandTokens {
   logoUrl?: string;
   faviconUrl?: string;
   primaryColor?: string;
+  primaryForeground?: string;
   secondaryColor?: string;
   accentColor?: string;
+  accentForeground?: string;
   loginBackground?: string;
   brandName?: string;
 }

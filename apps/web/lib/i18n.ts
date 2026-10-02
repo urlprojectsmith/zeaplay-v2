@@ -146,6 +146,8 @@ export const messages = {
       goals: 'Goals',
       analytics: 'Analytics',
       customDashboard: 'Custom Dashboard',
+      branding: 'Branding',
+      customDomains: 'Custom Domains',
     },
     calendar: {
       title: 'Calendar',
@@ -2286,6 +2288,8 @@ export const messages = {
       goals: 'இலக்குகள்',
       analytics: 'பகுப்பாய்வு',
       customDashboard: 'தனிப்பயன் டாஷ்போர்டு',
+      branding: 'பிராண்டிங்',
+      customDomains: 'தனிப்பயன் டொமைன்கள்',
     },
     calendar: {
       title: 'நாட்காட்டி',

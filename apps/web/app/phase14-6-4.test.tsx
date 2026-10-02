@@ -12,8 +12,9 @@ const replace = vi.fn();
 const getSuperAgencyContext = vi.fn();
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace }),
+  useRouter: () => ({ push: vi.fn(), replace }),
   usePathname: () => '/super-agency',
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('../services/super-agencies', async () => {

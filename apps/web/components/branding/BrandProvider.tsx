@@ -2,6 +2,11 @@
 
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import type { BrandTokens } from '@zea-play/ui';
+import { useQuery } from '@tanstack/react-query';
+import { usePathname } from 'next/navigation';
+import type { AnalyticsScopeType } from '../../services/analytics';
+import { brandingKeys, getEffectiveBranding } from '../../services/branding';
+import { useSessionStore } from '../../stores/session';
 
 export const defaultBrand: Required<Pick<BrandTokens, 'brandName' | 'agencyName'>> & BrandTokens = {
   brandName: 'Zea Play',
@@ -19,18 +24,66 @@ const BrandContext = createContext<BrandContextValue | null>(null);
 
 export function BrandProvider({
   children,
-  brand = defaultBrand,
+  brand,
 }: {
   children: React.ReactNode;
   brand?: BrandTokens;
+}) {
+  if (brand) {
+    return <ResolvedBrandProvider brand={brand}>{children}</ResolvedBrandProvider>;
+  }
+
+  return <QueriedBrandProvider>{children}</QueriedBrandProvider>;
+}
+
+function QueriedBrandProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { accessToken, selectedAgencyId, selectedSuperAgencyId, selectedWorkspaceId } =
+    useSessionStore();
+  const scope = useMemo(
+    () => resolveScope(pathname, selectedSuperAgencyId, selectedAgencyId, selectedWorkspaceId),
+    [pathname, selectedAgencyId, selectedSuperAgencyId, selectedWorkspaceId],
+  );
+  const brandQuery = useQuery({
+    queryKey: brandingKeys.effective(scope?.type ?? null, scope?.id ?? null),
+    queryFn: () => getEffectiveBranding(scope?.type as AnalyticsScopeType, scope?.id as string),
+    enabled: Boolean(accessToken && scope),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const effectiveBrand = brandQuery.data
+    ? {
+        brandName: brandQuery.data.appName,
+        agencyName: brandQuery.data.companyName,
+        logoUrl: brandQuery.data.logo?.url,
+        faviconUrl: brandQuery.data.favicon?.url,
+        loginBackground: brandQuery.data.loginBackground?.url,
+        primaryColor: brandQuery.data.primaryColor,
+        primaryForeground: brandQuery.data.primaryForeground,
+        accentColor: brandQuery.data.accentColor,
+        accentForeground: brandQuery.data.accentForeground,
+      }
+    : defaultBrand;
+
+  return <ResolvedBrandProvider brand={effectiveBrand}>{children}</ResolvedBrandProvider>;
+}
+
+function ResolvedBrandProvider({
+  children,
+  brand,
+}: {
+  children: React.ReactNode;
+  brand: BrandTokens;
 }) {
   const merged = useMemo(
     () => ({
       ...defaultBrand,
       ...brand,
       primaryColor: sanitizeBrandColor(brand.primaryColor) ?? defaultBrand.primaryColor,
+      primaryForeground: sanitizeBrandColor(brand.primaryForeground) ?? undefined,
       secondaryColor: sanitizeBrandColor(brand.secondaryColor) ?? defaultBrand.secondaryColor,
       accentColor: sanitizeBrandColor(brand.accentColor) ?? defaultBrand.accentColor,
+      accentForeground: sanitizeBrandColor(brand.accentForeground) ?? undefined,
       logoUrl: sanitizeBrandUrl(brand.logoUrl),
       faviconUrl: sanitizeBrandUrl(brand.faviconUrl),
       loginBackground: sanitizeBrandUrl(brand.loginBackground),
@@ -41,9 +94,25 @@ export function BrandProvider({
   useEffect(() => {
     const root = document.documentElement;
     if (merged.primaryColor) root.style.setProperty('--primary', merged.primaryColor);
+    if (merged.primaryForeground)
+      root.style.setProperty('--primary-foreground', merged.primaryForeground);
     if (merged.secondaryColor) root.style.setProperty('--secondary', merged.secondaryColor);
     if (merged.accentColor) root.style.setProperty('--accent', merged.accentColor);
+    if (merged.accentForeground)
+      root.style.setProperty('--accent-foreground', merged.accentForeground);
   }, [merged]);
+
+  useEffect(() => {
+    document.title = merged.brandName ?? defaultBrand.brandName;
+    if (!merged.faviconUrl) return;
+    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = merged.faviconUrl;
+  }, [merged.brandName, merged.faviconUrl]);
 
   return <BrandContext.Provider value={{ brand: merged }}>{children}</BrandContext.Provider>;
 }
@@ -116,4 +185,19 @@ function sanitizeBrandUrl(value: string | undefined) {
   } catch {
     return undefined;
   }
+}
+
+function resolveScope(
+  pathname: string | null,
+  selectedSuperAgencyId: string | null,
+  selectedAgencyId: string | null,
+  selectedWorkspaceId: string | null,
+): { type: AnalyticsScopeType; id: string } | null {
+  if (selectedWorkspaceId) return { type: 'WORKSPACE', id: selectedWorkspaceId };
+  if (selectedAgencyId) return { type: 'AGENCY', id: selectedAgencyId };
+  if (selectedSuperAgencyId) return { type: 'SUPER_AGENCY', id: selectedSuperAgencyId };
+  if (pathname?.startsWith('/super-admin')) {
+    return { type: 'PLATFORM', id: '00000000-0000-0000-0000-000000000000' };
+  }
+  return null;
 }

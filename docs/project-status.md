@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: PHASE 17.2 - REPORTS + CSV/XLSX EXPORTS + SCHEDULED REPORTS COMPLETE / PASS.
-Next: Phase 17.3 Search is ready to start when explicitly authorized. Phase 17.4 Custom Dashboards and Phase 17.5 final certification are NOT STARTED.
+Current: ZEA PLAY VERSION 2 PHASE 18.2 CUSTOM DOMAINS MAIN IMPLEMENTATION PASS.
+Next: Phase 18.2 final/live verification is READY / NOT STARTED. Phase 18.3 branded login/public/email and Phase 18.4 final certification are NOT STARTED.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -9,21 +9,211 @@ Do not implement Phase 6 from this document alone. Use it to avoid rescanning co
 
 ## Current Certification Gate
 
-Phase 17.2 - REPORTS + CSV/XLSX EXPORTS + SCHEDULED REPORTS
+Phase 18.2 - CUSTOM DOMAINS + DNS OWNERSHIP + HOST RESOLUTION + NGINX PROXY MANAGER + TLS
 
 Main Implementation: PASS
 
-Final Verification: COMPLETE / CERTIFIED
+Final Verification: READY / NOT STARTED
+
+Phase 18.1: COMPLETE / PASS
+
+Phase 18.2: MAIN IMPLEMENTATION PASS
+
+Phase 18.3: NOT STARTED
+
+Phase 18.4: NOT STARTED
+
+Version 1: COMPLETE / CERTIFIED
+
+Version 2: IN PROGRESS
+
+Phase 18: IN PROGRESS
+
+- Version 1 certified baseline remains Phase 1 through Phase 17.5.
+- Version 2 Phase 18.1 adds and certifies white-label branding foundation only.
+- Version 2 Phase 18.2 adds custom-domain foundation, DNS TXT ownership verification, host resolution, CORS/tenant host binding, Nginx Proxy Manager adapter boundary, and dry-run-by-default worker provisioning.
+- Migration count is 90.
+- Latest migration is `0090_phase18_2_custom_domains`.
+- `0089` creates `white_label_branding`, `WhiteLabelScopeType`, branding asset references, optimistic `revision`, override-policy arrays, validation constraints, and permissions `branding.manage` / `branding.platform.manage`.
+- `0090` creates `CustomDomainScopeType`, `CustomDomainStatus`, `custom_domains`, partial unique active hostname/scope indexes, lineage/scope constraints, removal constraints, and permission `custom_domains.manage`.
+- White-label architecture is documented in `docs/white-label-architecture-phase18.md`.
+- Custom-domain architecture is documented in `docs/custom-domain-architecture-phase18.md`.
+- Phase 18.1 final certification is documented in `docs/phase18-1-certification.md`.
+- Phase 18.1 security matrix is documented in `docs/phase18-1-branding-security-matrix.md`: 28 rows, 28 PASS, 0 UNKNOWN, 0 PARTIAL, 0 UNREVIEWED, 0 FAIL.
+- Branding field registry contains 12 server-owned fields: app name, company name, logo, dark logo, favicon, login background, primary color, accent color, support email, support URL, footer text, and meta description.
+- Inheritance order is Platform -> Super Agency -> Agency -> Workspace. `null` means inherit; stored child values are ignored while disabled by parent override policy and become effective again if policy later allows them.
+- Override policy is enforced server-side. Super Agency controls Agency and Workspace allowlists; Agency may further restrict Workspace allowlists by intersection only.
+- Asset decision: branding reuses canonical `Asset` records. Branding rows store asset ID plus owning Workspace ID, reject SVG/raw storage keys/arbitrary URLs, validate status/type/size/dimensions, and return only short-lived signed URLs.
+- Custom-domain owners are exactly Super Agency, Agency, and Workspace. Platform continues to use canonical ZeaPlay domains. `Organization` is not a custom-domain owner or routing authority.
+- Domain normalization rejects schemes, ports, paths, query strings, IP literals, localhost/single-label/internal hosts, and metadata-service style hosts. IDNA hostnames are stored lowercase as normalized ASCII and displayed as Unicode when possible.
+- TXT verification uses `_zeaplay-verification.<hostname>` and `zea-play-domain-verification=<token>`. Plaintext tokens are returned only at create/rotate time; only SHA-256 hashes are stored.
+- State machine: `PENDING_VERIFICATION -> DNS_VERIFIED -> ROUTING_PENDING -> SSL_PENDING -> ACTIVE`, with explicit failure/suspend/remove paths. Direct pending-to-active activation is blocked.
+- Host resolution uses active, non-removed domains only, validates owner chain status, and uses bounded positive/negative cache. Tenant guards enforce exact host-to-scope matches; parent custom hosts do not implicitly authorize descendant scopes.
+- Domain-bound frontend switching checks the active custom-host binding before applying a tenant switch. Mismatched switches persist the validated target selection and redirect to `NEXT_PUBLIC_CANONICAL_APP_URL` rather than mutating the visible app context under the wrong hostname.
+- CORS allows canonical origins plus active HTTPS custom-domain origins only. Password reset/OAuth/public callback URL generation remains based on configured canonical URLs, not arbitrary request `Host`.
+- NPM boundary: app code uses a `NpmDomainProvisioner` adapter, defaults `CUSTOM_DOMAIN_PROVISIONING_MODE=dry-run`, does not shell out, does not access Docker socket, does not edit `/etc/nginx`, and does not require host Certbot. NPM owns Let's Encrypt/TLS in live mode.
+- UI routes added for Super Agency, Agency, and Workspace custom-domain settings. No Platform/Super Admin tenant custom-domain route was added.
+- Phase 18.3 remains deferred: branded login routes, public Docs branding, public Forms branding, email branding, and custom sender domains were not implemented.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Focused API custom-domain + tenant-host unit: PASS, 2 suites / 19 tests.
+- Focused worker custom-domain provisioning unit: PASS, 1 suite / 2 tests.
+- Focused web custom-domain suite: PASS through web app suite, 32 files / 237 tests.
+- Focused Phase 16/V1 stale-baseline guard rerun: PASS, 3 suites / 22 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 74 suites / 675 tests; worker PASS, 12 suites / 37 tests; web PASS, 32 files / 237 tests.
+- Security/source search: PASS after review. Hits were expected docs/tests/config, safe Redis `multi().exec()`, NPM credential env reads inside the adapter boundary, token-hash fields, and deferred-scope documentation. No Docker socket access, host Nginx file edits, host Certbot install/use, child-process provisioning, wildcard/alias routing implementation, branded login implementation, public Docs/Forms branding implementation, email branding implementation, custom sender-domain implementation, or `Organization` domain authority was found.
+- Shared development database remains read-only and was not migrated. Read-only status reports local migrations `0081_phase16_1_docs_foundation` through `0090_phase18_2_custom_domains` pending on shared `zea_play`.
+- Clean/legacy migration compatibility, isolated PostgreSQL integration, live DNS/NPM/TLS verification, E2E, production build, and audit are DEFERRED to final verification by prompt boundary.
+- External provider/domain checks remain NOT VERIFIED without DNS/NPM credentials and live customer domains.
+- Deployment warning: NPM admin port `81` is publicly bound in the stated VPS topology and must be protected during deployment; this implementation did not change firewall, Docker, PM2, NPM, or server bindings.
+
+Phase 17.5 - VERSION 1 FINAL INTEGRATION + SECURITY CERTIFICATION previous certified baseline:
+
+Main Audit: PASS
+
+Final Certification: COMPLETE / PASS
+
+Phase 17.5: COMPLETE / PASS
+
+Phase 17: COMPLETE / CERTIFIED
+
+Version 1: COMPLETE / CERTIFIED
+
+Version 2: NOT STARTED
+
+Phase 18: NOT STARTED
+
+- Version 1 scope is Phase 1 through Phase 17.
+- Version 2 scope remains deferred/not started: Phase 18+, white label/custom domains, PWA/offline, developer isolated space, release distribution, enterprise hardening, and production deployment features.
+- Migration count remains 88.
+- Latest migration remains `0088_phase17_4_dashboard_widget_limit_lock`.
+- `0089`: NOT CREATED.
+- Version 1 security matrix is documented in `docs/version1-security-matrix.md`: 69 rows, 69 PASS, 0 UNKNOWN, 0 PARTIAL, 0 FAIL.
+- Version 1 integration matrix is documented in `docs/version1-integration-matrix.md`: 39 rows, 39 PASS, 0 UNKNOWN, 0 PARTIAL, 0 FAIL.
+- Version 1 final certification record is documented in `docs/version1-certification.md`.
+- `pnpm phase14:6:13:migration-compat`: PASS, 88 migrations through `0088_phase17_4_dashboard_widget_limit_lock`; clean install, legacy upgrade, populated 0080/0083/0084/0085/0086/0087 upgrade cutoffs, seed twice, pg_trgm, and zero/one/many edge cases passed.
+- Controlled Version 1 load validation: PASS at 8 local concurrent workers for a bounded 10-second scenario; 0 errors; no process crash, DB connection exhaustion, cross-tenant leak, duplicate idempotent mutation, or worker deadlock observed.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 72 suites / 659 tests; worker PASS, 11 suites / 35 tests; web PASS, 30 files / 228 tests.
+- `pnpm test:integration`: PASS on isolated PostgreSQL; API PASS, 11 suites / 130 tests; worker PASS, 11 suites / 35 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- Fresh web unit suite: PASS, 30 files / 228 tests.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm audit --audit-level high`: PASS; 9 moderate advisories remain below the high gate.
+- `git diff --check`: PASS.
+- Shared development database remains read-only and was not migrated. Read-only status reports local migrations `0081_phase16_1_docs_foundation` through `0088_phase17_4_dashboard_widget_limit_lock` pending on shared `zea_play`, so shared dev remains at migration count 80/latest `0080_phase15_4_invoice_projection`.
+- Stripe live/test, Stripe Customer Portal/live Checkout, external email provider delivery, and CAPTCHA live provider remain NOT EXTERNALLY VERIFIED without credentials.
+- Malware scanning is NOT IMPLEMENTED / NOT CLAIMED.
+- Docs realtime CRDT/Yjs/OT collaboration remains DEFERRED.
+- Historical Goal Department snapshots are NOT AVAILABLE; current active Department semantics are documented.
+
+Phase 17.4 - CUSTOM DASHBOARDS + WIDGETS previous certified baseline:
+
+Phase 17.4 - CUSTOM DASHBOARDS + WIDGETS
+
+Main Implementation: PASS
+
+Final Verification: COMPLETE / PASS
 
 Phase 17.1: COMPLETE / PASS
 
 Phase 17.2: COMPLETE / PASS
 
-Phase 17.3: READY / NOT STARTED
+Phase 17.3: COMPLETE / PASS
+
+Phase 17.4 Main Implementation: PASS
+
+Phase 17.4 Final Verification: COMPLETE / PASS
+
+Phase 17.5 at the time of Phase 17.4 certification: NOT STARTED
+
+- Migration count is 88.
+- Latest migration is `0088_phase17_4_dashboard_widget_limit_lock`.
+- `0087` adds Custom Dashboard, Dashboard Access, Dashboard Widget, and Dashboard Preference tables plus dashboard visibility/status/widget/data-source enums, tenant/scope constraints, selected-member access constraints, refresh minimums, one-default-per-user/context protection, and a 30-widget database trigger.
+- `0088` is a forward-only Phase 17.4 data-integrity migration that adds a transaction-scoped advisory lock to the 30-widget database trigger, closing the concurrent 30/31 widget insert race.
+- Custom dashboard architecture is documented in `docs/custom-dashboards-architecture-phase17.md`.
+- Dashboard permissions are `dashboards.view`, `dashboards.create`, `dashboards.edit`, `dashboards.manage`, and `dashboards.platform.read`.
+- Dashboards support Workspace, Agency, Super Agency, and Platform scopes using explicit `scopeType + scopeId`; same-ID scope collisions are avoided in models, routes, access checks, and React Query keys.
+- Dashboard routes use the existing JWT, tenant guard, permission guard, and platform dashboard guard architecture. Frontend-supplied tenant IDs are never sufficient without server-side membership/scope validation.
+- Dashboard data sources are restricted to Phase 17.1 analytics queries and Phase 17.2 saved report previews. No custom SQL, user-defined formulas, arbitrary HTML, JavaScript, iframe widgets, public sharing, PDF/dashboard export, or realtime dashboard engine was added.
+- Workspace and Agency dashboards cannot render financial/commercial widgets. Super Agency and Platform can use the commercial-health template only through the existing permitted analytics/report surfaces.
+- Selected-member access validates active same-scope membership or platform users before granting dashboard access.
+- Report-backed widgets recheck saved report ACL/archived status at render time and return per-widget access errors instead of leaking data or failing the whole dashboard.
+- Frontend dashboard routes exist for `/workspace/dashboards`, `/agency/dashboards`, `/super-agency/dashboards`, and `/super-admin/dashboards`.
+- Frontend builder includes dashboard list/create/template flows, favorite/default actions, duplicate/archive/restore, widget add/remove, drag reorder, scoped query keys, and bounded polling from widget refresh intervals.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Forward-only `0088` migration created: YES, justified by the 30-widget trigger race.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Focused API dashboard regression: PASS, 1 suite / 5 tests.
+- Real PostgreSQL dashboard integration: PASS, 1 suite / 5 tests.
+- Focused web dashboard regression: PASS through web suite, 30 files / 228 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS, 71 suites / 653 tests; worker PASS, 11 suites / 35 tests; web PASS, 30 files / 228 tests.
+- `pnpm test:integration`: PASS on isolated migrated PostgreSQL; API PASS, 11 suites / 130 tests; worker PASS, 11 suites / 35 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm phase14:6:13:migration-compat`: PASS, 88 migrations through `0088_phase17_4_dashboard_widget_limit_lock`; clean install, legacy upgrade, Phase 15/16/17.2 upgrade paths, seed twice, and zero/one/many edge cases passed.
+- `pnpm audit --audit-level high`: PASS; 9 moderate advisories remain below the high gate.
+- `git diff --check`: PASS; Windows line-ending warnings only.
+- Security/source search: PASS after review. Hits were expected docs/tests and safe sanitizer rejection code for forbidden dashboard HTML, JavaScript, iframe, custom SQL, formula, sharing, realtime, export, and financial/privacy terms.
+- Shared development database remains read-only and was not migrated. Read-only status reports local migrations `0081_phase16_1_docs_foundation` through `0088_phase17_4_dashboard_widget_limit_lock` pending on shared `zea_play`, so shared dev remains at migration count 80/latest `0080_phase15_4_invoice_projection`.
+- Phase 17.5 final certification and Phase 18+ are NOT STARTED.
+
+Phase 17.3 - GLOBAL SEARCH + POSTGRESQL FULL-TEXT SEARCH previous certified baseline:
+
+Main Implementation: PASS
+
+Final Verification: COMPLETE / PASS
+
+Phase 17.1: COMPLETE / PASS
+
+Phase 17.2: COMPLETE / PASS
+
+Phase 17.3 Main Implementation: PASS
+
+Phase 17.3 Final Verification: COMPLETE / PASS
 
 Phase 17.4: NOT STARTED
 
 Phase 17.5: NOT STARTED
+
+- Migration count is 86.
+- Latest migration is `0086_phase17_3_global_search`.
+- `0086` adds PostgreSQL `pg_trgm`, Search enums, `search_documents`, `recent_searches`, `search_index_jobs`, scoped uniqueness, tsvector refresh trigger, GIN full-text/trigram indexes, and search permissions.
+- Search architecture is documented in `docs/search-architecture-phase17.md`.
+- Search security matrix is documented in `docs/phase17-3-search-security-matrix.md` with 35 PASS rows, 0 unknown, 0 partial, 0 unreviewed, and 0 fail.
+- Search uses PostgreSQL full-text search and trigram indexing only; no Elasticsearch, OpenSearch, vector database, or external search service was added.
+- Search documents are derived-only. Canonical Workspace, Agency, Super Agency, Platform, Docs, Forms, Goals, Assets, Billing, Automation, Public API, Webhook, and Integration modules remain authoritative.
+- Search supports Workspace, Agency, Super Agency, and Platform scopes using explicit `scopeType + scopeId`; same-ID tenant collisions are avoided in indexes, cache keys, and recent searches.
+- Search routes use existing JWT, tenant guards, permission guards, and platform search guard architecture.
+- Search indexes safe fields only. Form submissions/answers, secrets, tokens, signed URLs, webhook signing secrets, integration credentials, Doc share tokens/passwords, and file binary/OCR/PDF bodies are not indexed.
+- Frontend global search is integrated into the shared app header with Ctrl/Cmd+K, scoped query keys, grouped results, recent searches, and clear history.
+- Real PostgreSQL search integration: PASS, 1 suite / 8 tests. Coverage includes Project, Ticket, Form, Goal, File/Asset, Member, Automation, API key, Webhook, Integration, Billing, Agency, Super Agency, Platform, parent Doc privacy, parent Ticket privacy, worker canonical reload, multi-worker concurrency, stale jobs, destructive stale protection, backfill batching/idempotency, rebuild authorization, reconciliation, query plans, FTS/trigram/scope index usage, and N+1 query shape.
+- Worker integration: PASS, 11 suites / 35 tests.
+- API integration: PASS, 10 suites / 125 tests.
+- Populated `0085_phase17_2_reports` to `0086_phase17_3_global_search` upgrade: PASS. Fixture preserved 19 entity categories and kept `SearchDocument` empty/derived after migration.
+- Migration compatibility harness: PASS, 86 migrations, latest `0086_phase17_3_global_search`; clean install, legacy upgrade, Phase 15/16 upgrade paths, populated 0085 path, seed twice, `pg_trgm`, and zero/one/many edge cases passed.
+- Default API Jest without heap override: PASS after bounding API unit Jest to `maxWorkers: 1`; no `NODE_OPTIONS=--max-old-space-size` override is required.
+- Root `pnpm test` without `NODE_OPTIONS`: PASS, 17 tasks; API PASS, 70 suites / 648 tests; worker PASS, 11 suites / 35 tests; web PASS, 29 files / 224 tests.
+- Fresh web suite: PASS, 29 files / 224 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm build`: PASS, 11 tasks.
+- `pnpm audit --audit-level high`: PASS; 9 moderate advisories remain below the high gate.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Shared development database remains read-only and was not migrated. Read-only status reports local migrations 0081 through 0086 pending on shared `zea_play`, so shared dev remains at migration count 80/latest `0080_phase15_4_invoice_projection`.
+- Phase 17.4 Custom Dashboards, Phase 17.5 final certification, and Phase 18+ are NOT STARTED.
+
+Phase 17.2 - REPORTS + CSV/XLSX EXPORTS + SCHEDULED REPORTS previous certified baseline:
 
 - Migration count is 85.
 - Latest migration is `0085_phase17_2_reports`.
