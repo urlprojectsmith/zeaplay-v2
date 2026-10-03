@@ -7,6 +7,7 @@ import { TooltipProvider } from '@zea-play/ui';
 import { BrandProvider } from '../components/branding/BrandProvider';
 import { useSessionStore } from '../stores/session';
 import { LanguageProvider } from './language-provider';
+import { PwaProvider } from './pwa-provider';
 import { RealtimeProvider } from './realtime-provider';
 import { ThemeProvider } from './theme-provider';
 
@@ -36,7 +37,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <BrandProvider>
             <RealtimeProvider>
               <SessionQueryBoundary />
-              <TooltipProvider delayDuration={250}>{children}</TooltipProvider>
+              <PwaProvider>
+                <TooltipProvider delayDuration={250}>{children}</TooltipProvider>
+              </PwaProvider>
             </RealtimeProvider>
             <Toaster richColors position="top-right" />
           </BrandProvider>

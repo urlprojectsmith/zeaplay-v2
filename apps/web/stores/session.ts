@@ -10,6 +10,7 @@ import {
 } from '../services/account-context';
 import { apiClient, setApiAccessToken, setApiTenantContext } from '../services/api';
 import { resolveDomainBoundSwitchRedirect } from '../services/custom-domains';
+import { clearTenantBoundPwaCaches } from '../services/pwa';
 
 export interface SessionWorkspace {
   id: string;
@@ -318,6 +319,7 @@ function applySession(data: LoginResponse, set: (state: Partial<SessionState>) =
 function clearSession(set: (state: Partial<SessionState>) => void) {
   setApiAccessToken(null);
   setTenant(null, null);
+  clearTenantBoundPwaCaches();
   localStorage.removeItem(storageKey);
   set({
     accessToken: null,
@@ -455,6 +457,7 @@ function isLatestContextSwitch(sequence: number) {
 function notifyTenantCacheClear() {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new Event('zea-play-tenant-changing'));
+  clearTenantBoundPwaCaches();
 }
 
 function upsertAgency(

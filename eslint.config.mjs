@@ -18,6 +18,7 @@ export default tseslint.config(
       '**/integration-global-setup.js',
       '**/integration-global-teardown.js',
       '**/setup-integration-env.js',
+      'apps/web/public/**/*.js',
       '**/*.config.mjs',
       '**/next-env.d.ts',
     ],

@@ -1,13 +1,35 @@
 # Zea Play Project Status
 
-Current: ZEA PLAY VERSION 2 PHASE 18.4 SECURITY + INTEGRATION + FULL PHASE 18 CORE FUNCTIONAL CERTIFICATION MAIN RESULT PARTIAL / LINUX_EXACT_COMMIT_VERIFICATION_REQUIRED.
-Next: Phase 18 live custom-domain infrastructure remains DEFERRED UNTIL AFTER PHASE 22. Do not start Phase 19 without explicit instruction.
+Current: ZEA PLAY VERSION 2 PHASE 19.1 PWA FOUNDATION + INSTALLABILITY FINAL VERIFICATION PARTIAL / LINUX_EXACT_SOURCE_VERIFICATION_REQUIRED.
+Next: Commit/push Phase 19.1 exact source, then run Linux exact-source build/typecheck/test/runtime checks. Phase 18 live custom-domain infrastructure remains DEFERRED UNTIL AFTER PHASE 22. Do not start Phase 19.2, 19.3, or 19.4 without explicit instruction.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
 Do not implement Phase 6 from this document alone. Use it to avoid rescanning completed Phase 1-5 work.
 
 ## Current Certification Gate
+
+Phase 19.1 - PWA FOUNDATION + INSTALLABILITY
+
+Main Implementation: PARTIAL / LOCAL WINDOWS GATES PASS EXCEPT ENVIRONMENT-LIMITED NEXT STANDALONE SYMLINK COPY / LINUX_EXACT_SOURCE_VERIFICATION_REQUIRED
+
+- No database migration is required or created.
+- PWA foundation documents are `docs/phase19-pwa-mobile-offline-architecture.md`, `docs/phase19-1-pwa-foundation.md`, and `docs/phase19-1-security-matrix.md`.
+- Manifest endpoint is `/site.webmanifest`, resolves safe white-label identity from trusted host/public branding context only, and responds with private no-store revalidation plus `Vary: Host`.
+- Service worker script is `/sw.js`, production registration only, frontend-origin scope only, deterministic ZeaPlay cache names, no authenticated API/private data caching, and user-triggered update refresh.
+- Offline fallback is `/offline`.
+- Platform PWA icons are valid PNGs: 192x192, 512x512, and maskable 512x512.
+- Phase 19.1 focused PWA tests: PASS, 1 file / 8 tests.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Root `pnpm test`: PASS, 17 tasks; API 75 suites / 678 tests; worker 12 suites / 37 tests; web 34 files / 251 tests.
+- `pnpm audit --prod --audit-level high`: PASS; 7 moderate production advisories remain below the high gate.
+- Root `pnpm build`: PARTIAL on Windows. API and worker build tasks passed; web compiled, typechecked, generated 74/74 pages, then failed during Next standalone traced-file copy because Windows denied symlink creation (`EPERM`).
+- Security matrix: `docs/phase19-1-security-matrix.md`, 34 PASS / 2 DEFERRED / 0 FAIL.
+- Linux exact-source root build/typecheck/test/runtime verification remains NOT VERIFIED from this Windows session.
+- Full Web Push delivery/subscription remains NOT IMPLEMENTED and deferred to Phase 19.4.
+- Phase 19.2, 19.3, and 19.4 were not started.
 
 Phase 18.4 - SECURITY + INTEGRATION + FULL PHASE 18 CORE FUNCTIONAL CERTIFICATION
 

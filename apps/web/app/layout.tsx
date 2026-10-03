@@ -1,10 +1,37 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Providers } from '../contexts/providers';
 
 export const metadata: Metadata = {
+  applicationName: 'Zea Play',
   title: 'Zea Play',
   description: 'Zea Play SaaS foundation',
+  manifest: '/site.webmanifest',
+  icons: {
+    icon: [
+      { url: '/icons/zeaplay-icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/zeaplay-icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [{ url: '/icons/zeaplay-icon-192.png', sizes: '192x192', type: 'image/png' }],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Zea Play',
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#1F7A68' },
+    { media: '(prefers-color-scheme: dark)', color: '#123C35' },
+  ],
 };
 
 const preferenceScript = `
