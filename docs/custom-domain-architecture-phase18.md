@@ -1,6 +1,6 @@
 # Phase 18.2 Custom Domain Architecture
 
-Status: Phase 18.2 main implementation in progress. Live DNS, live Nginx Proxy Manager provisioning, live TLS issuance, end-to-end browser validation, clean/legacy migration certification, production deployment changes, and Phase 18 final certification remain deferred.
+Status: Phase 18.2 local custom-domain behavior is certified by Phase 18.4. Live DNS, live Nginx Proxy Manager provisioning, live TLS issuance, production routing, and provider-backed custom-domain verification remain DEFERRED UNTIL AFTER PHASE 22.
 
 ## Scope Ownership
 
@@ -156,14 +156,10 @@ Live verification must confirm:
 
 ## Deferred Boundaries
 
-Phase 18.3 remains NOT STARTED:
+Phase 18.3 branded login, public Docs branding, public Forms branding, and email branding are certified by Phase 18.4.
 
-- branded login by hostname
-- public Forms branding
-- public Docs branding
-- email branding
-- custom sender domains
+Custom sender domains remain deferred and were not implemented.
 
-Phase 18.4 final certification remains NOT STARTED.
+Phase 18.4 core functional certification is PASS. Live custom-domain infrastructure certification remains DEFERRED UNTIL AFTER PHASE 22.
 
 Phase 19+ remains NOT STARTED.

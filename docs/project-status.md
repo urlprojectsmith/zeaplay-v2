@@ -1,7 +1,7 @@
 # Zea Play Project Status
 
-Current: ZEA PLAY VERSION 2 PHASE 18.3 BRANDED LOGIN + PUBLIC PAGES + EMAIL BRANDING FOCUSED REFINEMENT COMPLETE LOCALLY / PARTIAL.
-Next: Run Linux standalone web build verification from `/opt/zeaplay` before Phase 18.3 final PASS. Phase 18.2 live DNS/NPM/TLS verification remains DEFERRED. Phase 18.4 final certification is NOT STARTED.
+Current: ZEA PLAY VERSION 2 PHASE 18.4 SECURITY + INTEGRATION + FULL PHASE 18 CORE FUNCTIONAL CERTIFICATION MAIN RESULT PARTIAL / LINUX_EXACT_COMMIT_VERIFICATION_REQUIRED.
+Next: Phase 18 live custom-domain infrastructure remains DEFERRED UNTIL AFTER PHASE 22. Do not start Phase 19 without explicit instruction.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
@@ -9,19 +9,17 @@ Do not implement Phase 6 from this document alone. Use it to avoid rescanning co
 
 ## Current Certification Gate
 
-Phase 18.3 - BRANDED LOGIN + PUBLIC PAGES + EMAIL BRANDING
+Phase 18.4 - SECURITY + INTEGRATION + FULL PHASE 18 CORE FUNCTIONAL CERTIFICATION
 
-Main Implementation: PARTIAL / LINUX_BUILD_VERIFICATION_REQUIRED
+Main Result: PARTIAL / LINUX_EXACT_COMMIT_VERIFICATION_REQUIRED / WINDOWS_STANDALONE_SYMLINK_BUILD_LIMIT
 
-Final Verification: PARTIAL / LINUX_BUILD_VERIFICATION_REQUIRED
+Final Verification: PARTIAL / CORE_FUNCTIONAL_PASS / DEV_TOOLING_SECURITY_EXCEPTION_ACCEPTED / LIVE_INFRASTRUCTURE_DEFERRED
 
-Phase 18.1: COMPLETE / PASS
+Phase 18.1: CERTIFIED
 
-Phase 18.2: MAIN IMPLEMENTATION PASS / LIVE VERIFICATION DEFERRED
+Phase 18.2: DEFERRED UNTIL AFTER PHASE 22 for live DNS/NPM/TLS; local custom-domain code paths certified.
 
-Phase 18.3: FOCUSED REFINEMENT COMPLETE LOCALLY / LINUX BUILD NOT VERIFIED
-
-Phase 18.4: NOT STARTED
+Phase 18.3: CERTIFIED
 
 Version 1: COMPLETE / CERTIFIED
 
@@ -29,62 +27,19 @@ Version 2: IN PROGRESS
 
 Phase 18: IN PROGRESS
 
-- Phase 18.3 extends the certified Phase 18.1 `BrandingService` and does not create a second branding system.
-- Public login/auth routes resolve branding server-side through `GET /branding/public`, using active-only Phase 18.2 custom-domain host resolution where available and Platform defaults for canonical, unknown, invalid, inactive, suspended, or archived host contexts.
-- Public Docs and public Forms include public-safe effective Workspace branding only after the existing public share/form authorization lookup succeeds. Public resource access semantics, password/share tokens, submission validation, upload security, and rate limits remain unchanged.
-- Email branding extends existing `MailService` and notification email templates. Tenant branding may affect body, subject prefix, logo, colors, footer, and support references, but does not change the configured trusted sender domain/address.
-- No migration was added. Phase 18.1 branding tables and Phase 18.2 custom-domain tables remain authoritative.
-- Documentation added: `docs/phase18-3-branded-public-email.md` and `docs/phase18-3-security-matrix.md`.
-- Public/auth i18n refinement: PASS for existing English/Tamil i18n layer on Phase 18.3 auth/public visible strings.
-- Accessibility refinement: PASS for brand logo alt text, public Doc password labels, public Form alert/live-region status, and existing focusable controls.
-- Focused API branding/email/docs/forms/auth tests: PASS, 6 suites / 40 tests.
-- Focused web public branding + login smoke: PASS, 2 files / 7 tests.
-- API typecheck: PASS.
-- Web typecheck: PASS.
-- Root typecheck: PASS, 17 tasks.
-- API build: PASS.
-- Web lint: PASS.
-- Full web app test: PASS, 33 files / 243 tests.
-- Root `pnpm test`: PASS, 17 tasks. API PASS, 75 suites / 678 tests. Worker PASS, 12 suites / 37 tests. Web PASS, 33 files / 243 tests.
-- `pnpm format`: PASS.
-- `git diff --check`: PASS.
-- Security/source diff scan: PASS for no `.env` diff and no private-key/credential patterns in the Phase 18.3 diff.
-- Root `pnpm build`: PARTIAL on Windows. API and worker build tasks passed. Next.js compiled, typechecked, generated 73 static pages, then failed during standalone traced-file copy because Windows denied symlink creation (`EPERM`).
-- Linux web build: NOT VERIFIED. `/opt/zeaplay` was not accessible from this Windows workspace.
-- Integration, E2E, shared-dev read-only checks, and Linux runtime smoke remain pending for final PASS.
-- Phase 18.2 remains DEFERRED for live DNS, NPM, TLS, and production custom-domain verification. No production Nginx Proxy Manager, DNS, PM2, or proxy changes were made.
-
-Phase 18.2 - CUSTOM DOMAINS + DNS OWNERSHIP + HOST RESOLUTION + NGINX PROXY MANAGER + TLS
-
-Main Implementation: PASS
-
-Final Verification: READY / NOT STARTED
-
-Phase 18.1: COMPLETE / PASS
-
-Phase 18.2: MAIN IMPLEMENTATION PASS
-
-Phase 18.3: NOT STARTED
-
-Phase 18.4: NOT STARTED
-
-Version 1: COMPLETE / CERTIFIED
-
-Version 2: IN PROGRESS
-
-Phase 18: IN PROGRESS
-
-- Version 1 certified baseline remains Phase 1 through Phase 17.5.
-- Version 2 Phase 18.1 adds and certifies white-label branding foundation only.
-- Version 2 Phase 18.2 adds custom-domain foundation, DNS TXT ownership verification, host resolution, CORS/tenant host binding, Nginx Proxy Manager adapter boundary, and dry-run-by-default worker provisioning.
 - Migration count is 90.
 - Latest migration is `0090_phase18_2_custom_domains`.
 - `0089` creates `white_label_branding`, `WhiteLabelScopeType`, branding asset references, optimistic `revision`, override-policy arrays, validation constraints, and permissions `branding.manage` / `branding.platform.manage`.
 - `0090` creates `CustomDomainScopeType`, `CustomDomainStatus`, `custom_domains`, partial unique active hostname/scope indexes, lineage/scope constraints, removal constraints, and permission `custom_domains.manage`.
+- `0090` permission seeding was corrected before verified persistent application to match the existing `permissions` table contract (`key`, `description`, `created_at`). Read-only shared `zea_play` status on 2026-10-03 still reported `0081` through `0090` pending; staging/production application was not verified from this session.
 - White-label architecture is documented in `docs/white-label-architecture-phase18.md`.
 - Custom-domain architecture is documented in `docs/custom-domain-architecture-phase18.md`.
 - Phase 18.1 final certification is documented in `docs/phase18-1-certification.md`.
 - Phase 18.1 security matrix is documented in `docs/phase18-1-branding-security-matrix.md`: 28 rows, 28 PASS, 0 UNKNOWN, 0 PARTIAL, 0 UNREVIEWED, 0 FAIL.
+- Phase 18.3 architecture and security evidence are documented in `docs/phase18-3-branded-public-email.md` and `docs/phase18-3-security-matrix.md`.
+- Phase 18.4 certification is documented in `docs/phase18-certification.md`.
+- Phase 18.4 security matrix is documented in `docs/phase18-security-matrix.md`: 35 PASS, 8 DEFERRED, 0 FAIL.
+- Phase 18.4 integration matrix is documented in `docs/phase18-integration-matrix.md`: 18 PASS, 1 DEFERRED, 0 FAIL.
 - Branding field registry contains 12 server-owned fields: app name, company name, logo, dark logo, favicon, login background, primary color, accent color, support email, support URL, footer text, and meta description.
 - Inheritance order is Platform -> Super Agency -> Agency -> Workspace. `null` means inherit; stored child values are ignored while disabled by parent override policy and become effective again if policy later allows them.
 - Override policy is enforced server-side. Super Agency controls Agency and Workspace allowlists; Agency may further restrict Workspace allowlists by intersection only.
@@ -95,25 +50,35 @@ Phase 18: IN PROGRESS
 - State machine: `PENDING_VERIFICATION -> DNS_VERIFIED -> ROUTING_PENDING -> SSL_PENDING -> ACTIVE`, with explicit failure/suspend/remove paths. Direct pending-to-active activation is blocked.
 - Host resolution uses active, non-removed domains only, validates owner chain status, and uses bounded positive/negative cache. Tenant guards enforce exact host-to-scope matches; parent custom hosts do not implicitly authorize descendant scopes.
 - Domain-bound frontend switching checks the active custom-host binding before applying a tenant switch. Mismatched switches persist the validated target selection and redirect to `NEXT_PUBLIC_CANONICAL_APP_URL` rather than mutating the visible app context under the wrong hostname.
-- CORS allows canonical origins plus active HTTPS custom-domain origins only. Password reset/OAuth/public callback URL generation remains based on configured canonical URLs, not arbitrary request `Host`.
-- NPM boundary: app code uses a `NpmDomainProvisioner` adapter, defaults `CUSTOM_DOMAIN_PROVISIONING_MODE=dry-run`, does not shell out, does not access Docker socket, does not edit `/etc/nginx`, and does not require host Certbot. NPM owns Let's Encrypt/TLS in live mode.
+- CORS allows canonical origins plus active HTTPS custom-domain origins only. Explicit non-default custom-origin ports are rejected. Password reset/OAuth/public callback URL generation remains based on configured canonical URLs, not arbitrary request `Host`.
+- NPM boundary: app code uses a `NpmDomainProvisioner` adapter, defaults `CUSTOM_DOMAIN_PROVISIONING_MODE=dry-run`, validates upstream scheme/host/port configuration, does not shell out, does not access Docker socket, does not edit `/etc/nginx`, and does not require host Certbot. NPM owns Let's Encrypt/TLS in live mode.
 - UI routes added for Super Agency, Agency, and Workspace custom-domain settings. No Platform/Super Admin tenant custom-domain route was added.
-- Phase 18.3 remains deferred: branded login routes, public Docs branding, public Forms branding, email branding, and custom sender domains were not implemented.
-- `pnpm prisma:generate`: PASS.
-- `pnpm prisma:validate`: PASS.
+- Phase 18.3 certified public/auth/login, public Docs, public Forms, and email branding reuse the Phase 18.1 `BrandingService` and public-safe DTOs. Custom sender domains remain deferred.
 - `pnpm format`: PASS.
 - `pnpm lint`: PASS, 17 tasks.
 - `pnpm typecheck`: PASS, 17 tasks.
-- Focused API custom-domain + tenant-host unit: PASS, 2 suites / 19 tests.
-- Focused worker custom-domain provisioning unit: PASS, 1 suite / 2 tests.
-- Focused web custom-domain suite: PASS through web app suite, 32 files / 237 tests.
-- Focused Phase 16/V1 stale-baseline guard rerun: PASS, 3 suites / 22 tests.
-- Root `pnpm test`: PASS, 17 tasks; API PASS, 74 suites / 675 tests; worker PASS, 12 suites / 37 tests; web PASS, 32 files / 237 tests.
-- Security/source search: PASS after review. Hits were expected docs/tests/config, safe Redis `multi().exec()`, NPM credential env reads inside the adapter boundary, token-hash fields, and deferred-scope documentation. No Docker socket access, host Nginx file edits, host Certbot install/use, child-process provisioning, wildcard/alias routing implementation, branded login implementation, public Docs/Forms branding implementation, email branding implementation, custom sender-domain implementation, or `Organization` domain authority was found.
-- Shared development database remains read-only and was not migrated. Read-only status reports local migrations `0081_phase16_1_docs_foundation` through `0090_phase18_2_custom_domains` pending on shared `zea_play`.
-- Clean/legacy migration compatibility, isolated PostgreSQL integration, live DNS/NPM/TLS verification, E2E, production build, and audit are DEFERRED to final verification by prompt boundary.
+- `pnpm prisma:generate`: PASS.
+- `pnpm prisma:validate`: PASS.
+- Focused config validation: PASS, 1 file / 6 tests.
+- Focused API custom-domain unit: PASS, 1 suite / 7 tests.
+- Focused API branding/auth/docs/forms/email unit: PASS, 5 suites / 33 tests.
+- Focused worker custom-domain unit: PASS, 1 suite / 2 tests.
+- Focused web Phase 18/public branding run: PASS, 33 files / 243 tests.
+- Root `pnpm test`: PASS, 17 tasks; API PASS 75 suites / 678 tests; worker PASS 12 suites / 37 tests; web PASS 33 files / 243 tests.
+- `pnpm test:integration`: PASS after Docker/Postgres readiness; API PASS 12 suites / 131 tests; worker PASS 12 suites / 37 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm phase14:6:13:migration-compat`: PASS, 90 migrations through `0090_phase18_2_custom_domains`, clean/legacy/cutoff/zero-one-many scratch matrix.
+- `pnpm audit --prod --audit-level high`: PASS; 7 moderate production advisories remain below the high gate.
+- `pnpm audit --audit-level high`: FAIL WITH DOCUMENTED DEV-TOOLING EXCEPTION. `braces@3.0.3` is flagged by GHSA-vfj7-8cjw-p6xm. `pnpm audit --json` marks the finding `dev: true`; `pnpm --filter @zea-play/api|@zea-play/web|@zea-play/worker why braces --prod` returns no runtime path; generated API/worker dist and web standalone output contain no `braces`, `micromatch`, or `fast-glob` hits; npm registry latest for `braces` is `3.0.3`, so the advisory patched range `>=3.0.4` is not installable. Treat as a TEMPORARY ACCEPTED DEV-TOOLING SECURITY EXCEPTION, not a fixed vulnerability.
+- `git diff --check`: PASS; Windows LF/CRLF warnings only.
+- Phase 18.3 Linux baseline recorded by prompt: Web Linux build PASS, API Linux build PASS, API Linux typecheck PASS.
+- Phase 18.4 build order: PASS by Turbo package graph and root `build.dependsOn: ["^build"]`; API/worker depend on `@zea-play/config`. A clean generated-output root build rebuilt `@zea-play/config` before API/worker consumers and did not reproduce stale config declarations.
+- Phase 18.4 migration immutability refinement: 0090 was already committed in git history, but its original permission insert referenced nonexistent `permissions.name` and `permissions.updated_at` columns. A forward 0091 cannot repair a failing fresh 0090, so the corrected 0090 remains in place after confirming shared `zea_play` has not applied it. Staging/production migration history remains NOT VERIFIED without access.
+- Root `pnpm build`: PARTIAL on Windows. API and worker build tasks passed; Next.js web compiled, typechecked, generated 73 static pages, then failed during standalone traced-file copy because Windows denied symlink creation (`EPERM`).
+- Live custom-domain infrastructure certification remains DEFERRED UNTIL AFTER PHASE 22.
 - External provider/domain checks remain NOT VERIFIED without DNS/NPM credentials and live customer domains.
-- Deployment warning: NPM admin port `81` is publicly bound in the stated VPS topology and must be protected during deployment; this implementation did not change firewall, Docker, PM2, NPM, or server bindings.
+- No production Nginx Proxy Manager, DNS, PM2, Docker, firewall, or VPS changes were made.
+- Phase 19 was not started.
 
 Phase 17.5 - VERSION 1 FINAL INTEGRATION + SECURITY CERTIFICATION previous certified baseline:
 

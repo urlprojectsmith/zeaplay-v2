@@ -28,8 +28,8 @@ const environmentSchema = z.object({
   NPM_ADMIN_PASSWORD: z.string().optional().default(''),
   NPM_LETS_ENCRYPT_EMAIL: z.string().email().optional().or(z.literal('')).default(''),
   NPM_UPSTREAM_SCHEME: z.enum(['http', 'https']).default('http'),
-  NPM_UPSTREAM_HOST: z.string().min(1).default('127.0.0.1'),
-  NPM_UPSTREAM_PORT: z.coerce.number().int().positive().default(3000),
+  NPM_UPSTREAM_HOST: z.string().min(1).refine(isSafeUpstreamHost).default('127.0.0.1'),
+  NPM_UPSTREAM_PORT: z.coerce.number().int().positive().max(65_535).default(3000),
   REQUEST_BODY_LIMIT: z
     .string()
     .regex(/^\d+(kb|mb)$/i, 'Use an explicit request body limit such as 512kb or 1mb.')
@@ -246,4 +246,16 @@ function assertEmailProviderConfig(env: Environment) {
       throw new Error('SMTP_USER and SMTP_PASSWORD must be provided together.');
     }
   }
+}
+
+function isSafeUpstreamHost(value: string) {
+  const host = value.trim();
+  if (!host || host !== value) return false;
+  if (host.includes('://') || host.includes('/') || host.includes('\\')) return false;
+  if (host.includes('@') || host.includes('?') || host.includes('#')) return false;
+  if (/\s/.test(host)) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return host.split('.').every((part) => Number(part) >= 0 && Number(part) <= 255);
+  }
+  return /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(host);
 }

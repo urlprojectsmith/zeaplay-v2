@@ -19,6 +19,7 @@ export class CustomDomainCorsService {
       return false;
     }
     if (url.protocol !== 'https:') return false;
-    return Boolean(await this.resolver.resolveHost(url.host));
+    if (url.port) return false;
+    return Boolean(await this.resolver.resolveHost(url.hostname));
   }
 }

@@ -157,6 +157,7 @@ describe('Custom domains Phase 18.2 foundation', () => {
       scopeId: 'workspace-1',
     });
     await expect(cors.isAllowedOrigin('https://portal.example.com')).resolves.toBe(true);
+    await expect(cors.isAllowedOrigin('https://portal.example.com:4443')).resolves.toBe(false);
     await expect(cors.isAllowedOrigin('https://unknown.example.com')).resolves.toBe(false);
     expect(prisma.customDomain.findFirst).toHaveBeenCalledTimes(2);
   });
@@ -185,6 +186,9 @@ describe('Custom domains Phase 18.2 foundation', () => {
 });
 
 function customDomain(overrides: Record<string, unknown>) {
+  const verificationTokenCreatedAt = new Date(Date.now() - 60_000);
+  const verificationExpiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
   return {
     id: 'domain-1',
     scopeType: CustomDomainScopeType.WORKSPACE,
@@ -197,8 +201,8 @@ function customDomain(overrides: Record<string, unknown>) {
     displayHostname: 'portal.example.com',
     status: CustomDomainStatus.DNS_VERIFIED,
     verificationTokenHash: hashVerificationToken('token'),
-    verificationTokenCreatedAt: new Date('2026-10-01T00:00:00Z'),
-    verificationExpiresAt: new Date('2026-10-03T00:00:00Z'),
+    verificationTokenCreatedAt,
+    verificationExpiresAt,
     verifiedAt: null,
     lastDnsCheckedAt: null,
     routingVerifiedAt: null,

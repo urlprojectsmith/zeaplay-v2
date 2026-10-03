@@ -71,4 +71,26 @@ describe('validateEnvironment', () => {
       }),
     ).toThrow();
   });
+
+  it('rejects unsafe NPM upstream host and port values', () => {
+    expect(
+      validateEnvironment({
+        ...validEnv,
+        NPM_UPSTREAM_HOST: '127.0.0.1',
+        NPM_UPSTREAM_PORT: '7100',
+      }).NPM_UPSTREAM_HOST,
+    ).toBe('127.0.0.1');
+
+    for (const host of [
+      'https://app.internal',
+      'app.internal:3000',
+      'user@app.internal',
+      'app.internal/path',
+      ' app.internal',
+    ]) {
+      expect(() => validateEnvironment({ ...validEnv, NPM_UPSTREAM_HOST: host })).toThrow();
+    }
+
+    expect(() => validateEnvironment({ ...validEnv, NPM_UPSTREAM_PORT: '70000' })).toThrow();
+  });
 });

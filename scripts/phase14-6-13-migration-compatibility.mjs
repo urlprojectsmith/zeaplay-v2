@@ -1374,7 +1374,8 @@ function runLegacyUpgrade() {
           'billing_invoices',
           'reports',
           'search_documents',
-          'custom_dashboards'
+          'custom_dashboards',
+          'custom_domains'
         );
       `,
     );

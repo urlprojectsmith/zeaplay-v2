@@ -1,6 +1,6 @@
 # Phase 18.3 Branded Public And Email Architecture
 
-Status: Phase 18.3 focused refinement complete locally. Final certification remains blocked by Linux standalone web build verification. Phase 18.2 live DNS/NPM/TLS verification remains deferred.
+Status: Phase 18.3 certified by Phase 18.4 core functional verification. Phase 18.2 live DNS/NPM/TLS verification remains DEFERRED UNTIL AFTER PHASE 22.
 
 ## Scope
 
@@ -75,5 +75,5 @@ Phase 18.3 does not implement custom sender domains, dynamic OAuth callback regi
 - Root `pnpm test`: PASS, 17 tasks. API PASS, 75 suites / 678 tests. Worker PASS, 12 suites / 37 tests. Web PASS, 33 files / 243 tests.
 - `pnpm format`: PASS.
 - `git diff --check`: PASS.
-- Root `pnpm build`: PARTIAL on Windows. API and worker build tasks passed; Next.js compiled, typechecked, generated 73 static pages, then failed while copying standalone traced files because Windows denied symlink creation (`EPERM`).
-- Linux web build: NOT VERIFIED. `/opt/zeaplay` was not available from this Windows workspace.
+- Phase 18.4 records the Phase 18.3 Linux baseline as Web Linux build PASS, API Linux build PASS, and API Linux typecheck PASS.
+- The stale `@zea-play/config` dist declaration issue was resolved by rebuilding `pnpm --filter @zea-play/config build`; root build ordering is verified in Phase 18.4.

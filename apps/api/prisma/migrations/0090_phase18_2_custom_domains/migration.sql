@@ -91,17 +91,12 @@ CREATE INDEX "custom_domains_super_agency_status_idx" ON "custom_domains" ("supe
 CREATE INDEX "custom_domains_agency_status_idx" ON "custom_domains" ("agency_id", "status");
 CREATE INDEX "custom_domains_workspace_status_idx" ON "custom_domains" ("workspace_id", "status");
 
-INSERT INTO "permissions" ("key", "name", "description", "created_at", "updated_at")
+INSERT INTO "permissions" ("key", "description")
 VALUES
   (
     'custom_domains.manage',
-    'Manage custom domains',
-    'Create, verify, provision, suspend, and remove tenant custom domains.',
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
+    'Create, verify, provision, suspend, and remove tenant custom domains.'
   )
 ON CONFLICT ("key") DO UPDATE
 SET
-  "name" = EXCLUDED."name",
-  "description" = EXCLUDED."description",
-  "updated_at" = CURRENT_TIMESTAMP;
+  "description" = EXCLUDED."description";
