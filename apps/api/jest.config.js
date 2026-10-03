@@ -8,7 +8,7 @@ module.exports = {
   moduleNameMapper: {
     '^minio$': '<rootDir>/test/mocks/minio.ts',
   },
-  setupFiles: ['<rootDir>/test/setup-env.ts'],
+  setupFiles: ['<rootDir>/test/setup-unit-env.ts'],
   testEnvironment: 'node',
   // Keep API unit tests inside the default Node heap on Windows CI/dev machines.
   maxWorkers: 1,
