@@ -10,6 +10,7 @@ import {
 } from '../services/account-context';
 import { apiClient, setApiAccessToken, setApiTenantContext } from '../services/api';
 import { resolveDomainBoundSwitchRedirect } from '../services/custom-domains';
+import { deleteOfflineUser, setOfflineSessionContext } from '../services/offline-cache';
 import { clearTenantBoundPwaCaches } from '../services/pwa';
 
 export interface SessionWorkspace {
@@ -117,7 +118,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     applySession(response.data, set);
   },
   async logout() {
-    const { accessToken, csrfToken } = get();
+    const { accessToken, csrfToken, user } = get();
     if (accessToken) {
       await apiClient
         .request('/auth/logout', {
@@ -126,6 +127,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         })
         .catch(() => undefined);
     }
+    if (user?.id) await deleteOfflineUser(user.id).catch(() => undefined);
     clearSession(set);
   },
   async hydrate() {
@@ -319,6 +321,7 @@ function applySession(data: LoginResponse, set: (state: Partial<SessionState>) =
 function clearSession(set: (state: Partial<SessionState>) => void) {
   setApiAccessToken(null);
   setTenant(null, null);
+  setOfflineSessionContext(null);
   clearTenantBoundPwaCaches();
   localStorage.removeItem(storageKey);
   set({

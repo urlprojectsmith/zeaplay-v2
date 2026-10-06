@@ -41,6 +41,15 @@ export const messages = {
       offlineDetail: 'Some functionality requires internet. Reconnect to continue.',
       backOnline: 'Back online',
     },
+    offlineRead: {
+      offline: 'Offline',
+      cachedData: 'Cached data',
+      lastUpdated: 'Last updated',
+      readOnly: 'Read only',
+      reconnectToEdit: "You're offline. Reconnect to make changes.",
+      noCachedData: 'No cached data',
+      cacheExpired: 'Cached data expired',
+    },
     publicBranding: {
       support: 'Support',
       signInTitle: 'Sign in',
@@ -2233,6 +2242,15 @@ export const messages = {
       offline: 'நீங்கள் ஆஃப்லைனில் உள்ளீர்கள்',
       offlineDetail: 'சில செயல்களுக்கு இணையம் தேவை. தொடர மீண்டும் இணைக்கவும்.',
       backOnline: 'மீண்டும் ஆன்லைன்',
+    },
+    offlineRead: {
+      offline: 'ஆஃப்லைன்',
+      cachedData: 'சேமித்த தரவு',
+      lastUpdated: 'கடைசியாக புதுப்பித்தது',
+      readOnly: 'படிக்க மட்டும்',
+      reconnectToEdit: 'நீங்கள் ஆஃப்லைனில் உள்ளீர்கள். மாற்றங்களுக்கு மீண்டும் இணையவும்.',
+      noCachedData: 'சேமித்த தரவு இல்லை',
+      cacheExpired: 'சேமித்த தரவு காலாவதியானது',
     },
     publicBranding: {
       support: 'ஆதரவு',

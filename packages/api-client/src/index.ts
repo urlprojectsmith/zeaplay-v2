@@ -34,6 +34,15 @@ export class ApiClient {
 
   async request<T>(path: string, init: ApiRequestInit = {}): Promise<StandardResponse<T>> {
     const { skipTenantContext, ...requestInit } = init;
+    const method = (requestInit.method ?? 'GET').toUpperCase();
+    if (
+      method !== 'GET' &&
+      typeof window !== 'undefined' &&
+      typeof navigator !== 'undefined' &&
+      !navigator.onLine
+    ) {
+      throw new Error("You're offline. Reconnect to make changes.");
+    }
     const headers = new Headers(init.headers);
     headers.set('content-type', headers.get('content-type') ?? 'application/json');
     headers.set('x-correlation-id', this.options.getCorrelationId?.() ?? crypto.randomUUID());

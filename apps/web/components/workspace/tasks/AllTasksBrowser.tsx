@@ -80,6 +80,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useLanguage } from '../../../contexts/language-provider';
+import { OfflineReadIndicator } from '../../offline/OfflineReadIndicator';
 import {
   listDepartments,
   listWorkspaceUsers,
@@ -582,6 +583,7 @@ export function AllTasksBrowser({
 
   return (
     <section className="grid gap-4" aria-labelledby="all-tasks-heading">
+      <OfflineReadIndicator data={tasksQuery.data} />
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 id="all-tasks-heading" className="text-xl font-semibold">

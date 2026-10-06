@@ -1,4 +1,9 @@
 import { apiClient } from './api';
+import {
+  assertOnlineMutationAllowed,
+  cacheOfflineRead,
+  invalidateWorkspaceOfflineCache,
+} from './offline-cache';
 import type { Department, PageResult } from './workspace-management';
 
 export type ProjectPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
@@ -254,24 +259,39 @@ export async function listWorkspaceProjects(
   params: ListWorkspaceProjectsParams = {},
 ) {
   const normalized = normalizeProjectListParams(params);
-  const response = await apiClient.request<PageResult<WorkspaceProjectSummary>>(
-    `/workspaces/${workspaceId}/projects?${projectListQueryString(normalized)}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-project-list',
+    resourceId: 'list',
+    queryKey: normalized,
+    request: async () => {
+      const response = await apiClient.request<PageResult<WorkspaceProjectSummary>>(
+        `/workspaces/${workspaceId}/projects?${projectListQueryString(normalized)}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function getWorkspaceProject(workspaceId: string, projectId: string) {
-  const response = await apiClient.request<WorkspaceProjectSummary>(
-    `/workspaces/${workspaceId}/projects/${projectId}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-project-detail',
+    resourceId: projectId,
+    request: async () => {
+      const response = await apiClient.request<WorkspaceProjectSummary>(
+        `/workspaces/${workspaceId}/projects/${projectId}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function createWorkspaceProject(workspaceId: string, body: ProjectPayload) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceProjectSummary>(
     `/workspaces/${workspaceId}/projects`,
     { method: 'POST', body: JSON.stringify(compactProjectPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -280,10 +300,12 @@ export async function updateWorkspaceProject(
   projectId: string,
   body: ProjectPayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceProjectSummary>(
     `/workspaces/${workspaceId}/projects/${projectId}`,
     { method: 'PATCH', body: JSON.stringify(compactProjectPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -292,18 +314,22 @@ export async function updateWorkspaceProjectStatus(
   projectId: string,
   statusDefinitionId: string,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceProjectSummary>(
     `/workspaces/${workspaceId}/projects/${projectId}/status`,
     { method: 'PATCH', body: JSON.stringify({ statusDefinitionId }) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
 export async function deleteWorkspaceProject(workspaceId: string, projectId: string) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<{ id: string; deleted: boolean }>(
     `/workspaces/${workspaceId}/projects/${projectId}`,
     { method: 'DELETE' },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 

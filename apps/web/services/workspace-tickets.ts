@@ -1,4 +1,9 @@
 import { apiClient } from './api';
+import {
+  assertOnlineMutationAllowed,
+  cacheOfflineRead,
+  invalidateWorkspaceOfflineCache,
+} from './offline-cache';
 import type { PageResult } from './workspace-management';
 
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
@@ -402,17 +407,30 @@ export async function listWorkspaceTickets(
   params: ListWorkspaceTicketsParams = {},
 ) {
   const normalized = normalizeTicketListParams(params);
-  const response = await apiClient.request<PageResult<WorkspaceTicketSummary>>(
-    `/workspaces/${workspaceId}/tickets?${ticketListQueryString(normalized)}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-ticket-list',
+    resourceId: 'list',
+    queryKey: normalized,
+    request: async () => {
+      const response = await apiClient.request<PageResult<WorkspaceTicketSummary>>(
+        `/workspaces/${workspaceId}/tickets?${ticketListQueryString(normalized)}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function getWorkspaceTicketQueueSummary(workspaceId: string) {
-  const response = await apiClient.request<TicketQueueSummary>(
-    `/workspaces/${workspaceId}/tickets/queue-summary`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-ticket-queue-summary',
+    resourceId: 'queue-summary',
+    request: async () => {
+      const response = await apiClient.request<TicketQueueSummary>(
+        `/workspaces/${workspaceId}/tickets/queue-summary`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function listWorkspaceTicketSavedViews(workspaceId: string) {
@@ -483,17 +501,25 @@ export async function deleteWorkspaceTicketSavedView(workspaceId: string, viewId
 }
 
 export async function getWorkspaceTicket(workspaceId: string, ticketId: string) {
-  const response = await apiClient.request<WorkspaceTicketSummary>(
-    `/workspaces/${workspaceId}/tickets/${ticketId}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-ticket-detail',
+    resourceId: ticketId,
+    request: async () => {
+      const response = await apiClient.request<WorkspaceTicketSummary>(
+        `/workspaces/${workspaceId}/tickets/${ticketId}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function createWorkspaceTicket(workspaceId: string, body: TicketPayload) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTicketSummary>(
     `/workspaces/${workspaceId}/tickets`,
     { method: 'POST', body: JSON.stringify(compactTicketPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -502,10 +528,12 @@ export async function updateWorkspaceTicket(
   ticketId: string,
   body: TicketPayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTicketSummary>(
     `/workspaces/${workspaceId}/tickets/${ticketId}`,
     { method: 'PATCH', body: JSON.stringify(compactTicketPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -514,10 +542,12 @@ export async function updateWorkspaceTicketStatus(
   ticketId: string,
   statusDefinitionId: string,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTicketSummary>(
     `/workspaces/${workspaceId}/tickets/${ticketId}/status`,
     { method: 'PATCH', body: JSON.stringify({ statusDefinitionId }) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -546,10 +576,12 @@ export async function updateWorkspaceTicketAssignment(
 }
 
 export async function claimWorkspaceTicket(workspaceId: string, ticketId: string) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTicketSummary>(
     `/workspaces/${workspaceId}/tickets/${ticketId}/claim`,
     { method: 'POST', body: JSON.stringify({}) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -558,18 +590,22 @@ export async function updateWorkspaceTicketEscalation(
   ticketId: string,
   body: TicketEscalationPayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTicketSummary>(
     `/workspaces/${workspaceId}/tickets/${ticketId}/escalation`,
     { method: 'POST', body: JSON.stringify(compactTicketPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
 export async function deleteWorkspaceTicket(workspaceId: string, ticketId: string) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<{ id: string; deleted: boolean }>(
     `/workspaces/${workspaceId}/tickets/${ticketId}`,
     { method: 'DELETE' },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 

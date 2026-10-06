@@ -1,4 +1,9 @@
 import { apiClient } from './api';
+import {
+  assertOnlineMutationAllowed,
+  cacheOfflineRead,
+  invalidateWorkspaceOfflineCache,
+} from './offline-cache';
 import type { Department, PageResult } from './workspace-management';
 import type { WorkspaceStatusDefinition } from './workspace-statuses';
 
@@ -770,10 +775,12 @@ export const taskCreationKeys = {
 };
 
 export async function createWorkspaceTask(workspaceId: string, body: CreateTaskPayload) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTask>(`/workspaces/${workspaceId}/tasks`, {
     method: 'POST',
     body: JSON.stringify(compactTaskPayload(body)),
   });
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -782,6 +789,7 @@ export async function createWorkspaceSubtask(
   parentTaskId: string,
   body: CreateTaskPayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${parentTaskId}/subtasks`,
     {
@@ -789,6 +797,7 @@ export async function createWorkspaceSubtask(
       body: JSON.stringify(compactTaskPayload(body)),
     },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -804,10 +813,17 @@ export async function listRecentWorkspaceTasks(workspaceId: string) {
 
 export async function listWorkspaceTasks(workspaceId: string, params: ListWorkspaceTasksParams) {
   const normalized = normalizeTaskListParams(params);
-  const response = await apiClient.request<PageResult<WorkspaceTask>>(
-    `/workspaces/${workspaceId}/tasks?${taskListQueryString(normalized)}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-task-list',
+    resourceId: 'list',
+    queryKey: normalized,
+    request: async () => {
+      const response = await apiClient.request<PageResult<WorkspaceTask>>(
+        `/workspaces/${workspaceId}/tasks?${taskListQueryString(normalized)}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function getActiveTimer() {
@@ -888,10 +904,17 @@ export async function listWorkspaceWorkload(workspaceId: string, params: TaskWor
 }
 
 export async function getTaskCalendar(workspaceId: string, params: TaskCalendarParams = {}) {
-  const response = await apiClient.request<TaskCalendarResult>(
-    `/workspaces/${workspaceId}/tasks/calendar?${taskViewsQueryString(params as unknown as Record<string, unknown>)}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-task-calendar',
+    resourceId: 'calendar',
+    queryKey: params,
+    request: async () => {
+      const response = await apiClient.request<TaskCalendarResult>(
+        `/workspaces/${workspaceId}/tasks/calendar?${taskViewsQueryString(params as unknown as Record<string, unknown>)}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function getTaskGantt(workspaceId: string, params: TaskGanttParams) {
@@ -946,6 +969,7 @@ export async function updateWorkspaceMemberCapacity(
   membershipId: string,
   body: { weeklyCapacityMinutes: number },
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<{
     workspaceMembershipId: string;
     weeklyCapacityMinutes: number;
@@ -954,6 +978,7 @@ export async function updateWorkspaceMemberCapacity(
     method: 'PUT',
     body: JSON.stringify(body),
   });
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -969,10 +994,12 @@ export async function updateTaskKanbanColumnSetting(
   statusDefinitionId: string,
   body: { wipLimit: number | null },
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<{ statusDefinitionId: string; wipLimit: number | null }>(
     `/workspaces/${workspaceId}/tasks/kanban/columns/${statusDefinitionId}`,
     { method: 'PATCH', body: JSON.stringify(body) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -981,18 +1008,26 @@ export async function moveWorkspaceTaskKanban(
   taskId: string,
   body: MoveTaskKanbanPayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}/kanban-position`,
     { method: 'PATCH', body: JSON.stringify(body) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
 export async function getWorkspaceTask(workspaceId: string, taskId: string) {
-  const response = await apiClient.request<WorkspaceTask>(
-    `/workspaces/${workspaceId}/tasks/${taskId}`,
-  );
-  return response.data;
+  return cacheOfflineRead({
+    resourceType: 'workspace-task-detail',
+    resourceId: taskId,
+    request: async () => {
+      const response = await apiClient.request<WorkspaceTask>(
+        `/workspaces/${workspaceId}/tasks/${taskId}`,
+      );
+      return response.data;
+    },
+  });
 }
 
 export async function updateWorkspaceTaskStatus(
@@ -1000,10 +1035,12 @@ export async function updateWorkspaceTaskStatus(
   taskId: string,
   body: { statusDefinitionId: string; completion?: SubmitTaskCompletionPayload },
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}/status`,
     { method: 'PATCH', body: JSON.stringify(body) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -1019,10 +1056,12 @@ export async function updateTaskCompletionPolicy(
   taskId: string,
   body: TaskCompletionPolicy,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<TaskCompletionPolicy>(
     `/workspaces/${workspaceId}/tasks/${taskId}/completion-policy`,
     { method: 'PUT', body: JSON.stringify(compactCompletionPolicyPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -1032,11 +1071,13 @@ export async function submitTaskCompletion(
   statusDefinitionId: string,
   body: SubmitTaskCompletionPayload,
 ) {
+  assertOnlineMutationAllowed();
   const query = new URLSearchParams({ statusDefinitionId });
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}/completion-submissions?${query}`,
     { method: 'POST', body: JSON.stringify(compactCompletionSubmissionPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -1077,6 +1118,7 @@ export async function decideTaskCompletion(
   submissionId: string,
   body: { decision: TaskCompletionDecision; reason?: string },
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<TaskCompletionSubmission>(
     `/workspaces/${workspaceId}/tasks/${taskId}/completion-submissions/${submissionId}/decisions`,
     {
@@ -1084,6 +1126,7 @@ export async function decideTaskCompletion(
       body: JSON.stringify({ decision: body.decision, reason: body.reason?.trim() }),
     },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -1092,10 +1135,12 @@ export async function updateWorkspaceTask(
   taskId: string,
   body: UpdateTaskPayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}`,
     { method: 'PATCH', body: JSON.stringify(compactUpdateTaskPayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 
@@ -1104,10 +1149,12 @@ export async function makeWorkspaceTaskRecurring(
   taskId: string,
   body: TaskRecurrencePayload,
 ) {
+  assertOnlineMutationAllowed();
   const response = await apiClient.request<WorkspaceTask>(
     `/workspaces/${workspaceId}/tasks/${taskId}/recurrence`,
     { method: 'POST', body: JSON.stringify(compactRecurrencePayload(body)) },
   );
+  await invalidateWorkspaceOfflineCache(workspaceId);
   return response.data;
 }
 

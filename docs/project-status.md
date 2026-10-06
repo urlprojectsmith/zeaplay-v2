@@ -1,13 +1,39 @@
 # Zea Play Project Status
 
-Current: ZEA PLAY VERSION 2 PHASE 19.2 MOBILE UX + RESPONSIVE APPLICATION EXPERIENCE MAIN IMPLEMENTATION PARTIAL / WINDOWS_STANDALONE_SYMLINK_BUILD_LIMIT.
-Next: Phase 19.2 final verification on Linux exact source if required. Phase 19.1 service-worker runtime certification remains pending on Linux exact-source verification. Phase 18 live custom-domain infrastructure remains DEFERRED UNTIL AFTER PHASE 22. Do not start Phase 19.3 or 19.4 without explicit instruction.
+Current: ZEA PLAY VERSION 2 PHASE 19.3 OFFLINE READ CACHE + OFFLINE-SAFE EXPERIENCE MAIN IMPLEMENTATION PARTIAL / WINDOWS_STANDALONE_SYMLINK_BUILD_LIMIT.
+Next: Phase 19.3 final verification on Linux exact source if required. Phase 19.1/19.2 Linux exact-source build/runtime verification remains pending if required. Phase 18 live custom-domain infrastructure remains DEFERRED UNTIL AFTER PHASE 22. Do not start Phase 19.4 without explicit instruction.
 
 This document is the compact handoff source of truth for future Codex sessions. Code and tests remain authoritative if this document ever disagrees with implementation.
 
 Do not implement Phase 6 from this document alone. Use it to avoid rescanning completed Phase 1-5 work.
 
 ## Current Certification Gate
+
+Phase 19.3 - OFFLINE READ CACHE + OFFLINE-SAFE EXPERIENCE
+
+Main Implementation: PARTIAL / LOCAL WINDOWS GATES PASS EXCEPT ENVIRONMENT-LIMITED NEXT STANDALONE SYMLINK COPY
+
+- No database migration is required or created.
+- Phase 19.3 documentation is `docs/phase19-3-offline-read-cache.md`.
+- Phase 19.3 security matrix is `docs/phase19-3-security-matrix.md`.
+- Application-layer offline cache lives in `apps/web/services/offline-cache.ts` and `apps/web/services/offline-cache-policy.ts`.
+- Offline storage uses `zea-play-offline` IndexedDB with in-memory fallback for unsupported/test environments.
+- Cache policies cover selected workspace task list/detail/calendar summary, project list/detail, ticket list/detail, and ticket queue summary.
+- Sanitizers use strict field allowlists and exclude sensitive fields, tokens, secrets, Docs bodies, Form responses, file binaries, requester contact PII, comments, audit payloads, attachment URLs, and automation payloads.
+- Offline private records are scoped by schema version, authenticated user, scope type, scope ID, resource type, resource ID, and normalized query hash.
+- Logout purges offline private data for the authenticated user; tenant/context switches clear active query state and change cache namespace.
+- 401/403 never fall back to cached private data; 404 invalidates matching cached detail data.
+- Offline mutations, mutation queues, background replay, conflict UI, Web Push subscription persistence, VAPID keys, push delivery, and notification permission flow remain NOT IMPLEMENTED and deferred to Phase 19.4.
+- Focused Phase 19.3 web test: PASS, 1 file / 7 tests.
+- `pnpm format`: PASS.
+- `pnpm lint`: PASS, 17 tasks.
+- `pnpm typecheck`: PASS, 17 tasks.
+- Root `pnpm test`: PASS, 17 tasks; web 36 files / 266 tests, API 75 suites / 678 tests, worker 12 suites / 37 tests.
+- `pnpm test:e2e`: PASS, 21 tests.
+- `pnpm audit --prod --audit-level high`: PASS; 9 moderate production advisories remain below the high gate.
+- `git diff --check`: PASS; Windows LF/CRLF warning only.
+- Root `pnpm build`: PARTIAL on Windows. API, worker, and package build tasks passed; Next.js web compiled, typechecked, collected data, generated 74/74 pages, then failed during standalone traced-file copy because Windows denied symlink creation (`EPERM`).
+- Linux exact-source root build/runtime verification remains NOT VERIFIED from this Windows session.
 
 Phase 19.2 - MOBILE UX + RESPONSIVE APPLICATION EXPERIENCE
 

@@ -42,6 +42,7 @@ import {
 } from '@zea-play/ui';
 import type { Locale } from '../../../lib/i18n';
 import { useLanguage } from '../../../contexts/language-provider';
+import { OfflineReadIndicator } from '../../offline/OfflineReadIndicator';
 import { useSessionStore } from '../../../stores/session';
 import { useWorkspacePermissions } from '../useWorkspacePermissions';
 import {
@@ -314,6 +315,7 @@ export function WorkspaceProjectsPage() {
             </Button>
           ) : null}
         </div>
+        <OfflineReadIndicator data={projectsQuery.data} />
 
         {createOpen ? (
           <ProjectForm

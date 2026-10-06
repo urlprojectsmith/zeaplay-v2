@@ -41,6 +41,7 @@ import {
   Skeleton,
 } from '@zea-play/ui';
 import { useLanguage } from '../../../contexts/language-provider';
+import { OfflineReadIndicator } from '../../offline/OfflineReadIndicator';
 import { translate as t } from '../../../lib/i18n';
 import { useSessionStore } from '../../../stores/session';
 import { useWorkspacePermissions } from '../useWorkspacePermissions';
@@ -404,6 +405,7 @@ export function WorkspaceTicketsPage() {
           ) : null}
         </div>
       </header>
+      <OfflineReadIndicator data={ticketsQuery.data} />
 
       <nav
         aria-label={t(locale, 'workspaceTickets.ticketQueues')}
