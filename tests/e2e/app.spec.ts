@@ -2643,7 +2643,7 @@ test('authenticated task creation supports the quick-create flow', async ({ page
   );
   await expect(page.getByText('E2E quick task').first()).toBeVisible();
 
-  for (const width of [375, 768, 1024, 1440]) {
+  for (const width of [320, 360, 375, 390, 412, 430, 768, 820, 1024, 1280, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const view of ['List', 'Grid', 'Compact']) {
       await page.getByRole('button', { name: view }).click();

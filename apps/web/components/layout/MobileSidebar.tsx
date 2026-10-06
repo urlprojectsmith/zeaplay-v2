@@ -30,8 +30,12 @@ export function MobileSidebar({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="left-0 top-0 flex h-full w-80 max-w-[86vw] translate-x-0 translate-y-0 flex-col rounded-none p-0">
-        <div className="flex h-16 items-center justify-between border-b border-[hsl(var(--border))] px-4">
+      <DialogContent
+        id="mobile-navigation-drawer"
+        className="safe-area-top left-0 top-0 flex h-[100dvh] w-80 max-w-[min(88vw,24rem)] translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none p-0"
+        hideCloseButton
+      >
+        <div className="safe-area-x flex min-h-16 items-center justify-between gap-3 border-b border-[hsl(var(--border))]">
           <DialogTitle asChild>
             <BrandLogo />
           </DialogTitle>
@@ -46,7 +50,7 @@ export function MobileSidebar({
           </Button>
         </div>
         <nav
-          className="grid flex-1 content-start gap-5 overflow-y-auto p-3"
+          className="safe-area-x grid flex-1 content-start gap-5 overflow-y-auto py-3"
           aria-label={`${config.title} mobile navigation`}
         >
           <AccountContextSwitcher collapsed={false} />
@@ -54,7 +58,7 @@ export function MobileSidebar({
             <NavigationGroup key={group.label} group={group} collapsed={false} />
           ))}
         </nav>
-        <div className="grid gap-3 border-t border-[hsl(var(--border))] p-3 md:hidden">
+        <div className="safe-area-x safe-area-bottom grid gap-3 border-t border-[hsl(var(--border))] py-3 md:hidden">
           <ThemeSwitcher />
           <LanguageSwitcher />
         </div>

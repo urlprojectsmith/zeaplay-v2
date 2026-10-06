@@ -101,9 +101,9 @@ export function NotificationCenter() {
         ) : null}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="right-0 top-0 h-[100dvh] w-full max-w-md translate-x-0 translate-y-0 rounded-none sm:left-auto sm:right-4 sm:top-20 sm:h-[min(720px,calc(100dvh-6rem))] sm:rounded-md">
+        <DialogContent className="safe-area-top safe-area-bottom right-0 top-0 h-[100dvh] w-full max-w-md translate-x-0 translate-y-0 overflow-hidden rounded-none sm:left-auto sm:right-4 sm:top-20 sm:h-[min(720px,calc(100dvh-6rem))] sm:rounded-md">
           <DialogHeader>
-            <div className="flex items-center justify-between gap-3 pr-8">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 pr-8">
               <DialogTitle>{t(locale, 'common.notifications')}</DialogTitle>
               <Button
                 disabled={readAllMutation.isPending || unreadCount === 0}
@@ -117,7 +117,7 @@ export function NotificationCenter() {
               </Button>
             </div>
           </DialogHeader>
-          <div className="grid min-h-0 flex-1 gap-3">
+          <div className="grid min-h-0 flex-1 gap-3 overflow-hidden">
             <div className="flex flex-wrap items-center gap-2">
               <FilterButton active={state === 'all'} onClick={() => setState('all')}>
                 {t(locale, 'notifications.all')}
@@ -127,7 +127,7 @@ export function NotificationCenter() {
               </FilterButton>
               <select
                 aria-label={t(locale, 'notifications.category')}
-                className="h-9 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-2 text-sm"
+                className="min-h-11 rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--background))] px-2 text-sm"
                 value={category}
                 onChange={(event) => setCategory(event.target.value)}
               >
@@ -224,14 +224,14 @@ function NotificationRow({
   const router = useRouter();
   return (
     <article className="grid gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface))] p-3">
-      <div className="flex items-start gap-3">
+      <div className="flex min-w-0 items-start gap-3">
         <Circle
           aria-hidden="true"
           className={item.unread ? 'mt-1 h-3 w-3 fill-[hsl(var(--primary))]' : 'mt-1 h-3 w-3'}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold">{item.title}</h3>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h3 className="min-w-0 break-words text-sm font-semibold">{item.title}</h3>
             <Badge variant={item.priority === 'URGENT' ? 'danger' : 'neutral'}>
               {item.category}
             </Badge>

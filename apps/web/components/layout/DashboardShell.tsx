@@ -112,13 +112,14 @@ export function DashboardShell({
   }
 
   return (
-    <div className="flex min-h-screen bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
+    <div className="flex min-h-screen overflow-x-hidden bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
       <AppSidebar config={filteredConfig} collapsed={collapsed} />
       <MobileSidebar config={filteredConfig} open={mobileOpen} onOpenChange={setMobileOpen} />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 overflow-x-hidden">
         <AppHeader
           config={filteredConfig}
           collapsed={collapsed}
+          mobileOpen={mobileOpen}
           onOpenMobile={() => setMobileOpen(true)}
           onToggleCollapsed={toggleCollapsed}
         />

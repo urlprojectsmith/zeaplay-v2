@@ -20,7 +20,7 @@ export function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
         className={cn(
-          'z-50 min-w-44 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] p-1 text-sm shadow-lg',
+          'z-50 max-h-[min(28rem,calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] min-w-44 overflow-y-auto rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] p-1 text-sm shadow-lg',
           className,
         )}
         {...props}
@@ -36,7 +36,7 @@ export function DropdownMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        'flex cursor-default select-none items-center gap-2 rounded px-2 py-2 outline-none focus:bg-[hsl(var(--surface-muted))] data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+        'flex min-h-10 cursor-default select-none items-center gap-2 rounded px-2 py-2 outline-none focus:bg-[hsl(var(--surface-muted))] data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
       {...props}

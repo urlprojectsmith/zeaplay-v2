@@ -53,10 +53,10 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       </div>
       {!state.online ? (
         <div
-          className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] px-4 py-3 text-sm shadow-lg"
+          className="safe-area-bottom fixed inset-x-3 bottom-0 z-50 mx-auto flex max-w-xl flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] px-4 py-3 text-sm shadow-lg sm:bottom-3"
           role="status"
         >
-          <span>{t(locale, 'pwa.offlineDetail')}</span>
+          <span className="min-w-0 flex-1">{t(locale, 'pwa.offlineDetail')}</span>
           {state.updateAvailable ? (
             <Button size="sm" type="button" variant="outline" onClick={state.refreshForUpdate}>
               {t(locale, 'pwa.refresh')}

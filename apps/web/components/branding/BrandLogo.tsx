@@ -7,21 +7,23 @@ export function BrandLogo({ compact = false }: { compact?: boolean }) {
   const { brand } = useBrand();
   const brandName = brand.brandName ?? 'Zea Play';
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2 overflow-hidden">
       {brand.logoUrl ? (
         // Branding image URLs are short-lived API-authorized storage URLs.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           alt={`${brandName} logo`}
-          className="h-8 w-8 rounded-md object-contain"
+          className="h-8 w-8 shrink-0 rounded-md object-contain"
           src={brand.logoUrl}
         />
       ) : (
-        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">
           <Sparkles aria-hidden="true" className="h-4 w-4" />
         </span>
       )}
-      {compact ? null : <span className="truncate text-sm font-bold">{brandName}</span>}
+      {compact ? null : (
+        <span className="min-w-0 truncate text-sm font-bold leading-tight">{brandName}</span>
+      )}
     </div>
   );
 }

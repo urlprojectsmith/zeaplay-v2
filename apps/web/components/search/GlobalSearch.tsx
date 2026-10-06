@@ -128,11 +128,11 @@ export function GlobalSearch({ scope }: { scope: DashboardScope }) {
         <Search aria-hidden="true" className="h-5 w-5" />
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-3xl p-0">
-          <DialogHeader className="border-b border-border px-5 py-4">
+        <DialogContent className="max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem)] max-w-3xl overflow-hidden p-0">
+          <DialogHeader className="border-b border-border px-4 py-4 sm:px-5">
             <DialogTitle>Search</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3 p-5">
+          <div className="grid min-h-0 gap-3 overflow-y-auto p-4 sm:p-5">
             <div className="relative">
               <Search
                 aria-hidden="true"
@@ -152,7 +152,7 @@ export function GlobalSearch({ scope }: { scope: DashboardScope }) {
               resultsQuery.isLoading ? (
                 <SearchSkeleton />
               ) : results.length ? (
-                <div className="max-h-[60vh] overflow-auto">
+                <div className="max-h-[60dvh] overflow-auto">
                   {groupedResults.map(([type, items]) => (
                     <section key={type} className="mb-4 last:mb-0">
                       <div className="mb-2 text-xs font-medium uppercase tracking-normal text-muted-foreground">
@@ -162,11 +162,11 @@ export function GlobalSearch({ scope }: { scope: DashboardScope }) {
                         {items.map((result) => (
                           <button
                             key={result.id}
-                            className="rounded-md border border-border bg-card px-3 py-3 text-left hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="min-h-16 rounded-md border border-border bg-card px-3 py-3 text-left hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                             type="button"
                             onClick={() => openResult(result)}
                           >
-                            <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="truncate text-sm font-medium">{result.title}</div>
                                 {result.subtitle ? (
@@ -212,7 +212,7 @@ export function GlobalSearch({ scope }: { scope: DashboardScope }) {
                 {recentQuery.data.map((item) => (
                   <button
                     key={item.id}
-                    className="rounded-md border border-border px-3 py-2 text-left text-sm hover:border-primary"
+                    className="min-h-11 rounded-md border border-border px-3 py-2 text-left text-sm hover:border-primary"
                     type="button"
                     onClick={() => setQuery(item.query)}
                   >

@@ -17,7 +17,10 @@ export function AppSidebar({ config, collapsed }: { config: DashboardConfig; col
       <div className="border-b border-[hsl(var(--sidebar-border))] p-3">
         <AccountContextSwitcher collapsed={collapsed} />
       </div>
-      <nav className="grid gap-5 p-3" aria-label={`${config.title} navigation`}>
+      <nav
+        className="grid max-h-[calc(100dvh-8rem)] gap-5 overflow-y-auto p-3"
+        aria-label={`${config.title} navigation`}
+      >
         {config.groups.map((group) => (
           <NavigationGroup key={group.label} group={group} collapsed={collapsed} />
         ))}

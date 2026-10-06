@@ -18,21 +18,25 @@ import { Breadcrumbs } from './Breadcrumbs';
 export function AppHeader({
   config,
   collapsed,
+  mobileOpen,
   onToggleCollapsed,
   onOpenMobile,
 }: {
   config: DashboardConfig;
   collapsed: boolean;
+  mobileOpen: boolean;
   onToggleCollapsed: () => void;
   onOpenMobile: () => void;
 }) {
   const { locale, t } = useLanguage();
   return (
-    <header className="sticky top-0 z-30 border-b border-[hsl(var(--border))] bg-[hsl(var(--header-background)/0.94)] backdrop-blur">
-      <div className="flex min-h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
+    <header className="safe-area-top sticky top-0 z-30 border-b border-[hsl(var(--border))] bg-[hsl(var(--header-background)/0.94)] backdrop-blur">
+      <div className="safe-area-x flex min-h-16 items-center gap-2 sm:gap-3 lg:px-8">
         <Button
+          aria-controls="mobile-navigation-drawer"
+          aria-expanded={mobileOpen}
           aria-label={t(locale, 'common.openMenu')}
-          className="lg:hidden"
+          className="shrink-0 lg:hidden"
           size="icon"
           type="button"
           variant="ghost"
@@ -56,10 +60,10 @@ export function AppHeader({
             <PanelLeftClose aria-hidden="true" className="h-5 w-5" />
           )}
         </Button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-hidden">
           <Breadcrumbs items={['Zea Play', config.title]} />
         </div>
-        <div className="hidden items-center gap-2 xl:flex">
+        <div className="hidden min-w-0 items-center gap-2 xl:flex">
           <GlobalSearch scope={config.scope} />
           {config.scope === 'super-agency' ? <SuperAgencySwitcher compact /> : null}
           {config.scope === 'agency' || config.scope === 'workspace' ? (
@@ -67,14 +71,18 @@ export function AppHeader({
           ) : null}
           {config.scope === 'workspace' ? <WorkspaceSwitcher compact /> : null}
         </div>
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="hidden shrink-0 items-center gap-2 md:flex">
           <ThemeSwitcher />
           <LanguageSwitcher />
         </div>
-        <div className="xl:hidden">
+        <div className="shrink-0 xl:hidden">
           <GlobalSearch scope={config.scope} />
         </div>
-        {config.scope === 'workspace' ? <GlobalTimerIndicator /> : null}
+        {config.scope === 'workspace' ? (
+          <div className="hidden shrink-0 sm:block">
+            <GlobalTimerIndicator />
+          </div>
+        ) : null}
         {config.scope === 'workspace' ? <NotificationCenter /> : null}
         <ProfileMenu />
       </div>

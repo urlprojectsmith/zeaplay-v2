@@ -26,7 +26,7 @@ export function PwaInstallDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="safe-area-bottom">
         <DialogHeader>
           <DialogTitle>
             {ios ? t(locale, 'pwa.iosTitle') : t(locale, 'pwa.installTitle')}

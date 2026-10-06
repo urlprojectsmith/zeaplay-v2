@@ -5,7 +5,7 @@ export const metadata = {
 
 export default function OfflinePage() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[hsl(var(--background))] px-6 py-10 text-[hsl(var(--foreground))]">
+    <main className="safe-area-x safe-area-top safe-area-bottom flex min-h-screen items-center justify-center bg-[hsl(var(--background))] py-10 text-[hsl(var(--foreground))]">
       <section className="grid max-w-xl gap-4 text-center">
         <p className="text-sm font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
           Zea Play

@@ -12,7 +12,10 @@ export function TabsList({
 }: React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
-      className={cn('inline-flex rounded-md bg-[hsl(var(--surface-muted))] p-1', className)}
+      className={cn(
+        'inline-flex max-w-full overflow-x-auto rounded-md bg-[hsl(var(--surface-muted))] p-1',
+        className,
+      )}
       {...props}
     />
   );
@@ -25,7 +28,7 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        'rounded px-3 py-1.5 text-sm font-semibold text-[hsl(var(--muted-foreground))] outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] data-[state=active]:bg-[hsl(var(--surface-elevated))] data-[state=active]:text-[hsl(var(--foreground))]',
+        'min-h-10 shrink-0 rounded px-3 py-2 text-sm font-semibold text-[hsl(var(--muted-foreground))] outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] data-[state=active]:bg-[hsl(var(--surface-elevated))] data-[state=active]:text-[hsl(var(--foreground))]',
         className,
       )}
       {...props}

@@ -29,7 +29,7 @@ export function SelectTrigger({
         id={id}
         aria-invalid={Boolean(error)}
         className={cn(
-          'flex h-10 w-full items-center justify-between rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--surface))] px-3 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:cursor-not-allowed disabled:opacity-60',
+          'flex min-h-11 w-full items-center justify-between rounded-md border border-[hsl(var(--input))] bg-[hsl(var(--surface))] px-3 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:cursor-not-allowed disabled:opacity-60',
           error && 'border-[hsl(var(--danger))]',
           className,
         )}
@@ -53,7 +53,7 @@ export function SelectContent({
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
         className={cn(
-          'z-50 overflow-hidden rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] text-sm shadow-lg',
+          'z-50 max-h-[min(24rem,calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] overflow-hidden rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--surface-elevated))] text-sm shadow-lg',
           className,
         )}
         {...props}
@@ -72,7 +72,7 @@ export function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        'relative flex cursor-default select-none items-center rounded px-8 py-2 outline-none focus:bg-[hsl(var(--surface-muted))] data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+        'relative flex min-h-10 cursor-default select-none items-center rounded px-8 py-2 outline-none focus:bg-[hsl(var(--surface-muted))] data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
         className,
       )}
       {...props}
